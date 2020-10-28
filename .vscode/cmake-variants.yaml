@@ -1,0 +1,37 @@
+buildType:
+  default: dbg
+  choices:
+    dbg:
+      short: dbg
+      long: Emit debug information
+      buildType: Debug
+      settings:
+        IREE_BUILD_DEBUGGER: true
+        IREE_BUILD_EXPERIMENTAL: false
+        IREE_ENABLE_EMITC: false
+        # FLATBUFFERS_BUILD_CPP17: true
+        # FLATBUFFERS_LIBCXX_WITH_CLANG: false
+        # IREE_ENABLE_RUNTIME_TRACING: true
+        # LLVM_ENABLE_ASSERTIONS: true
+        # LLVM_ENABLE_PDB: true
+    reldeb:
+      short: reldeb
+      long: RelWithDebInfo
+      buildType: RelWithDebInfo
+      settings:
+        IREE_BUILD_DEBUGGER: true
+        IREE_BUILD_EXPERIMENTAL: false
+        IREE_ENABLE_EMITC: false
+        # FLATBUFFERS_BUILD_CPP17: true
+        # FLATBUFFERS_LIBCXX_WITH_CLANG: false
+        # IREE_ENABLE_RUNTIME_TRACING: true
+        # LLVM_ENABLE_ASSERTIONS: true
+        # LLVM_ENABLE_PDB: true
+    rel:
+      short: rel
+      long: Optimized with assertions and dbg
+      buildType: Release
+      settings:
+        IREE_BUILD_DEBUGGER: true
+        IREE_BUILD_EXPERIMENTAL: false
+        IREE_ENABLE_EMITC: false
