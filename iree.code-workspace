@@ -3,13 +3,10 @@
 		{
 			"path": "."
 		},
-		{
-			"path": "..\\ireebld"
-		}
 	],
 	"settings": {
 		"search.exclude": {
-			"build": true,
+			"dbg": true,
 			"instl": true,
 		},
 		"cmake.sourceDirectory": "${workspaceFolder}",
@@ -27,8 +24,8 @@
 			"MSVC_DIA_SDK_DIR": "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK",
 		},
 		"cmake.buildBeforeRun": false,
-		"cmake.buildDirectory": "${workspaceFolder}/../ireebld/${variant:buildType}",
-		"cmake.installPrefix": "${workspaceFolder}/../ireeinstl/${variant:buildType}",
+		"cmake.buildDirectory": "${workspaceFolder}/${variant:buildType}",
+		"cmake.installPrefix": "${workspaceFolder}/instl-${variant:buildType}",
 		"workbench.colorCustomizations": {
 			"activityBar.activeBackground": "#f9e64f",
 			"activityBar.activeBorder": "#059a89",

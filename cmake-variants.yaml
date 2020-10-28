@@ -7,7 +7,7 @@ buildType:
       buildType: Debug
       settings:
         IREE_BUILD_DEBUGGER: true
-        IREE_BUILD_EXPERIMENTAL: false
+        IREE_BUILD_EXPERIMENTAL: true
         IREE_ENABLE_EMITC: false
         # FLATBUFFERS_BUILD_CPP17: true
         # FLATBUFFERS_LIBCXX_WITH_CLANG: false
@@ -20,7 +20,7 @@ buildType:
       buildType: RelWithDebInfo
       settings:
         IREE_BUILD_DEBUGGER: true
-        IREE_BUILD_EXPERIMENTAL: false
+        IREE_BUILD_EXPERIMENTAL: true
         IREE_ENABLE_EMITC: false
         # FLATBUFFERS_BUILD_CPP17: true
         # FLATBUFFERS_LIBCXX_WITH_CLANG: false
@@ -33,5 +33,5 @@ buildType:
       buildType: Release
       settings:
         IREE_BUILD_DEBUGGER: true
-        IREE_BUILD_EXPERIMENTAL: false
+        IREE_BUILD_EXPERIMENTAL: true
         IREE_ENABLE_EMITC: false
