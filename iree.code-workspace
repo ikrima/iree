@@ -1,0 +1,46 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "..\\ireebld"
+		}
+	],
+	"settings": {
+		"search.exclude": {
+			"build": true,
+			"instl": true,
+		},
+		"cmake.sourceDirectory": "${workspaceFolder}",
+		// "cmake.cacheInit": [
+		//   "../.vscode/cacheinit.cmake"
+		// ],
+		"cmake.preferredGenerators": [
+			"Ninja"
+		],
+		"cmake.generator": "Ninja",
+		"cmake.configureSettings": {
+			// "LLVM_OPTIMIZED_TABLEGEN": true,
+			// "LLVM_TARGETS_TO_BUILD": ["AArch64","X86"],
+			"LLVM_LIT_TOOLS_DIR": "C:/Program Files/Git/usr/bin",
+			"MSVC_DIA_SDK_DIR": "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK",
+		},
+		"cmake.buildBeforeRun": false,
+		"cmake.buildDirectory": "${workspaceFolder}/../ireebld/${variant:buildType}",
+		"cmake.installPrefix": "${workspaceFolder}/../ireeinstl/${variant:buildType}",
+		"workbench.colorCustomizations": {
+			"activityBar.activeBackground": "#f9e64f",
+			"activityBar.activeBorder": "#059a89",
+			"activityBar.background": "#f9e64f",
+			"activityBar.foreground": "#15202b",
+			"activityBar.inactiveForeground": "#15202b99",
+			"activityBarBadge.background": "#059a89",
+			"activityBarBadge.foreground": "#e7e7e7",
+			"statusBar.background": "#f9e64f",
+			"statusBar.foreground": "#15202b",
+			"statusBarItem.hoverBackground": "#f7df1e"
+		},
+		"peacock.color": "#f9e64f"
+	}
+}
