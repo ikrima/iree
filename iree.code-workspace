@@ -26,6 +26,7 @@
 		"cmake.buildBeforeRun": false,
 		"cmake.buildDirectory": "${workspaceFolder}/${variant:buildType}",
 		"cmake.installPrefix": "${workspaceFolder}/instl-${variant:buildType}",
+		"C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
 		"workbench.colorCustomizations": {
 			"activityBar.activeBackground": "#f9e64f",
 			"activityBar.activeBorder": "#059a89",
