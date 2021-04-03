@@ -3,12 +3,14 @@
 
 // CHECK: @Reserve
 func @Reserve(%arg0: tensor<0xi32>, %arg1: tensor<i32>) -> !tensorlist.list {
-  // CHECK: [[VIEW0:%.+]] = hal.buffer_view.create %arg0, shape = [%c0], element_type = 16777248
-  // CHECK: [[VIEW1:%.+]] = hal.buffer_view.create %arg1, shape = [], element_type = 16777248
-  // CHECK: [[LIST:%.+]] = "tensorlist.Reserve"(%view, %view_0) {element_type = 50331680 : i32}
+  // CHECK: %c16777248_i32 = constant 16777248 : i32
+  // CHECK: %[[VIEW0:.+]] = hal.buffer_view.create %arg0, element_type = %c16777248_i32, shape = [%c0]
+  // CHECK: %c16777248_i32_0 = constant 16777248 : i32
+  // CHECK: %[[VIEW1:.+]] = hal.buffer_view.create %arg1, element_type = %c16777248_i32_0, shape = []
+  // CHECK: %[[LIST:.+]] = "tensorlist.Reserve"(%[[VIEW0]], %[[VIEW1]]) {element_type = 50331680 : i32}
   %0 = "tensorlist.Reserve.Tensor"(%arg0, %arg1) {element_type = f32} : (tensor<0xi32>, tensor<i32>) -> !tensorlist.list
 
-  // CHECK: return [[LIST]]
+  // CHECK: return %[[LIST]]
   return %0 : !tensorlist.list
 }
 
@@ -54,8 +56,7 @@ func @GetItem(%arg0: !tensorlist.list, %arg1: tensor<i32>) -> tensor<f32> {
 
 // CHECK: @Stack
 func @Stack(%arg0: !tensorlist.list, %arg1: tensor<i32>) -> tensor<1xf32> {
-  // CHECK-DAG: [[DEV:%.+]] = hal.ex.shared_device
-  // CHECK-DAG: [[ALL:%.+]] = hal.device.allocator [[DEV]]
+  // CHECK-DAG: [[ALL:%.+]] = hal.device.allocator
   // CHECK-DAG: [[VIEW:%.+]] = hal.buffer_view.create %arg1
   // CHECK-DAG: [[RES:%.+]] = "tensorlist.Stack"([[ALL]], %arg0, [[VIEW]])
   // CHECK-DAG: [[BUF:%.+]] = hal.buffer_view.buffer [[RES]]
@@ -69,8 +70,7 @@ func @Stack(%arg0: !tensorlist.list, %arg1: tensor<i32>) -> tensor<1xf32> {
 
 // CHECK: @Concat
 func @Concat(%arg0: !tensorlist.list) -> tensor<1xf32> {
-  // CHECK: [[DEV:%.+]] = hal.ex.shared_device : !hal.device
-  // CHECK: [[ALL:%.+]] = hal.device.allocator [[DEV]]
+  // CHECK: [[ALL:%.+]] = hal.device.allocator
   // CHECK: [[RES:%.+]] = "tensorlist.Concat"([[ALL]], %arg0)
   // CHECK: [[BUF:%.+]] = hal.buffer_view.buffer [[RES]]
   %0 = "tensorlist.Concat.Tensor"(%arg0) : (!tensorlist.list) -> tensor<1xf32>

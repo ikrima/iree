@@ -19,6 +19,7 @@
 #include "iree/compiler/Dialect/VMLA/IR/VMLADialect.h"
 #include "iree/compiler/Dialect/VMLA/IR/VMLAOps.h"
 #include "iree/compiler/Dialect/VMLA/IR/VMLATypes.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -174,6 +175,37 @@ class CmpFOpConversion
   }
 };
 
+class ZeroExtendIOpConversion
+    : public VMLAOpConversion<mlir::ZeroExtendIOp, IREE::VMLA::CmpOp> {
+ public:
+  using VMLAOpConversion::VMLAOpConversion;
+
+  LogicalResult matchAndRewrite(
+      mlir::ZeroExtendIOp srcOp, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const override {
+    auto srcType = srcOp.getOperand().getType().dyn_cast<ShapedType>();
+    auto dstType = srcOp.getResult().getType().dyn_cast<ShapedType>();
+    if (!srcType || !dstType) return failure();
+    if ((srcType.getElementTypeBitWidth() == 1 &&
+         dstType.getElementTypeBitWidth() == 8) ||
+        (srcType.getElementTypeBitWidth() == 8 &&
+         dstType.getElementTypeBitWidth() == 1)) {
+      auto dst = VMLAConversionTarget::allocateOutputBuffer(
+          srcOp.getLoc(), srcOp.getResult(), *getTypeConverter(), rewriter);
+      auto bitMask = rewriter.createOrFold<mlir::ConstantIntOp>(
+          srcOp.getLoc(), 1, rewriter.getI32Type());
+      rewriter.createOrFold<IREE::VMLA::AndBroadcastOp>(
+          srcOp.getLoc(), operands[0], bitMask, dst,
+          TypeAttr::get(rewriter.getIntegerType(8)), false);
+      rewriter.replaceOp(srcOp, {dst});
+      return success();
+    } else {
+      // Unhandled.
+      return failure();
+    }
+  }
+};
+
 }  // namespace
 
 void populateStandardToVMLAPatterns(MLIRContext *context,
@@ -182,6 +214,7 @@ void populateStandardToVMLAPatterns(MLIRContext *context,
   patterns.insert<ConstantOpConversion>(typeConverter, context);
   patterns.insert<CmpIOpConversion>(typeConverter, context);
   patterns.insert<CmpFOpConversion>(typeConverter, context);
+  patterns.insert<ZeroExtendIOpConversion>(typeConverter, context);
 
   patterns.insert<VMLAOpConversion<mlir::ReturnOp, mlir::ReturnOp>>(
       typeConverter, context);
@@ -213,15 +246,15 @@ void populateStandardToVMLAPatterns(MLIRContext *context,
       typeConverter, context);
   patterns.insert<VMLAOpConversion<mlir::RemFOp, IREE::VMLA::RemOp>>(
       typeConverter, context);
-  patterns.insert<VMLAOpConversion<mlir::LogOp, IREE::VMLA::LogOp>>(
+  patterns.insert<VMLAOpConversion<mlir::math::LogOp, IREE::VMLA::LogOp>>(
       typeConverter, context);
-  patterns.insert<VMLAOpConversion<mlir::ExpOp, IREE::VMLA::ExpOp>>(
+  patterns.insert<VMLAOpConversion<mlir::math::ExpOp, IREE::VMLA::ExpOp>>(
       typeConverter, context);
-  patterns.insert<VMLAOpConversion<mlir::SqrtOp, IREE::VMLA::SqrtOp>>(
+  patterns.insert<VMLAOpConversion<mlir::math::SqrtOp, IREE::VMLA::SqrtOp>>(
       typeConverter, context);
-  patterns.insert<VMLAOpConversion<mlir::CosOp, IREE::VMLA::CosOp>>(
+  patterns.insert<VMLAOpConversion<mlir::math::CosOp, IREE::VMLA::CosOp>>(
       typeConverter, context);
-  patterns.insert<VMLAOpConversion<mlir::TanhOp, IREE::VMLA::TanhOp>>(
+  patterns.insert<VMLAOpConversion<mlir::math::TanhOp, IREE::VMLA::TanhOp>>(
       typeConverter, context);
   patterns.insert<VMLAOpConversion<mlir::NegFOp, IREE::VMLA::NegOp>>(
       typeConverter, context);

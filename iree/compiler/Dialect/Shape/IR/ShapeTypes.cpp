@@ -14,6 +14,7 @@
 
 #include "iree/compiler/Dialect/Shape/IR/ShapeTypes.h"
 
+#include "iree/compiler/Dialect/Shape/IR/ShapeDialect.h"
 #include "llvm/ADT/Twine.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -70,14 +71,24 @@ RankedShapeType RankedShapeType::get(ArrayRef<int64_t> dims,
 
 RankedShapeType RankedShapeType::getChecked(ArrayRef<int64_t> dims,
                                             Location loc) {
-  return Base::getChecked(loc, dims);
+  return Base::getChecked(loc, loc.getContext(), dims);
 }
 
-LogicalResult RankedShapeType::verifyConstructionInvariants(
-    Location loc, ArrayRef<int64_t> dims) {
+RankedShapeType RankedShapeType::getChecked(
+    function_ref<InFlightDiagnostic()> emitError, MLIRContext *context,
+    ArrayRef<int64_t> dims) {
+  return Base::getChecked(emitError, context, dims);
+}
+
+RankedShapeType RankedShapeType::get(ShapedType shapedType) {
+  return Base::get(shapedType.getContext(), shapedType.getShape());
+}
+
+LogicalResult RankedShapeType::verify(
+    function_ref<InFlightDiagnostic()> emitError, ArrayRef<int64_t> dims) {
   for (auto dim : dims) {
     if (dim < 0 && dim != -1) {
-      return emitError(loc, "dims must be -1 for dynamic");
+      return emitError() << "dims must be -1 for dynamic";
     }
   }
   return success();
@@ -113,3 +124,13 @@ int64_t RankedShapeType::getStaticDim(int allDimsIndex) const {
   assert(dim >= 0 && "getStaticDim() called on dynamic dimension");
   return dim;
 }
+
+//===----------------------------------------------------------------------===//
+// ShapeDialect
+//===----------------------------------------------------------------------===//
+
+namespace mlir {
+namespace iree_compiler {
+void ShapeDialect::registerTypes() { addTypes<Shape::RankedShapeType>(); }
+}  // namespace iree_compiler
+}  // namespace mlir

@@ -25,6 +25,8 @@ cc_library(
     ],
     hdrs = ["IREEVM.h"],
     deps = [
+        "//iree/compiler/Bindings/SIP/Transforms",
+        "//iree/compiler/Bindings/TFLite/Transforms",
         "//iree/compiler/Dialect/Flow/IR",
         "//iree/compiler/Dialect/Flow/Transforms",
         "//iree/compiler/Dialect/HAL/Conversion/HALToVM",
@@ -35,6 +37,7 @@ cc_library(
         "//iree/compiler/Dialect/VM/Conversion/StandardToVM",
         "//iree/compiler/Dialect/VM/Target/Bytecode",
         "//iree/compiler/Dialect/VM/Transforms",
+        "//iree/compiler/Utils",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",

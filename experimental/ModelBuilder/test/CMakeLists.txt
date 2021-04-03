@@ -24,12 +24,10 @@ iree_lit_test_suite(
     "${_GLOB_X_CPP}"
   DATA
     test-dot-prod
-    test-matmul-vulkan
     test-mnist-jit
     test-simple-jit
     test-simple-jit-vulkan
     test-simple-mlir
-    test-vec-to-gpu
     test-vector-transfers-jit
     iree::tools::IreeFileCheck
 )
@@ -113,72 +111,6 @@ iree_cc_binary(
     MLIRSPIRV
     experimental::ModelBuilder
     experimental::ModelBuilder::ModelRunner
-    vulkan-runtime-wrappers
-)
-
-iree_cc_binary(
-  NAME
-    test-matmul-vulkan
-  OUT
-    test-matmul-vulkan
-  SRCS
-    "TestMatMulVulkan.cpp"
-  DEPS
-    LLVMSupport
-    MLIRExecutionEngine
-    MLIRGPU
-    MLIRGPUToSPIRV
-    MLIRGPUToVulkanTransforms
-    MLIRIR
-    MLIRLinalg
-    MLIRLinalgToLLVM
-    MLIRLinalgTransforms
-    MLIRParser
-    MLIRPass
-    MLIRSPIRV
-    MLIRStandardToLLVM
-    MLIRStandardToSPIRV
-    MLIRSupport
-    MLIRTargetLLVMIR
-    MLIRTransformUtils
-    MLIRVectorToLLVM
-    experimental::ModelBuilder
-    experimental::ModelBuilder::ModelRunner
-    experimental::ModelBuilder::VulkanLaunchWrapper
-    iree::compiler::Conversion::LinalgToSPIRV
-    iree::tools::init_mlir_passes_and_dialects
-    vulkan-runtime-wrappers
-)
-
-iree_cc_binary(
-  NAME
-    test-vec-to-gpu
-  OUT
-    test-vec-to-gpu
-  SRCS
-    "TestVectorToGPU.cpp"
-  DEPS
-    LLVMSupport
-    MLIRExecutionEngine
-    MLIRGPU
-    MLIRGPUToVulkanTransforms
-    MLIRIR
-    MLIRLinalg
-    MLIRLinalgToLLVM
-    MLIRLinalgTransforms
-    MLIRParser
-    MLIRPass
-    MLIRSPIRV
-    MLIRStandardToLLVM
-    MLIRStandardToSPIRV
-    MLIRTransformUtils
-    MLIRVector
-    experimental::ModelBuilder
-    experimental::ModelBuilder::ModelRunner
-    experimental::ModelBuilder::VulkanLaunchWrapper
-    iree::compiler::Conversion::CodegenUtils
-    iree::compiler::Conversion::LinalgToSPIRV
-    iree::tools::init_mlir_passes_and_dialects
     vulkan-runtime-wrappers
 )
 

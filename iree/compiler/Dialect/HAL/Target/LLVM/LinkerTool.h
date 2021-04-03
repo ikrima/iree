@@ -98,7 +98,7 @@ class LinkerTool {
   // Configures a module prior to compilation with any additional
   // functions/exports it may need, such as shared object initializer functions.
   virtual LogicalResult configureModule(
-      llvm::Module* llvmModule, ArrayRef<StringRef> entryPointNames) = 0;
+      llvm::Module* llvmModule, ArrayRef<llvm::Function*> exportedFuncs) = 0;
 
   // Links the given object files into a dynamically loadable library.
   // The resulting library (and other associated artifacts) will be returned on
@@ -109,6 +109,10 @@ class LinkerTool {
  protected:
   // Runs the given command line on the shell, logging failures.
   LogicalResult runLinkCommand(const std::string& commandLine);
+
+  // Returns the path to the first tool in |toolNames| found in the environment.
+  std::string findToolInEnvironment(
+      SmallVector<std::string, 4> toolNames) const;
 
   llvm::Triple targetTriple;
   LLVMTargetOptions targetOptions;

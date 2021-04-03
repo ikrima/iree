@@ -17,7 +17,7 @@
 #include "experimental/ModelBuilder/ModelRunner.h"
 #include "experimental/ModelBuilder/VulkanWrapperPass.h"
 #include "iree/compiler/Conversion/CodegenUtils/ForOpCanonicalization.h"
-#include "iree/compiler/Conversion/CodegenUtils/MatmulCodegenStrategy.h"
+#include "iree/compiler/Conversion/CodegenUtils/TransformUtils.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/MemorySpace.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/Passes.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/Utils.h"
@@ -30,6 +30,7 @@
 #include "mlir/Dialect/GPU/Passes.h"
 #include "mlir/Dialect/Linalg/EDSC/Intrinsics.h"
 #include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/Linalg/Transforms/CodegenStrategy.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
@@ -101,10 +102,8 @@ static void addLoweringPasses(mlir::PassManager &pm,
       mlir::spirv::createUpdateVersionCapabilityExtensionPass());
 
   pm.addPass(mlir::createAddVulkanLaunchWrapperPass(numWorkgroups, args));
-  mlir::LowerToLLVMOptions llvmOptions = {
-      /*useBarePtrCallConv=*/false,
-      /*emitCWrappers=*/true,
-      /*indexBitwidth=*/mlir::kDeriveIndexBitwidthFromDataLayout};
+  mlir::LowerToLLVMOptions llvmOptions(pm.getContext());
+  llvmOptions.emitCWrappers = true;
   pm.addPass(createLowerToLLVMPass(llvmOptions));
   pm.addPass(mlir::createConvertVulkanLaunchFuncToVulkanCallsPass());
 }
@@ -250,8 +249,8 @@ static bool EqualOrClose(T a, T b) {
   return a == b;
 }
 
-static MatmulCodegenStrategy createPowerVRStrategy(int tileM, int tileN,
-                                                   int tileK, int warpSize) {
+static linalg::CodegenStrategy createPowerVRStrategy(int tileM, int tileN,
+                                                     int tileK, int warpSize) {
   const std::array<int64_t, 3> nativeSize = {1, 1, 1};
   linalg::LinalgLoopDistributionOptions WIDistribute;
   linalg::LinalgLoopDistributionOptions WGDistribute;
@@ -274,7 +273,7 @@ static MatmulCodegenStrategy createPowerVRStrategy(int tileM, int tileN,
                    b.create<ConstantIndexOp>(loc, 1)};
     return procInfo;
   };
-  MatmulCodegenStrategy strategy;
+  linalg::CodegenStrategy strategy;
   SmallVector<int64_t, 2> promotionList;
   // promote matrix B
   promotionList.push_back(1);
@@ -284,7 +283,7 @@ static MatmulCodegenStrategy createPowerVRStrategy(int tileM, int tileN,
               .setLoopType(linalg::LinalgTilingLoopType::ParallelLoops)
               .setTileSizes({tileM, tileN, tileK})
               .setDistributionOptions(WGDistribute))
-      .setHoistInvariantCode(enableLICM);
+      .setEnableLICM(enableLICM);
   if (useWorkgroupMemory) {
     strategy.promote<linalg::MatmulOp>(
         linalg::LinalgPromotionOptions()
@@ -301,13 +300,16 @@ static MatmulCodegenStrategy createPowerVRStrategy(int tileM, int tileN,
           .setLoopType(linalg::LinalgTilingLoopType::ParallelLoops)
           .setTileSizes({1, tileN, tileK})
           .setDistributionOptions(WIDistribute));
-  strategy.vectorize<linalg::MatmulOp>().unrollVector<vector::ContractionOp>(
-      nativeSize);
+  strategy.vectorize<linalg::MatmulOp>()
+      // TODO: Upstream to core.
+      // .unrollVector<vector::ContractionOp>(nativeSize)
+      ;
+  (void)nativeSize;
   return strategy;
 }
 
-static MatmulCodegenStrategy createMaliStrategy(int tileM, int tileN, int tileK,
-                                                int warpSize) {
+static linalg::CodegenStrategy createMaliStrategy(int tileM, int tileN,
+                                                  int tileK, int warpSize) {
   const std::array<int64_t, 3> nativeSize = {1, 4, 1};
   linalg::LinalgLoopDistributionOptions WIDistribute;
   linalg::LinalgLoopDistributionOptions WGDistribute;
@@ -330,27 +332,30 @@ static MatmulCodegenStrategy createMaliStrategy(int tileM, int tileN, int tileK,
                    b.create<ConstantIndexOp>(loc, 1)};
     return procInfo;
   };
-  MatmulCodegenStrategy strategy;
+  linalg::CodegenStrategy strategy;
   strategy
       .tile<linalg::MatmulOp>(
           linalg::LinalgTilingOptions()
               .setLoopType(linalg::LinalgTilingLoopType::ParallelLoops)
               .setTileSizes({tileM, tileN, tileK})
               .setDistributionOptions(WGDistribute))
-      .setHoistInvariantCode(enableLICM);
+      .setEnableLICM(enableLICM);
   strategy.tile<linalg::MatmulOp>(
       linalg::LinalgTilingOptions()
           .setLoopType(linalg::LinalgTilingLoopType::ParallelLoops)
           .setTileSizes({tileM, tileN / warpSize, tileK})
           .setDistributionOptions(WIDistribute));
   strategy.vectorize<linalg::MatmulOp>()
-      .unrollVector<vector::TransferReadOp>({1, 4})
-      .unrollVector<vector::ContractionOp>(nativeSize);
+      // TODO: Upstream to core.
+      // .unrollVector<vector::TransferReadOp>({1, 4})
+      // .unrollVector<vector::ContractionOp>(nativeSize)
+      ;
+  (void)nativeSize;
   return strategy;
 }
 
-static MatmulCodegenStrategy createTuringStrategy(int tileM, int tileN,
-                                                  int tileK) {
+static linalg::CodegenStrategy createTuringStrategy(int tileM, int tileN,
+                                                    int tileK) {
   std::array<int64_t, 3> nativeSize;
   if (matType == "i8xi8xi32")
     nativeSize = {16, 16, 32};
@@ -372,14 +377,14 @@ static MatmulCodegenStrategy createTuringStrategy(int tileM, int tileN,
       linalg::DistributionMethod::CyclicNumProcsEqNumIters};
   SGDistribute.procInfo = getSubgroupIds;
 
-  MatmulCodegenStrategy strategy;
+  linalg::CodegenStrategy strategy;
   strategy
       .tile<linalg::MatmulOp>(
           linalg::LinalgTilingOptions()
               .setLoopType(linalg::LinalgTilingLoopType::ParallelLoops)
               .setTileSizes({tileM, tileN, tileK})
               .setDistributionOptions(WGDistribute))
-      .setHoistInvariantCode(enableLICM);
+      .setEnableLICM(enableLICM);
   if (useWorkgroupMemory) {
     strategy
         .promote<linalg::MatmulOp>(
@@ -398,8 +403,11 @@ static MatmulCodegenStrategy createTuringStrategy(int tileM, int tileN,
                     {tileM / numSubgroupY, tileN / numSubgroupX, tileK})
                 .setDistributionOptions(SGDistribute));
   }
-  strategy.vectorize<linalg::MatmulOp>().unrollVector<vector::ContractionOp>(
-      nativeSize);
+  strategy.vectorize<linalg::MatmulOp>()
+      // TODO: Upstream to core.
+      // .unrollVector<vector::ContractionOp>(nativeSize)
+      ;
+  (void)nativeSize;
   return strategy;
 }
 
@@ -449,7 +457,7 @@ static void matMul(int m, int n, int k, int tileM, int tileN, int tileK,
                      ModelRunner::Target::GPUTarget);
   CompilationOptions options;
   options.loweringPasses = [&](mlir::PassManager &pm) {
-    MatmulCodegenStrategy strategy;
+    linalg::CodegenStrategy strategy;
 
     if (target == "powerVR") {
       strategy = createPowerVRStrategy(tileM, tileN, tileK, warpSize);

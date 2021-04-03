@@ -16,8 +16,6 @@
 
 #include <memory>
 
-#include "absl/synchronization/mutex.h"
-#include "iree/base/time.h"
 #include "iree/base/tracing.h"
 #include "iree/hal/vulkan/dynamic_symbols.h"
 #include "iree/hal/vulkan/status_util.h"
@@ -26,6 +24,25 @@ namespace iree {
 namespace hal {
 namespace vulkan {
 
+namespace {
+
+class RaiiLocker {
+ public:
+  explicit RaiiLocker(iree_slim_mutex_t* mu)
+      IREE_THREAD_ANNOTATION_ATTRIBUTE(no_thread_safety_analysis)
+      : mu_(mu) {
+    iree_slim_mutex_lock(mu_);
+  }
+  ~RaiiLocker() IREE_THREAD_ANNOTATION_ATTRIBUTE(no_thread_safety_analysis) {
+    iree_slim_mutex_unlock(mu_);
+  }
+
+ private:
+  iree_slim_mutex_t* mu_;
+};
+
+}  // namespace
+
 // static
 void TimePointFence::Delete(TimePointFence* ptr) {
   ptr->ResetStatus();
@@ -33,7 +50,7 @@ void TimePointFence::Delete(TimePointFence* ptr) {
 }
 
 VkResult TimePointFence::GetStatus() {
-  absl::MutexLock lock(&status_mutex_);
+  RaiiLocker locker(&status_mutex_);
   if (status_ == VK_NOT_READY) {
     const auto& device = pool()->logical_device();
     status_ = device->syms()->vkGetFenceStatus(*device, fence_);
@@ -42,24 +59,26 @@ VkResult TimePointFence::GetStatus() {
 }
 
 void TimePointFence::ResetStatus() {
-  absl::MutexLock lock(&status_mutex_);
+  RaiiLocker locker(&status_mutex_);
   status_ = VK_NOT_READY;
 }
 
 // static
-StatusOr<ref_ptr<TimePointFencePool>> TimePointFencePool::Create(
-    ref_ptr<VkDeviceHandle> logical_device) {
+iree_status_t TimePointFencePool::Create(VkDeviceHandle* logical_device,
+                                         TimePointFencePool** out_pool) {
   IREE_TRACE_SCOPE0("TimePointFencePool::Create");
-  ref_ptr<TimePointFencePool> pool(
-      new TimePointFencePool(std::move(logical_device)));
+  ref_ptr<TimePointFencePool> pool(new TimePointFencePool(logical_device));
+  iree_slim_mutex_initialize(&(pool->mutex_));
   IREE_RETURN_IF_ERROR(pool->PreallocateFences());
-  return pool;
+  *out_pool = pool.release();
+  return iree_ok_status();
 }
 
 TimePointFencePool::~TimePointFencePool() {
   IREE_TRACE_SCOPE0("TimePointFencePool::dtor");
 
-  absl::MutexLock lock(&mutex_);
+  iree_slim_mutex_lock(&mutex_);
+
   int free_count = 0;
   for (auto* fence : free_fences_) {
     syms()->vkDestroyFence(*logical_device_, fence->value(),
@@ -68,15 +87,18 @@ TimePointFencePool::~TimePointFencePool() {
   }
   IREE_DCHECK_EQ(free_count, kMaxInFlightFenceCount);
   free_fences_.clear();
+
+  iree_slim_mutex_unlock(&mutex_);
+  iree_slim_mutex_deinitialize(&mutex_);
 }
 
-StatusOr<ref_ptr<TimePointFence>> TimePointFencePool::Acquire() {
+Status TimePointFencePool::Acquire(ref_ptr<TimePointFence>* out_fence) {
   IREE_TRACE_SCOPE0("TimePointFencePool::Acquire");
 
-  absl::MutexLock lock(&mutex_);
+  RaiiLocker locker(&mutex_);
   if (free_fences_.empty()) {
-    return ResourceExhaustedErrorBuilder(IREE_LOC)
-           << "Fence pool out of free fences";
+    return iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                            "fence pool out of free fences");
   }
 
   // To acquire from the pool, we:
@@ -89,19 +111,20 @@ StatusOr<ref_ptr<TimePointFence>> TimePointFencePool::Acquire() {
   // automatically.
   std::unique_ptr<TimePointFence> fence =
       free_fences_.take(free_fences_.front());
-  return add_ref(fence.release());
+  *out_fence = add_ref(fence.release());
+  return OkStatus();
 }
 
 void TimePointFencePool::ReleaseResolved(TimePointFence* fence) {
   IREE_TRACE_SCOPE0("TimePointFencePool::ReleaseResolved");
   VkFence f = fence->value();
   syms()->vkResetFences(*logical_device_, 1, &f);
-  absl::MutexLock lock(&mutex_);
+  RaiiLocker locker(&mutex_);
   free_fences_.push_back(std::unique_ptr<TimePointFence>(fence));
 }
 
-TimePointFencePool::TimePointFencePool(ref_ptr<VkDeviceHandle> logical_device)
-    : logical_device_(std::move(logical_device)) {}
+TimePointFencePool::TimePointFencePool(VkDeviceHandle* logical_device)
+    : logical_device_(logical_device) {}
 
 const ref_ptr<DynamicSymbols>& TimePointFencePool::syms() const {
   return logical_device_->syms();
@@ -117,12 +140,13 @@ Status TimePointFencePool::PreallocateFences() {
 
   std::array<std::unique_ptr<TimePointFence>, kMaxInFlightFenceCount> fences;
   {
-    absl::MutexLock lock(&mutex_);
+    RaiiLocker locker(&mutex_);
     for (int i = 0; i < fences.size(); ++i) {
       VkFence fence = VK_NULL_HANDLE;
-      VK_RETURN_IF_ERROR(syms()->vkCreateFence(*logical_device_, &create_info,
-                                               logical_device_->allocator(),
-                                               &fence));
+      VK_RETURN_IF_ERROR(
+          syms()->vkCreateFence(*logical_device_, &create_info,
+                                logical_device_->allocator(), &fence),
+          "vkCreateFence");
       fences[i] = std::make_unique<TimePointFence>(this, fence);
     }
   }
@@ -142,19 +166,21 @@ Status TimePointFencePool::PreallocateFences() {
 }
 
 // static
-StatusOr<ref_ptr<TimePointSemaphorePool>> TimePointSemaphorePool::Create(
-    ref_ptr<VkDeviceHandle> logical_device) {
+iree_status_t TimePointSemaphorePool::Create(
+    VkDeviceHandle* logical_device, TimePointSemaphorePool** out_pool) {
   IREE_TRACE_SCOPE0("TimePointSemaphorePool::Create");
   ref_ptr<TimePointSemaphorePool> pool(
-      new TimePointSemaphorePool(std::move(logical_device)));
+      new TimePointSemaphorePool(logical_device));
+  iree_slim_mutex_initialize(&(pool->mutex_));
   IREE_RETURN_IF_ERROR(pool->PreallocateSemaphores());
-  return pool;
+  *out_pool = pool.release();
+  return iree_ok_status();
 }
 
 TimePointSemaphorePool::~TimePointSemaphorePool() {
   IREE_TRACE_SCOPE0("TimePointSemaphorePool::dtor");
 
-  absl::MutexLock lock(&mutex_);
+  iree_slim_mutex_lock(&mutex_);
 
   IREE_DCHECK_EQ(free_semaphores_.size(), kMaxInFlightSemaphoreCount);
   free_semaphores_.clear();
@@ -163,20 +189,23 @@ TimePointSemaphorePool::~TimePointSemaphorePool() {
     syms()->vkDestroySemaphore(*logical_device_, semaphore.semaphore,
                                logical_device_->allocator());
   }
+
+  iree_slim_mutex_unlock(&mutex_);
+  iree_slim_mutex_deinitialize(&mutex_);
 }
 
-StatusOr<TimePointSemaphore*> TimePointSemaphorePool::Acquire() {
+Status TimePointSemaphorePool::Acquire(TimePointSemaphore** out_semaphore) {
   IREE_TRACE_SCOPE0("TimePointSemaphorePool::Acquire");
 
-  absl::MutexLock lock(&mutex_);
+  RaiiLocker locker(&mutex_);
   if (free_semaphores_.empty()) {
-    return ResourceExhaustedErrorBuilder(IREE_LOC)
-           << "Semaphore pool out of free semaphores";
+    return iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                            "semaphore pool out of free semaphores");
   }
 
-  auto* semaphore = free_semaphores_.front();
+  *out_semaphore = free_semaphores_.front();
   free_semaphores_.pop_front();
-  return semaphore;
+  return OkStatus();
 }
 
 void TimePointSemaphorePool::ReleaseResolved(
@@ -188,7 +217,7 @@ void TimePointSemaphorePool::ReleaseResolved(
     semaphore->value = UINT64_MAX;
   }
 
-  absl::MutexLock lock(&mutex_);
+  RaiiLocker locker(&mutex_);
   free_semaphores_.merge_from(semaphores);
 }
 
@@ -202,13 +231,12 @@ void TimePointSemaphorePool::ReleaseUnresolved(
     semaphore->value = UINT64_MAX;
   }
 
-  absl::MutexLock lock(&mutex_);
+  RaiiLocker locker(&mutex_);
   free_semaphores_.merge_from(semaphores);
 }
 
-TimePointSemaphorePool::TimePointSemaphorePool(
-    ref_ptr<VkDeviceHandle> logical_device)
-    : logical_device_(std::move(logical_device)) {}
+TimePointSemaphorePool::TimePointSemaphorePool(VkDeviceHandle* logical_device)
+    : logical_device_(logical_device) {}
 
 const ref_ptr<DynamicSymbols>& TimePointSemaphorePool::syms() const {
   return logical_device_->syms();
@@ -222,12 +250,13 @@ Status TimePointSemaphorePool::PreallocateSemaphores() {
   create_info.pNext = nullptr;
   create_info.flags = 0;
 
-  absl::MutexLock lock(&mutex_);
+  RaiiLocker locker(&mutex_);
   for (int i = 0; i < kMaxInFlightSemaphoreCount; ++i) {
     auto* semaphore = &storage_[i];
     VK_RETURN_IF_ERROR(syms()->vkCreateSemaphore(*logical_device_, &create_info,
                                                  logical_device_->allocator(),
-                                                 &semaphore->semaphore));
+                                                 &semaphore->semaphore),
+                       "vkCreateSemaphore");
     free_semaphores_.push_back(semaphore);
   }
 

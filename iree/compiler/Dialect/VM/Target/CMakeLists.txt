@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# bazel_to_cmake: DO NOT EDIT (EmitC is only buildable with CMake)
-
 iree_add_all_subdirs()
 
 if(IREE_ENABLE_EMITC)
@@ -21,6 +19,21 @@ if(IREE_ENABLE_EMITC)
     iree::compiler::Dialect::VM::Target::C
   )
 endif()
+
+iree_cc_library(
+  NAME
+    CallingConventionUtils
+  HDRS
+    "CallingConventionUtils.h"
+  SRCS
+    "CallingConventionUtils.cpp"
+  DEPS
+    LLVMSupport
+    MLIRIR
+    MLIRSupport
+    iree::compiler::Dialect::VM::IR
+  PUBLIC
+)
 
 iree_cc_library(
   NAME

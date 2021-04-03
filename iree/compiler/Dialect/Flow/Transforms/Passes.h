@@ -28,8 +28,18 @@ namespace IREE {
 namespace Flow {
 
 //===----------------------------------------------------------------------===//
-// Helpers
+// Pipelines
 //===----------------------------------------------------------------------===//
+
+// Adds a set of passes to the given pass manager that perform input dialect
+// legalization required by the Flow dialect.
+//
+// NOTE: this will eventually be moved out to an associated import tool - it
+// currently relies on linking in all of the input dialects (mhlo, etc) and
+// instead those should be taken care of prior to coming into the compiler.
+void buildInputTransformPassPipeline(OpPassManager &passManager);
+
+void registerInputTransformPassPipeline();
 
 // Adds a set of passes to the given pass manager that run the required flow
 // transforms in the canonical order.
@@ -39,27 +49,21 @@ namespace Flow {
 //
 // The expected usage is:
 //   <run conversion from TF/HLO/etc to flow>
-//   buildFlowTransformPassPipeline & run
+//   buildInputTransformPassPipeline
+//   buildFlowTransformPassPipeline
 //   <run conversion from flow to sequencer/hal/vm/etc>
 void buildFlowTransformPassPipeline(OpPassManager &passManager);
 
 void registerFlowTransformPassPipeline();
 
-// Adds a set of passes to the given pass manager that run the flow transforms
-// to export dispatch functions.
-//
-// The expected usage is to add passes right after
-// buildFlowTransformPassPipieline.
-void buildExportDispatchesTransformPassPipeline(OpPassManager &passManager);
-
-void registerExportDispatchesTransformPassPipeline();
-
 //===----------------------------------------------------------------------===//
 // Input canonicalization and legalization
 //===----------------------------------------------------------------------===//
 
-// Flattens tuple values in function signatures and blocks.
-std::unique_ptr<OperationPass<ModuleOp>> createFlattenTuplesInCFGPass();
+// Convert operations to equivalent flow.tensor.* ops. This is run after
+// dispatch region creation to catch operations that were left outside of
+// dispatch regions and could be represented as flow.tensor.* ops.
+std::unique_ptr<OperationPass<FuncOp>> createConvertToFlowTensorOpsPass();
 
 // Legalizes the input types to those supported by the flow dialect.
 // This will fail if types that cannot be supported at all are present, however
@@ -77,37 +81,21 @@ std::unique_ptr<OperationPass<FuncOp>> createHLOPreprocessingPass();
 // benefit. Other ops are left unmodified and will be outlined later on.
 std::unique_ptr<OperationPass<FuncOp>> createPrePartitioningConversionPass();
 
-// Runs post-partitioning conversion passes to legalize the flow dialect.
-// This converts any leftover ops that did not already get converted or outlined
-// to dispatch regions.
-std::unique_ptr<OperationPass<FuncOp>> createPostPartitioningConversionPass();
-
-// Materializes reflection metadata on exported function arguments and results.
-// This runs as close to the input processing as possible as it needs to
-// annotate the ABI that the consumer is expecting to interop with.
-// Note that this does not combine the argument and result metadata into top
-// level function metadata. That happens late in transformation, as additional
-// synthetic arguments and results may still need to be added.
-std::unique_ptr<OperationPass<FuncOp>> createMaterializeExportedReflection();
-
-// Merges f_partial argument and result reflection metadata into a function
-// level signature. This should be run late once all synthetic arguments have
-// been added and no further exported function signature changes are
-// expected.
-std::unique_ptr<OperationPass<FuncOp>> createMergeExportedReflection();
+// Expands dynamic !shapex.ranked_shape dimensions in variables.
+std::unique_ptr<OperationPass<ModuleOp>> createExpandVariableDynamicDimsPass();
 
 //===----------------------------------------------------------------------===//
 // Dispatches (flow.dispatch.region)
 //===----------------------------------------------------------------------===//
 
+/// Pass to perform dispatch of Linalg on tensor ops by tiling and distribution.
+/// A dispatch region is created for each tiled loop nest.
+std::unique_ptr<OperationPass<FuncOp>> createDispatchLinalgOnTensorsPass();
+
 // Analyzes a module to identify which functions are dispatchable.
 // This information is cached on the module and is used by other FuncOp-scoped
 // passes to quickly access the module-level dispatchability information.
 std::unique_ptr<OperationPass<ModuleOp>> createDispatchabilityAnalysisPass();
-
-// Identifies dispatchable regions of functions and wraps them in
-// flow.dispatch_regions.
-std::unique_ptr<OperationPass<FuncOp>> createIdentifyDispatchRegionsPass();
 
 // Identifies dispatchable regions of functions and wraps them in
 // flow.dispatch_regions (version 2).
@@ -117,10 +105,6 @@ std::unique_ptr<OperationPass<FuncOp>> createIdentifyDispatchRegions2Pass();
 std::unique_ptr<OperationPass<FuncOp>>
 createFoldCompatibleDispatchRegionsPass();
 
-// Rematerializes small previously-CSE'd constants into dispatch regions.
-std::unique_ptr<OperationPass<FuncOp>>
-createRematerializeDispatchConstantsPass();
-
 // Outlines dispatch regions into executables.
 std::unique_ptr<OperationPass<ModuleOp>> createOutlineDispatchRegionsPass();
 std::unique_ptr<OperationPass<ModuleOp>> createOutlineDispatchRegions2Pass();
@@ -128,8 +112,8 @@ std::unique_ptr<OperationPass<ModuleOp>> createOutlineDispatchRegions2Pass();
 // Injects tracing markers for dispatch operation tensor inputs and outputs.
 std::unique_ptr<OperationPass<FuncOp>> createInjectDispatchTracingPass();
 
-// Exports all the dispatch functions to the module.
-std::unique_ptr<OperationPass<ModuleOp>> createCreateBenchmarkFuncs();
+// Exports all functions and dispatch executables as `() -> ()` benchmark funcs.
+std::unique_ptr<OperationPass<ModuleOp>> createExportBenchmarkFuncsPass();
 
 //===----------------------------------------------------------------------===//
 // Optimizations
@@ -179,22 +163,18 @@ createStripAndSplatConstantVariablesPass();
 //===----------------------------------------------------------------------===//
 
 inline void registerFlowPasses() {
+  registerInputTransformPassPipeline();
   registerFlowTransformPassPipeline();
-  registerExportDispatchesTransformPassPipeline();
-  createFlattenTuplesInCFGPass();
+  createConvertToFlowTensorOpsPass();
   createLegalizeInputTypesPass();
   createHLOPreprocessingPass();
   createPrePartitioningConversionPass();
-  createPostPartitioningConversionPass();
-  createMaterializeExportedReflection();
-  createMergeExportedReflection();
+  createExpandVariableDynamicDimsPass();
   createDispatchabilityAnalysisPass();
-  createIdentifyDispatchRegionsPass();
   createIdentifyDispatchRegions2Pass();
   createFoldCompatibleDispatchRegionsPass();
-  createRematerializeDispatchConstantsPass();
   createOutlineDispatchRegionsPass();
-  createCreateBenchmarkFuncs();
+  createExportBenchmarkFuncsPass();
   createOutlineLargeConstantsPass();
   createDeduplicateExecutablesPass();
   createFormStreamsPass();

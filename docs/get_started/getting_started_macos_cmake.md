@@ -31,12 +31,12 @@ $ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/
 
 ### Install CMake
 
-IREE uses [CMake](https://cmake.org/) version `>= 3.13`. Brew ships the latest
+IREE uses [CMake](https://cmake.org/) version `>= 3.13.4`. Brew ships the latest
 release.
 
 ```shell
 $ brew install cmake
-$ cmake --version  # >= 3.13
+$ cmake --version  # >= 3.13.4
 ```
 
 ### Install Ninja
@@ -99,11 +99,11 @@ $ ../iree-build/iree/tools/iree-translate --help
 ```
 
 Translate a
-[MLIR file](https://github.com/google/iree/blob/main/iree/tools/test/simple.mlir)
+[MLIR file](https://github.com/google/iree/blob/main/iree/tools/test/iree-run-mlir.mlir)
 and execute a function in the compiled module:
 
 ```shell
-$ ../iree-build/iree/tools/iree-run-mlir $PWD/iree/tools/test/simple.mlir \
+$ ../iree-build/iree/tools/iree-run-mlir $PWD/iree/tools/test/iree-run-mlir.mlir \
   -function-input="i32=-2" -iree-hal-target-backends=vmla -print-mlir
 ```
 

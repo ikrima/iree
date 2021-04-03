@@ -35,12 +35,12 @@ cc_library(
         "IREE_HAL_HAVE_VULKAN_DRIVER_MODULE=1",
     ],
     deps = [
-        "//iree/base:flags",
+        "//iree/base:core_headers",
         "//iree/base:status",
         "//iree/base:tracing",
+        "//iree/base/internal:flags",
         "//iree/hal:api",
         "//iree/hal/vulkan",
-        "//iree/hal/vulkan:utils",
         "@com_google_absl//absl/flags:flag",
     ],
 )

@@ -12,16 +12,21 @@ flow.executable @simpleMath_ex_dispatch_0 {
   }
 }
 
-// CHECK-LABEL: hal.executable @linked_vmla
-//  CHECK-NEXT:   hal.interface @legacy_io_0 {
+// CHECK-LABEL: hal.executable @simpleMath_ex_dispatch_0
+//  CHECK-NEXT:   hal.interface @legacy_io {
 //  CHECK-NEXT:     hal.interface.binding @arg0, set=0, binding=0, type="StorageBuffer", access="Read"
 //  CHECK-NEXT:     hal.interface.binding @ret0, set=0, binding=1, type="StorageBuffer", access="Write|Discard"
 //  CHECK-NEXT:   }
 //  CHECK-NEXT:   hal.executable.target @vmla, filter="vmla" {
-//  CHECK-NEXT:     hal.executable.entry_point @simpleMath_rgn_dispatch_0 attributes {interface = @legacy_io_0, ordinal = 0 : i32, signature = (tensor<4xf32>) -> tensor<4xf32>}
+//  CHECK-NEXT:     hal.executable.entry_point @simpleMath_rgn_dispatch_0 attributes {interface = @legacy_io, ordinal = 0 : index, signature = (tensor<4xf32>) -> tensor<4xf32>}
 //  CHECK-NEXT:     module {
-//  CHECK-NEXT:       vm.module @linked_module {
-//  CHECK-NEXT:         vm.func @simpleMath_rgn_dispatch_0(%arg0: !vm.ref<!vmla.interface>, %arg1: i32, %arg2: i32, %arg3: i32) {
+//  CHECK-NEXT:       vm.module @module {
+//  CHECK-DAG:         vm.import @vmla.interface.binding(%interface : !vm.ref<!vmla.interface>, %set : i32, %binding : i32) -> !vm.ref<!vmla.buffer>
+//  CHECK-DAG:         vm.import @vmla.buffer.alloc(%byte_length : i32) -> !vm.ref<!vmla.buffer>
+//  CHECK-DAG:         vm.import @vmla.buffer.view(%src : !vm.ref<!vmla.buffer>, %byte_offset : i32, %byte_length : i32) -> !vm.ref<!vmla.buffer>
+//  CHECK-DAG:         vm.import @vmla.buffer.copy(%src : !vm.ref<!vmla.buffer>, %src_byte_offset : i32, %dst : !vm.ref<!vmla.buffer>, %dst_byte_offset : i32, %byte_length : i32)
+//  CHECK-DAG:         vm.import @vmla.add.f32(%lhs : !vm.ref<!vmla.buffer>, %rhs : !vm.ref<!vmla.buffer>, %dst : !vm.ref<!vmla.buffer>)
+//  CHECK:         vm.func @simpleMath_rgn_dispatch_0(%arg0: !vm.ref<!vmla.interface>, %arg1: i32, %arg2: i32, %arg3: i32) {
 //   CHECK-DAG:           %zero = vm.const.i32.zero : i32
 //   CHECK-DAG:           %c16 = vm.const.i32 16 : i32
 //   CHECK-DAG:           %c1 = vm.const.i32 1 : i32
@@ -34,11 +39,6 @@ flow.executable @simpleMath_ex_dispatch_0 {
 //  CHECK-NEXT:           vm.return
 //  CHECK-NEXT:         }
 //  CHECK-NEXT:         vm.export @simpleMath_rgn_dispatch_0
-//  CHECK-NEXT:         vm.import @vmla.interface.binding(%interface : !vm.ref<!vmla.interface>, %set : i32, %binding : i32) -> !vm.ref<!vmla.buffer>
-//  CHECK-NEXT:         vm.import @vmla.buffer.alloc(%byte_length : i32) -> !vm.ref<!vmla.buffer>
-//  CHECK-NEXT:         vm.import @vmla.buffer.view(%src : !vm.ref<!vmla.buffer>, %byte_offset : i32, %byte_length : i32) -> !vm.ref<!vmla.buffer>
-//  CHECK-NEXT:         vm.import @vmla.buffer.copy(%src : !vm.ref<!vmla.buffer>, %src_byte_offset : i32, %dst : !vm.ref<!vmla.buffer>, %dst_byte_offset : i32, %byte_length : i32)
-//  CHECK-NEXT:         vm.import @vmla.add.f32(%lhs : !vm.ref<!vmla.buffer>, %rhs : !vm.ref<!vmla.buffer>, %dst : !vm.ref<!vmla.buffer>)
 
 // -----
 
@@ -55,16 +55,16 @@ flow.executable @shaped_dispatch {
   }
 }
 
-// CHECK-LABEL: hal.executable @linked_vmla
-//  CHECK-NEXT:   hal.interface @legacy_io_0 attributes {push_constants = 1 : i32} {
+// CHECK-LABEL: hal.executable @shaped_dispatch
+//  CHECK-NEXT:   hal.interface @legacy_io attributes {push_constants = 1 : index} {
 //  CHECK-NEXT:     hal.interface.binding @arg0, set=0, binding=0, type="StorageBuffer", access="Read"
 //  CHECK-NEXT:     hal.interface.binding @ret0, set=0, binding=1, type="StorageBuffer", access="Write|Discard"
 //  CHECK-NEXT:   }
 //  CHECK-NEXT:   hal.executable.target @vmla, filter="vmla" {
-//  CHECK-NEXT:     hal.executable.entry_point @entry attributes {interface = @legacy_io_0, ordinal = 0 : i32, signature = (tensor<4x?xf32>, index) -> tensor<4x?xf32>}
+//  CHECK-NEXT:     hal.executable.entry_point @entry attributes {interface = @legacy_io, ordinal = 0 : index, signature = (tensor<4x?xf32>, index) -> tensor<4x?xf32>}
 //  CHECK-NEXT:     module {
-//  CHECK-NEXT:       vm.module @linked_module {
-//  CHECK-NEXT:         vm.func @entry(%arg0: !vm.ref<!vmla.interface>, %arg1: i32, %arg2: i32, %arg3: i32) {
+//  CHECK-NEXT:       vm.module @module {
+//  CHECK:         vm.func @entry(%arg0: !vm.ref<!vmla.interface>, %arg1: i32, %arg2: i32, %arg3: i32) {
 //   CHECK-DAG:           %zero = vm.const.i32.zero : i32
 //   CHECK-DAG:           %c16 = vm.const.i32 16 : i32
 //   CHECK-DAG:           %c1 = vm.const.i32 1 : i32
@@ -97,17 +97,24 @@ flow.executable @reduction_ex_dispatch_0 {
   }
 }
 
-// CHECK-LABEL: hal.executable @linked_vmla
-//  CHECK-NEXT:   hal.interface @legacy_io_0 {
+// CHECK-LABEL: hal.executable @reduction_ex_dispatch_0
+//  CHECK-NEXT:   hal.interface @legacy_io {
 //  CHECK-NEXT:     hal.interface.binding @arg0, set=0, binding=0, type="StorageBuffer", access="Read"
 //  CHECK-NEXT:     hal.interface.binding @ret0, set=0, binding=1, type="StorageBuffer", access="Write|Discard"
 //  CHECK-NEXT:   }
 //  CHECK-NEXT:   hal.executable.target @vmla, filter="vmla" {
-//  CHECK-NEXT:     hal.executable.entry_point @reduction_ex_dispatch_0 attributes {interface = @legacy_io_0, ordinal = 0 : i32, signature = (tensor<4x8xf32>) -> tensor<4xf32>}
+//  CHECK-NEXT:     hal.executable.entry_point @reduction_ex_dispatch_0 attributes {interface = @legacy_io, ordinal = 0 : index, signature = (tensor<4x8xf32>) -> tensor<4xf32>}
 //  CHECK-NEXT:     module {
-//  CHECK-NEXT:       vm.module @linked_module {
-//  CHECK-NEXT:         vm.rodata @reduction_ex_dispatch_0_const dense<0.000000e+00> : tensor<1xf32>
-//  CHECK-NEXT:         vm.func @reduction_ex_dispatch_0(%arg0: !vm.ref<!vmla.interface>, %arg1: i32, %arg2: i32, %arg3: i32) {
+//  CHECK-NEXT:       vm.module @module {
+//  CHECK-DAG:         vm.import @vmla.interface.binding(%interface : !vm.ref<!vmla.interface>, %set : i32, %binding : i32) -> !vm.ref<!vmla.buffer>
+//  CHECK-DAG:         vm.import @vmla.buffer.const(%value : !vm.ref<!iree.byte_buffer>) -> !vm.ref<!vmla.buffer>
+//  CHECK-DAG:         vm.import @vmla.buffer.alloc(%byte_length : i32) -> !vm.ref<!vmla.buffer>
+//  CHECK-DAG:         vm.import @vmla.buffer.view(%src : !vm.ref<!vmla.buffer>, %byte_offset : i32, %byte_length : i32) -> !vm.ref<!vmla.buffer>
+//  CHECK-DAG:         vm.import @vmla.buffer.copy(%src : !vm.ref<!vmla.buffer>, %src_byte_offset : i32, %dst : !vm.ref<!vmla.buffer>, %dst_byte_offset : i32, %byte_length : i32)
+//  CHECK-DAG:         vm.import @vmla.buffer.fill(%value : !vm.ref<!vmla.buffer>, %dst : !vm.ref<!vmla.buffer>)
+//  CHECK-DAG:         vm.import @vmla.reduce.sum.f32(%src : !vm.ref<!vmla.buffer>, %src_shape : i32 ..., %init : !vm.ref<!vmla.buffer>, %init_shape : i32 ..., %dimension : i32, %dst : !vm.ref<!vmla.buffer>, %dst_shape : i32 ...)
+//  CHECK-DAG:         vm.rodata @reduction_ex_dispatch_0_const dense<0.000000e+00> : tensor<1xf32>
+//  CHECK:         vm.func @reduction_ex_dispatch_0(%arg0: !vm.ref<!vmla.interface>, %arg1: i32, %arg2: i32, %arg3: i32) {
 //   CHECK-DAG:           %zero = vm.const.i32.zero : i32
 //   CHECK-DAG:           %c128 = vm.const.i32 128 : i32
 //   CHECK-DAG:           %c16 = vm.const.i32 16 : i32
@@ -127,10 +134,3 @@ flow.executable @reduction_ex_dispatch_0 {
 //  CHECK-NEXT:           vm.return
 //  CHECK-NEXT:         }
 //  CHECK-NEXT:         vm.export @reduction_ex_dispatch_0
-//  CHECK-NEXT:         vm.import @vmla.interface.binding(%interface : !vm.ref<!vmla.interface>, %set : i32, %binding : i32) -> !vm.ref<!vmla.buffer>
-//  CHECK-NEXT:         vm.import @vmla.buffer.const(%value : !vm.ref<!iree.byte_buffer>) -> !vm.ref<!vmla.buffer>
-//  CHECK-NEXT:         vm.import @vmla.buffer.alloc(%byte_length : i32) -> !vm.ref<!vmla.buffer>
-//  CHECK-NEXT:         vm.import @vmla.buffer.view(%src : !vm.ref<!vmla.buffer>, %byte_offset : i32, %byte_length : i32) -> !vm.ref<!vmla.buffer>
-//  CHECK-NEXT:         vm.import @vmla.buffer.copy(%src : !vm.ref<!vmla.buffer>, %src_byte_offset : i32, %dst : !vm.ref<!vmla.buffer>, %dst_byte_offset : i32, %byte_length : i32)
-//  CHECK-NEXT:         vm.import @vmla.buffer.fill(%value : !vm.ref<!vmla.buffer>, %dst : !vm.ref<!vmla.buffer>)
-//  CHECK-NEXT:         vm.import @vmla.reduce.sum.f32(%src : !vm.ref<!vmla.buffer>, %src_shape : i32 ..., %init : !vm.ref<!vmla.buffer>, %init_shape : i32 ..., %dimension : i32, %dst : !vm.ref<!vmla.buffer>, %dst_shape : i32 ...)

@@ -19,9 +19,9 @@
 
 // Other dependencies (helpers, etc.)
 #include "absl/flags/flag.h"
-#include "iree/base/file_io.h"
-#include "iree/base/flags.h"
-#include "iree/base/main.h"
+#include "iree/base/internal/file_io.h"
+#include "iree/base/internal/flags.h"
+#include "iree/base/internal/main.h"
 #include "iree/base/status.h"
 #include "iree/hal/vulkan/registration/driver_module.h"
 #include "iree/modules/hal/hal_module.h"
@@ -88,16 +88,16 @@ void CleanupVulkanWindow() {
                                   g_Allocator);
 }
 
-StatusOr<std::string> GetModuleContentsFromFlags() {
+Status GetModuleContentsFromFlags(std::string* out_contents) {
   auto module_file = absl::GetFlag(FLAGS_module_file);
-  std::string contents;
   if (module_file == "-") {
-    contents = std::string{std::istreambuf_iterator<char>(std::cin),
-                           std::istreambuf_iterator<char>()};
+    *out_contents = std::string{std::istreambuf_iterator<char>(std::cin),
+                                std::istreambuf_iterator<char>()};
   } else {
-    IREE_ASSIGN_OR_RETURN(contents, file_io::GetFileContents(module_file));
+    IREE_RETURN_IF_ERROR(
+        file_io::GetFileContents(module_file.c_str(), out_contents));
   }
-  return contents;
+  return OkStatus();
 }
 
 // Runs the current IREE bytecode module and renders its result to a window
@@ -116,12 +116,10 @@ Status RunModuleAndUpdateImGuiWindow(
   IREE_LOG(INFO) << "EXEC @" << function_name;
   IREE_RETURN_IF_ERROR(iree_vm_invoke(context, function, /*policy=*/nullptr,
                                       function_inputs.get(), outputs.get(),
-                                      iree_allocator_system()))
-      << "invoking function " << function_name;
+                                      iree_allocator_system()));
 
   std::ostringstream oss;
-  IREE_RETURN_IF_ERROR(PrintVariantList(output_descs, outputs.get(), &oss))
-      << "printing results";
+  IREE_RETURN_IF_ERROR(PrintVariantList(output_descs, outputs.get(), &oss));
 
   outputs.reset();
 
@@ -144,9 +142,8 @@ Status RunModuleAndUpdateImGuiWindow(
   return OkStatus();
 }
 }  // namespace
-}  // namespace iree
 
-int iree::IreeMain(int argc, char** argv) {
+extern "C" int iree_main(int argc, char** argv) {
   iree_flags_parse_checked(&argc, &argv);
   IREE_CHECK_OK(iree_hal_vulkan_driver_module_register(
       iree_hal_driver_registry_default()));
@@ -168,9 +165,8 @@ int iree::IreeMain(int argc, char** argv) {
   // Setup Vulkan
   iree_hal_vulkan_features_t iree_vulkan_features =
       static_cast<iree_hal_vulkan_features_t>(
-          IREE_HAL_VULKAN_ENABLE_VALIDATION_LAYERS |
-          IREE_HAL_VULKAN_ENABLE_DEBUG_UTILS |
-          IREE_HAL_VULKAN_ENABLE_PUSH_DESCRIPTORS);
+          IREE_HAL_VULKAN_FEATURE_ENABLE_VALIDATION_LAYERS |
+          IREE_HAL_VULKAN_FEATURE_ENABLE_DEBUG_UTILS);
   std::vector<const char*> layers = GetInstanceLayers(iree_vulkan_features);
   std::vector<const char*> extensions =
       GetInstanceExtensions(window, iree_vulkan_features);
@@ -275,28 +271,32 @@ int iree::IreeMain(int argc, char** argv) {
   // Load symbols from our static `vkGetInstanceProcAddr` for IREE to use.
   iree_hal_vulkan_syms_t* iree_vk_syms = nullptr;
   IREE_CHECK_OK(iree_hal_vulkan_syms_create(
-      reinterpret_cast<void*>(&vkGetInstanceProcAddr), &iree_vk_syms));
+      reinterpret_cast<void*>(&vkGetInstanceProcAddr), iree_allocator_system(),
+      &iree_vk_syms));
   // Create the driver sharing our VkInstance.
   iree_hal_driver_t* iree_vk_driver = nullptr;
-  iree_hal_vulkan_driver_options_t options;
-  options.api_version = VK_API_VERSION_1_0;
-  options.features = static_cast<iree_hal_vulkan_features_t>(
-      IREE_HAL_VULKAN_ENABLE_DEBUG_UTILS |
-      IREE_HAL_VULKAN_ENABLE_PUSH_DESCRIPTORS);
+  iree_string_view_t driver_identifier = iree_make_cstring_view("vulkan");
+  iree_hal_vulkan_driver_options_t driver_options;
+  driver_options.api_version = VK_API_VERSION_1_0;
+  driver_options.requested_features = static_cast<iree_hal_vulkan_features_t>(
+      IREE_HAL_VULKAN_FEATURE_ENABLE_DEBUG_UTILS);
   IREE_CHECK_OK(iree_hal_vulkan_driver_create_using_instance(
-      options, iree_vk_syms, g_Instance, &iree_vk_driver));
+      driver_identifier, &driver_options, iree_vk_syms, g_Instance,
+      iree_allocator_system(), &iree_vk_driver));
   // Create a device sharing our VkDevice and queue. This makes capturing with
   // vendor tools easier because we will have sync compute residing in the
   // rendered frame.
+  iree_string_view_t device_identifier = iree_make_cstring_view("vulkan");
   iree_hal_vulkan_queue_set_t compute_queue_set;
   compute_queue_set.queue_family_index = g_QueueFamily;
   compute_queue_set.queue_indices = 1 << 0;
   iree_hal_vulkan_queue_set_t transfer_queue_set;
   transfer_queue_set.queue_indices = 0;
   iree_hal_device_t* iree_vk_device = nullptr;
-  IREE_CHECK_OK(iree_hal_vulkan_driver_wrap_device(
-      iree_vk_driver, g_PhysicalDevice, g_Device, compute_queue_set,
-      transfer_queue_set, &iree_vk_device));
+  IREE_CHECK_OK(iree_hal_vulkan_wrap_device(
+      device_identifier, &driver_options.device_options, iree_vk_syms,
+      g_Instance, g_PhysicalDevice, g_Device, &compute_queue_set,
+      &transfer_queue_set, iree_allocator_system(), &iree_vk_device));
   // Create a HAL module using the HAL device.
   iree_vm_module_t* hal_module = nullptr;
   IREE_CHECK_OK(iree_hal_module_create(iree_vk_device, iree_allocator_system(),
@@ -304,16 +304,13 @@ int iree::IreeMain(int argc, char** argv) {
 
   // Load bytecode module from embedded data.
   IREE_LOG(INFO) << "Loading IREE byecode module...";
-  auto module_file_or = iree::GetModuleContentsFromFlags();
-  if (!module_file_or) {
-    IREE_LOG(FATAL) << "Error when reading module file"
-                    << module_file_or.status();
-  }
+  std::string module_file;
+  IREE_CHECK_OK(iree::GetModuleContentsFromFlags(&module_file));
   iree_vm_module_t* bytecode_module = nullptr;
   IREE_CHECK_OK(iree_vm_bytecode_module_create(
       iree_const_byte_span_t{
-          reinterpret_cast<const uint8_t*>(module_file_or->data()),
-          module_file_or->size()},
+          reinterpret_cast<const uint8_t*>(module_file.data()),
+          module_file.size()},
       iree_allocator_null(), iree_allocator_system(), &bytecode_module));
 
   // Allocate a context that will hold the module state across invocations.
@@ -339,32 +336,26 @@ int iree::IreeMain(int argc, char** argv) {
 
   IREE_CHECK_OK(ValidateFunctionAbi(main_function));
 
-  auto main_function_input_descs = ParseInputSignature(main_function);
-  if (!main_function_input_descs.ok()) {
-    IREE_LOG(FATAL) << main_function_input_descs.status().ToString();
-  }
-  StatusOr<vm::ref<iree_vm_list_t>> main_function_inputs;
+  std::vector<RawSignatureParser::Description> main_function_input_descs;
+  IREE_CHECK_OK(ParseInputSignature(main_function, &main_function_input_descs));
+  vm::ref<iree_vm_list_t> main_function_inputs;
   if (!absl::GetFlag(FLAGS_function_inputs_file).empty()) {
     if (!absl::GetFlag(FLAGS_function_inputs).empty()) {
       IREE_LOG(FATAL) << "Expected only one of function_inputs and "
                          "function_inputs_file to be set";
     }
-    main_function_inputs = ParseToVariantListFromFile(
-        *main_function_input_descs, iree_hal_device_allocator(iree_vk_device),
-        absl::GetFlag(FLAGS_function_inputs_file));
+    IREE_CHECK_OK(ParseToVariantListFromFile(
+        main_function_input_descs, iree_hal_device_allocator(iree_vk_device),
+        absl::GetFlag(FLAGS_function_inputs_file), &main_function_inputs));
   } else {
-    main_function_inputs = ParseToVariantList(
-        *main_function_input_descs, iree_hal_device_allocator(iree_vk_device),
-        absl::GetFlag(FLAGS_function_inputs));
-  }
-  if (!main_function_inputs.ok()) {
-    IREE_LOG(FATAL) << main_function_inputs.status().ToString();
+    IREE_CHECK_OK(ParseToVariantList(
+        main_function_input_descs, iree_hal_device_allocator(iree_vk_device),
+        absl::GetFlag(FLAGS_function_inputs), &main_function_inputs));
   }
 
-  auto main_function_output_descs = ParseOutputSignature(main_function);
-  if (!main_function_output_descs.ok()) {
-    IREE_LOG(FATAL) << main_function_output_descs.status().ToString();
-  }
+  std::vector<RawSignatureParser::Description> main_function_output_descs;
+  IREE_CHECK_OK(
+      ParseOutputSignature(main_function, &main_function_output_descs));
 
   const std::string& window_title = absl::GetFlag(FLAGS_module_file);
   // --------------------------------------------------------------------------
@@ -409,8 +400,7 @@ int iree::IreeMain(int argc, char** argv) {
     // Custom window.
     auto status = RunModuleAndUpdateImGuiWindow(
         iree_vk_device, iree_context, main_function, entry_function,
-        main_function_inputs.value(), main_function_output_descs.value(),
-        window_title);
+        main_function_inputs, main_function_output_descs, window_title);
     if (!status.ok()) {
       IREE_LOG(FATAL) << status;
       done = true;
@@ -427,7 +417,7 @@ int iree::IreeMain(int argc, char** argv) {
 
   // --------------------------------------------------------------------------
   // Cleanup
-  main_function_inputs.value().reset();
+  iree_vm_ref_release(main_function_inputs);
 
   iree_vm_module_release(hal_module);
   iree_vm_module_release(bytecode_module);
@@ -452,3 +442,5 @@ int iree::IreeMain(int argc, char** argv) {
 
   return 0;
 }
+
+}  // namespace iree

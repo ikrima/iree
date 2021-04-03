@@ -21,7 +21,6 @@
 #include "iree/compiler/Dialect/Shape/IR/ShapeOps.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/Support/Debug.h"
-#include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -50,17 +49,6 @@ TensorType convertTensorTypeToABIType(TensorType sourceType) {
   return RankedTensorType::get(sourceType.getShape(), targetElementType);
 }
 
-Value convertABITensorType(Location loc, Value sourceValue,
-                           TensorType targetType, OpBuilder &builder) {
-  auto sourceType = sourceValue.getType().cast<TensorType>();
-  if (sourceType == targetType) {
-    return sourceValue;
-  }
-  // TODO(benvanik): use a type converter or a dialect interface.
-  return builder.createOrFold<mhlo::ConvertOp>(loc, sourceValue,
-                                               targetType.getElementType());
-}
-
 SmallVector<Value, 4> getStaticShapeDims(Location loc, ShapedType shapedType,
                                          OpBuilder &builder) {
   SmallVector<Value, 4> shape;
@@ -72,15 +60,16 @@ SmallVector<Value, 4> getStaticShapeDims(Location loc, ShapedType shapedType,
   return shape;
 }
 
-llvm::Optional<SmallVector<Value, 4>> getShapeDims(
-    Location loc, Value shapedValue, ConversionPatternRewriter &rewriter) {
+llvm::Optional<SmallVector<Value, 4>> getShapeDims(Location loc,
+                                                   Value shapedValue,
+                                                   OpBuilder &builder) {
   ShapedType shapedType = shapedValue.getType().cast<ShapedType>();
   if (shapedType.hasStaticShape()) {
-    return getStaticShapeDims(loc, shapedType, rewriter);
+    return getStaticShapeDims(loc, shapedType, builder);
   } else {
     // Dynamic shape lookup.
     Value rsValue = Shape::buildOrFindRankedShapeForValue(
-        loc, shapedValue, rewriter.getIndexType(), rewriter);
+        loc, shapedValue, builder.getIndexType(), builder);
     if (!rsValue) {
       return llvm::None;
     }
@@ -88,17 +77,50 @@ llvm::Optional<SmallVector<Value, 4>> getShapeDims(
     // Note that in the following, we require that the dims resolve
     // to discrete SSA values, which in a stream, will be block args.
     if (failed(Shape::getRankedDimsFromRankedShape(
-            loc, rsValue, /*createIntermediateOps=*/true, dims, rewriter))) {
+            loc, rsValue, /*createIntermediateOps=*/true, dims, builder))) {
       return llvm::None;
     }
     return dims;
   }
 }
 
+Value getValueSize(Location loc, Value value, OpBuilder &builder) {
+  // Function arguments are special as we always have to query.
+  auto definingOp = value.getDefiningOp();
+  if (!definingOp) {
+    return builder.createOrFold<IREE::HAL::BufferLengthOp>(
+        loc, builder.getIndexType(), value);
+  }
+
+  if (auto awareOp = dyn_cast_or_null<SizeAwareOpInterface>(definingOp)) {
+    return awareOp.getResultSizeFromValue(value);
+  }
+
+  auto type = value.getType();
+  if (auto awareType = type.dyn_cast<SizeAwareTypeInterface>()) {
+    auto sizeValue = awareType.getSize(value);
+    if (sizeValue) return sizeValue;
+  }
+  if (auto inferType = type.dyn_cast<InferTypeSizeInterface>()) {
+    return inferType.inferSizeFromValue(loc, value, builder);
+  }
+
+  auto elementType = IREE::HAL::getElementTypeValue(
+      value.getType().cast<ShapedType>().getElementType());
+  if (!elementType) return {};
+  auto shape = IREE::HAL::getShapeDims(loc, value, builder);
+  if (!shape) return {};
+  auto deviceValue = builder.createOrFold<IREE::HAL::ExSharedDeviceOp>(loc);
+  auto allocatorValue =
+      builder.createOrFold<IREE::HAL::DeviceAllocatorOp>(loc, deviceValue);
+  return builder.createOrFold<IREE::HAL::AllocatorComputeSizeOp>(
+      loc, allocatorValue, *shape, elementType.getValue());
+}
+
 // static
 bool TensorRewriteAdaptor::isValidNewType(Type newType) {
-  return newType.isa<IREE::HAL::BufferViewType>() ||
-         newType.isa<IREE::HAL::BufferType>();
+  return newType.isa<IREE::HAL::BufferType>() ||
+         newType.isa<IREE::HAL::BufferViewType>();
 }
 
 // static
@@ -138,8 +160,8 @@ llvm::Optional<TensorRewriteAdaptor> TensorRewriteAdaptor::getChecked(
 }
 
 Value TensorRewriteAdaptor::getAllocator() {
-  return rewriter_.createOrFold<IREE::HAL::BufferAllocatorOp>(loc_,
-                                                              getBuffer());
+  return rewriter_.createOrFold<IREE::HAL::BufferAllocatorOp>(
+      loc_, AllocatorType::get(rewriter_.getContext()), getBuffer());
 }
 
 bool TensorRewriteAdaptor::isBufferView() {
@@ -148,8 +170,8 @@ bool TensorRewriteAdaptor::isBufferView() {
 
 Value TensorRewriteAdaptor::getBuffer() {
   if (isBufferView()) {
-    return rewriter_.createOrFold<IREE::HAL::BufferViewBufferOp>(loc_,
-                                                                 newValue_);
+    return rewriter_.createOrFold<IREE::HAL::BufferViewBufferOp>(
+        loc_, IREE::HAL::BufferType::get(rewriter_.getContext()), newValue_);
   } else {
     return newValue_;
   }
@@ -166,7 +188,7 @@ Value TensorRewriteAdaptor::getBufferView() {
     auto shapeDims = getShapeDims();
     if (!shapeDims) return {};
     return rewriter_.createOrFold<IREE::HAL::BufferViewCreateOp>(
-        loc_, newValue_, *shapeDims, getElementType());
+        loc_, newValue_, getElementType(), *shapeDims);
   }
 }
 
@@ -186,6 +208,7 @@ IntegerAttr TensorRewriteAdaptor::getElementTypeAttr() {
 llvm::Optional<SmallVector<Value, 4>> TensorRewriteAdaptor::getShapeDims() {
   return IREE::HAL::getShapeDims(loc_, oldValue_, rewriter_);
 }
+
 llvm::Optional<SmallVector<Value, 4>> TensorRewriteAdaptor::getShapeDims(
     ConversionPatternRewriter &rewriter) {
   return IREE::HAL::getShapeDims(loc_, oldValue_, rewriter);

@@ -78,6 +78,13 @@ class LaunchConfig {
   /// Returns the number of subgroups to use.
   ArrayRef<int64_t> getNumSubgroups() const { return numSubgroups; }
 
+  /// Of the given operations return the operation that has been marked as the
+  /// root operation. Within a dispatch region a single root operation (like
+  /// matmul, conv, etc.) decides the launch configuration to be used. The rest
+  /// of the ops that are fused with it obey this configuration. Returns nullptr
+  /// if unable to find an operation that is set as root in the list.
+  Operation *getRootOperation(ArrayRef<Operation *> ops);
+
   /// Returns true if tile sizes have been computed for the operation. If tile
   /// sizes arent set, it implies operation is not to be tiled.
   bool hasTileSizes(Operation *op, size_t level = 0) const {
@@ -98,6 +105,11 @@ class LaunchConfig {
 
   /// Sets number of subgroups to use.
   void setNumSubgroups(ArrayRef<int64_t> vNumSubgroups);
+
+  /// Sets the root operation. Within a dispatch region a single root operation
+  /// (like matmul, conv, etc.) decides the launch configuration to be used. The
+  /// rest of the ops that are fused with it obey this configuration.
+  void setRootOperation(Operation *root);
 
   /// Sets the configuration of the `targetOp` to be same as the configuration
   /// of the `sourceOp`.

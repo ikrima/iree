@@ -84,10 +84,10 @@ class ResolveEntryPointOrdinalsPass
  public:
   void runOnOperation() override {
     MLIRContext *context = &getContext();
-    OwningRewritePatternList patterns;
+    OwningRewritePatternList patterns(&getContext());
     patterns.insert<ResolveCommandBufferDispatchOrdinals>(context);
     patterns.insert<ResolveCommandBufferDispatchIndirectOrdinals>(context);
-    applyPatternsAndFoldGreedily(getOperation(), std::move(patterns));
+    (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns));
   }
 };
 

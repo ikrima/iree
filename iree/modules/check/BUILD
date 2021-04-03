@@ -34,31 +34,9 @@ cc_test(
         "//iree/vm",
         "//iree/vm:bytecode_module",
         "//iree/vm:cc",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-    ],
-)
-
-cc_binary(
-    name = "iree-check-module",
-    testonly = True,
-    srcs = ["iree-check-module-main.cc"],
-    deps = [
-        ":native_module",
-        "//iree/base:api",
-        "//iree/base:core_headers",
-        "//iree/base:file_io",
-        "//iree/base:flags",
-        "//iree/base:status",
-        "//iree/base:tracing",
-        "//iree/hal/drivers",
-        "//iree/modules/hal",
-        "//iree/testing:gtest",
-        "//iree/tools/utils:vm_util",
-        "//iree/vm:bytecode_module",
-        "@com_google_absl//absl/flags:flag",
-        "@com_google_absl//absl/strings",
+        "@half//:includes",
     ],
 )
 
@@ -77,5 +55,6 @@ cc_library(
         "//iree/vm:cc",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
+        "@half//:includes",
     ],
 )

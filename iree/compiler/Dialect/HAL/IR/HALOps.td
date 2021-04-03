@@ -16,6 +16,7 @@
 #define IREE_DIALECT_HAL_OPS
 
 include "iree/compiler/Dialect/HAL/IR/HALBase.td"
+include "iree/compiler/Dialect/HAL/IR/HALInterfaces.td"
 include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -43,7 +44,7 @@ def HAL_ExSharedDeviceOp : HAL_PureOp<"ex.shared_device", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins),
+    OpBuilder<(ins),
     [{
       $_state.addTypes({DeviceType::get($_builder.getContext())});
     }]>,
@@ -57,71 +58,6 @@ def HAL_ExSubmitAndWaitOp : HAL_Op<"ex.submit_and_wait", [YieldPoint]> {
   );
 
   let assemblyFormat = "$device `,` $command_buffer attr-dict";
-}
-
-//===----------------------------------------------------------------------===//
-// HAL struct definition ops
-//===----------------------------------------------------------------------===//
-
-def HAL_MakeMemoryBarrierOp : HAL_MakeTupleOp<"make_memory_barrier", [
-    DeclareOpInterfaceMethods<OpAsmOpInterface>,
-  ]> {
-  let summary = [{temporary memory barrier allocation operation}];
-  let description = [{
-    Allocates a temporary MemoryBarrier struct that can be passed to the
-    command buffer barrier operations.
-  }];
-
-  let arguments = (ins
-    HAL_AccessScopeBitfieldAttr:$source_scope,
-    HAL_AccessScopeBitfieldAttr:$target_scope
-  );
-  let results = (outs
-    HAL_MemoryBarrier:$result
-  );
-
-  let assemblyFormat = [{
-    $source_scope `,` $target_scope attr-dict-with-keyword `:` type($result)
-  }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "IREE::HAL::AccessScopeBitfield":$sourceScope,
-      "IREE::HAL::AccessScopeBitfield":$targetScope)>,
-  ];
-}
-
-def HAL_MakeBufferBarrierOp : HAL_MakeTupleOp<"make_buffer_barrier", [
-    DeclareOpInterfaceMethods<OpAsmOpInterface>,
-  ]> {
-  let summary = [{temporary buffer barrier allocation operation}];
-  let description = [{
-    Allocates a temporary BufferBarrier struct that can be passed to the
-    command buffer barrier operations.
-  }];
-
-  let arguments = (ins
-    HAL_AccessScopeBitfieldAttr:$source_scope,
-    HAL_AccessScopeBitfieldAttr:$target_scope,
-    HAL_Buffer:$buffer,
-    HAL_DeviceSize:$offset,
-    HAL_DeviceSize:$length
-  );
-  let results = (outs
-    HAL_BufferBarrier:$result
-  );
-
-  let assemblyFormat = [{
-    $source_scope `,` $target_scope `,` operands attr-dict-with-keyword `:`
-    type($result)
-  }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "IREE::HAL::AccessScopeBitfield":$sourceScope,
-      "IREE::HAL::AccessScopeBitfield":$targetScope, "Value":$buffer,
-      "Value":$offset, "Value":$length)>,
-  ];
 }
 
 //===----------------------------------------------------------------------===//
@@ -150,15 +86,33 @@ def HAL_VariableOp : HAL_Op<"variable", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
-      "Optional<StringRef>":$initializer, "Optional<Attribute>":$initialValue,
-      CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
-    OpBuilderDAG<(ins "StringRef":$name, "bool":$isMutable,
-      "mlir::FuncOp":$initializer, CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
-    OpBuilderDAG<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
-      "Attribute":$initialValue, CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
-    OpBuilderDAG<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
-      CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
+    OpBuilder<(ins
+      "StringRef":$name,
+      "bool":$isMutable,
+      "Type":$type,
+      "Optional<StringRef>":$initializer,
+      "Optional<Attribute>":$initialValue,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs
+    )>,
+    OpBuilder<(ins
+      "StringRef":$name,
+      "bool":$isMutable,
+      "mlir::FuncOp":$initializer,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs
+    )>,
+    OpBuilder<(ins
+      "StringRef":$name,
+      "bool":$isMutable,
+      "Type":$type,
+      "Attribute":$initialValue,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs
+    )>,
+    OpBuilder<(ins
+      "StringRef":$name,
+      "bool":$isMutable,
+      "Type":$type,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs
+    )>,
   ];
 
   let verifier = [{ return verifyVariableOp(*this); }];
@@ -180,7 +134,9 @@ def HAL_VariableAddressOp : HAL_PureOp<"variable.address"> {
     HAL_VariablePtr:$result
   );
 
-  let assemblyFormat = "$variable attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    $variable attr-dict `:` type($result)
+  }];
 }
 
 def HAL_VariableLoadOp : HAL_Op<"variable.load", [
@@ -199,7 +155,9 @@ def HAL_VariableLoadOp : HAL_Op<"variable.load", [
     HAL_VariableType:$result
   );
 
-  let assemblyFormat = "$variable attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    $variable attr-dict `:` type($result)
+  }];
 
   let verifier = [{ return verifyVariableLoadOp(*this); }];
 }
@@ -217,7 +175,9 @@ def FLOW_VariableLoadIndirectOp : HAL_Op<"variable.load.indirect"> {
     HAL_VariableType:$result
   );
 
-  let assemblyFormat = "$variable attr-dict `:` type($variable) `->` type($result)";
+  let assemblyFormat = [{
+    $variable attr-dict `:` type($variable) `->` type($result)
+  }];
 
   let verifier = [{ return verifyVariableLoadIndirectOp(*this); }];
 
@@ -235,7 +195,9 @@ def HAL_VariableStoreOp : HAL_Op<"variable.store"> {
     HAL_VariableRefAttr:$variable
   );
 
-  let assemblyFormat = "$value `,` $variable attr-dict `:` type($value)";
+  let assemblyFormat = [{
+    $value `,` $variable attr-dict `:` type($value)
+  }];
 
   let verifier = [{ return verifyVariableStoreOp(*this); }];
 
@@ -253,7 +215,9 @@ def HAL_VariableStoreIndirectOp : HAL_Op<"variable.store.indirect"> {
     HAL_VariablePtr:$variable
   );
 
-  let assemblyFormat = "$value `,` $variable attr-dict `:` type($value) `->` type($variable)";
+  let assemblyFormat = [{
+    $value `,` $variable attr-dict `:` type($value) `->` type($variable)
+  }];
 
   let verifier = [{ return verifyVariableStoreIndirectOp(*this); }];
 
@@ -289,7 +253,7 @@ def HAL_CheckSuccessOp : HAL_Op<"check_success"> {
   }];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$status, CArg<"StringRef", [{""}]>:$message),
+    OpBuilder<(ins "Value":$status, CArg<"StringRef", [{""}]>:$message),
     [{
       build(
         $_builder, $_state, status,
@@ -299,7 +263,7 @@ def HAL_CheckSuccessOp : HAL_Op<"check_success"> {
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::Allocator
+// !hal.allocator / iree_hal_allocator_t
 //===----------------------------------------------------------------------===//
 
 def HAL_AllocatorComputeSizeOp : HAL_PureOp<"allocator.compute_size", [
@@ -314,20 +278,25 @@ def HAL_AllocatorComputeSizeOp : HAL_PureOp<"allocator.compute_size", [
   let arguments = (ins
     HAL_Allocator:$allocator,
     HAL_Shape:$shape,
-    HAL_ElementTypeAttr:$element_type
+    HAL_ElementType:$element_type
   );
   let results = (outs
     HAL_DeviceSize:$result
   );
 
   let assemblyFormat = [{
-    $allocator `,` `shape` `=` `[` $shape `]` `,` `element_type` `=`
-    $element_type attr-dict
+    `<` $allocator `:` type($allocator) `>`
+    `shape` `(` `[` $shape `]` `)`
+    `type` `(` $element_type `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$allocator, "ValueRange":$shape,
-      "int32_t":$elementSize)>,
+    OpBuilder<(ins "Value":$allocator, "ValueRange":$shape,
+      "int32_t":$elementType)>,
+    OpBuilder<(ins "Value":$allocator, "ValueRange":$shape,
+      "Value":$elementType)>,
   ];
 
   let hasCanonicalizer = 1;
@@ -346,7 +315,7 @@ def HAL_AllocatorComputeOffsetOp : HAL_PureOp<"allocator.compute_offset", [
   let arguments = (ins
     HAL_Allocator:$allocator,
     HAL_Shape:$shape,
-    HAL_ElementTypeAttr:$element_type,
+    HAL_ElementType:$element_type,
     HAL_Dims:$indices
   );
 
@@ -355,13 +324,19 @@ def HAL_AllocatorComputeOffsetOp : HAL_PureOp<"allocator.compute_offset", [
   );
 
   let assemblyFormat = [{
-    $allocator `,` `shape` `=` `[` $shape `]` `,` `element_type` `=`
-    $element_type `,` `indices` `=` `[` $indices `]` attr-dict
+    `<` $allocator `:` type($allocator) `>`
+    `indices` `(` `[` $indices `]` `)`
+    `shape` `(` `[` $shape `]` `)`
+    `type` `(` $element_type `)`
+    `:` type($offset)
+    attr-dict-with-keyword
   }];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$allocator, "ValueRange":$shape,
+    OpBuilder<(ins "Value":$allocator, "ValueRange":$shape,
       "int32_t":$elementType, "ValueRange":$indices)>,
+    OpBuilder<(ins "Value":$allocator, "ValueRange":$shape,
+      "Value":$elementType, "ValueRange":$indices)>,
   ];
 
   let hasCanonicalizer = 1;
@@ -380,7 +355,7 @@ def HAL_AllocatorComputeRangeOp : HAL_PureOp<"allocator.compute_range", [
   let arguments = (ins
     HAL_Allocator:$allocator,
     HAL_Shape:$shape,
-    HAL_ElementTypeAttr:$element_type,
+    HAL_ElementType:$element_type,
     HAL_Dims:$indices,
     HAL_Dims:$lengths
   );
@@ -391,14 +366,20 @@ def HAL_AllocatorComputeRangeOp : HAL_PureOp<"allocator.compute_range", [
   );
 
   let assemblyFormat = [{
-    $allocator `,` `shape` `=` `[` $shape `]` `,` `element_type` `=`
-    $element_type `,` `indices` `=` `[` $indices `]` `,` `lengths` `=` `[`
-    $lengths `]` attr-dict
+    `<` $allocator `:` type($allocator) `>`
+    `indices` `(` `[` $indices `]` `)`
+    `lengths` `(` `[` $lengths `]` `)`
+    `shape` `(` `[` $shape `]` `)`
+    `type` `(` $element_type `)`
+    `:` type($offset) `,` type($length)
+    attr-dict-with-keyword
   }];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$allocator, "ValueRange":$shape,
+    OpBuilder<(ins "Value":$allocator, "ValueRange":$shape,
       "int32_t":$elementType, "ValueRange":$indices, "ValueRange":$lengths)>,
+    OpBuilder<(ins "Value":$allocator, "ValueRange":$shape,
+      "Value":$elementType, "ValueRange":$indices, "ValueRange":$lengths)>,
   ];
 
   let hasCanonicalizer = 1;
@@ -406,6 +387,7 @@ def HAL_AllocatorComputeRangeOp : HAL_PureOp<"allocator.compute_range", [
 
 def HAL_AllocatorAllocateOp : HAL_Op<"allocator.allocate", [
     DeclareOpInterfaceMethods<OpAsmOpInterface>,
+    DeclareOpInterfaceMethods<HAL_SizeAwareOp>,
   ]> {
   let summary = [{empty buffer allocation operation}];
   let description = [{
@@ -418,26 +400,23 @@ def HAL_AllocatorAllocateOp : HAL_Op<"allocator.allocate", [
     HAL_Allocator:$allocator,
     HAL_MemoryTypeBitfieldAttr:$memory_types,
     HAL_BufferUsageBitfieldAttr:$buffer_usage,
-    HAL_DeviceSize:$allocation_size
+    HAL_DeviceSize:$result_size
   );
   let results = (outs
     HAL_Buffer:$result
   );
 
+  // TODO(benvanik): change type/usage to ref params.
   let assemblyFormat = [{
-    $allocator `,` $memory_types `,` $buffer_usage `,` $allocation_size
-    attr-dict-with-keyword `:` type($result)
+    `<` $allocator `:` type($allocator) `>`
+    `type` `(` $memory_types `)`
+    `usage` `(` $buffer_usage `)`
+    `:` custom<SizeAwareType>(type($result), $result_size)
+    attr-dict-with-keyword
   }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$allocator,
-      "IREE::HAL::MemoryTypeBitfield":$memoryTypes,
-      "IREE::HAL::BufferUsageBitfield":$bufferUsage, "Value":$allocationSize)>,
-  ];
 }
 
-def HAL_AllocatorAllocateConstOp : HAL_Op<"allocator.allocate.const", [
+def HAL_AllocatorConstantOp : HAL_Op<"allocator.constant", [
     DeclareOpInterfaceMethods<OpAsmOpInterface>,
   ]> {
   let summary = [{constant buffer allocation operation}];
@@ -455,26 +434,24 @@ def HAL_AllocatorAllocateConstOp : HAL_Op<"allocator.allocate.const", [
     ElementsAttr:$value
   );
   let results = (outs
-    HAL_Buffer:$result
+    AnyTypeOf<[HAL_Buffer, HAL_BufferView]>:$result
   );
 
+  // TODO(benvanik): change type/usage to ref params.
   let assemblyFormat = [{
-    $allocator `,` $memory_types `,` $buffer_usage attr-dict-with-keyword `:`
-    type($result) `=` $value
+    `<` $allocator `:` type($allocator) `>`
+    `type` `(` $memory_types `)`
+    `usage` `(` $buffer_usage `)`
+    `:` type($result) `=` $value
+    attr-dict-with-keyword
   }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$allocator,
-      "IREE::HAL::MemoryTypeBitfield":$memoryTypes,
-      "IREE::HAL::BufferUsageBitfield":$bufferUsage, "ElementsAttr":$value)>,
-  ];
 
   let hasCanonicalizer = 1;
 }
 
 def HAL_AllocatorMapOp : HAL_Op<"allocator.map", [
     DeclareOpInterfaceMethods<OpAsmOpInterface>,
+    DeclareOpInterfaceMethods<HAL_SizeAwareOp>,
   ]> {
   let summary = [{allocator-supported host buffer wrapping operation}];
   let description = [{
@@ -496,23 +473,19 @@ def HAL_AllocatorMapOp : HAL_Op<"allocator.map", [
     HAL_Buffer:$result
   );
 
+  // TODO(benvanik): change type/usage to ref params.
   let assemblyFormat = [{
-    $allocator `,` $memory_types `,` $buffer_usage `,`
-    $source `[` $offset `,` $length `]` attr-dict-with-keyword
-    `:` type($source) `->` type($result)
+    `<` $allocator `:` type($allocator) `>`
+    `source` `(` $source `:` type($source) `)` `` `[` $offset `,` $length `]`
+    `type` `(` $memory_types `)`
+    `usage` `(` $buffer_usage `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$allocator,
-      "IREE::HAL::MemoryTypeBitfield":$memoryTypes,
-      "IREE::HAL::BufferUsageBitfield":$bufferUsage, "Value":$source,
-      "Value":$offset, "Value":$length)>,
-  ];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::Buffer
+// !hal.buffer / iree_hal_buffer_t
 //===----------------------------------------------------------------------===//
 
 def HAL_BufferAllocatorOp : HAL_PureOp<"buffer.allocator", [
@@ -524,26 +497,24 @@ def HAL_BufferAllocatorOp : HAL_PureOp<"buffer.allocator", [
   }];
 
   let arguments = (ins
-    HAL_Buffer:$buffer
+    HAL_BufferType:$buffer
   );
   let results = (outs
     HAL_Allocator:$result
   );
 
-  let assemblyFormat = "$buffer `:` type($result) attr-dict";
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$buffer)>,
-  ];
+  let assemblyFormat = [{
+    `<` $buffer `:` type($buffer) `>`
+    `:` type($result)
+    attr-dict-with-keyword
+  }];
 
   let hasCanonicalizer = 1;
 }
 
-// TODO(benvanik): clone buffer op.
-
 def HAL_BufferSubspanOp : HAL_PureOp<"buffer.subspan", [
     DeclareOpInterfaceMethods<OpAsmOpInterface>,
+    DeclareOpInterfaceMethods<HAL_SizeAwareOp>,
   ]> {
   let summary = [{buffer subspan operation}];
   let description = [{
@@ -551,15 +522,44 @@ def HAL_BufferSubspanOp : HAL_PureOp<"buffer.subspan", [
   }];
 
   let arguments = (ins
-    HAL_Buffer:$source_buffer,
+    HAL_BufferType:$source_buffer,
     HAL_DeviceSize:$source_offset,
     HAL_DeviceSize:$length
   );
   let results = (outs
-    HAL_Buffer:$result
+    HAL_BufferType:$result
   );
 
-  let assemblyFormat = "operands attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    `<` $source_buffer `:` type($source_buffer) `>`
+    `` `[` $source_offset `,` $length `]`
+    `:` type($result)
+    attr-dict-with-keyword
+  }];
+}
+
+def HAL_BufferLengthOp : HAL_PureOp<"buffer.length", [
+    DeclareOpInterfaceMethods<OpAsmOpInterface>,
+  ]> {
+  let summary = [{buffer byte length accessor}];
+  let description = [{
+    Returns the allocated size of a buffer in bytes.
+    May be less than the underlying buffer allocation if this is a subspan or
+    view into another buffer.
+  }];
+
+  let arguments = (ins
+    HAL_BufferType:$buffer
+  );
+  let results = (outs
+    HAL_DeviceSize:$result
+  );
+
+  let assemblyFormat = [{
+    `<` $buffer `:` type($buffer) `>`
+    `:` type($result)
+    attr-dict-with-keyword
+  }];
 }
 
 def HAL_BufferFillOp : HAL_Op<"buffer.fill"> {
@@ -569,64 +569,42 @@ def HAL_BufferFillOp : HAL_Op<"buffer.fill"> {
   }];
 
   let arguments = (ins
-    HAL_Buffer:$target_buffer,
+    HAL_BufferType:$target_buffer,
     HAL_DeviceSize:$target_offset,
     HAL_DeviceSize:$length,
     I32:$pattern
   );
 
-  let assemblyFormat = "operands attr-dict";
-}
-
-def HAL_BufferReadDataOp : HAL_Op<"buffer.read_data"> {
-  let summary = [{buffer-to-heap read operation}];
-  let description = [{
-    Reads a block of byte data from the resource at the given offset.
+  let assemblyFormat = [{
+    `<` $target_buffer `:` type($target_buffer) `>`
+    `` `[` $target_offset `,` $length `]`
+    `pattern` `(` $pattern `:` type($pattern) `)`
+    attr-dict-with-keyword
   }];
-
-  let arguments = (ins
-    HAL_Buffer:$source_buffer,
-    HAL_DeviceSize:$source_offset,
-    MutableByteBufferType:$target_buffer,
-    HAL_DeviceSize:$target_offset,
-    HAL_DeviceSize:$length
-  );
-
-  let assemblyFormat = "operands attr-dict `:` type($target_buffer)";
 }
 
-def HAL_BufferWriteDataOp : HAL_Op<"buffer.write_data"> {
-  let summary = [{heap-to-buffer write operation}];
-  let description = [{
-    Writes a block of byte data into the resource at the given offset.
-  }];
-
-  let arguments = (ins
-    HAL_HostBuffer:$source_buffer,
-    HAL_DeviceSize:$source_offset,
-    HAL_Buffer:$target_buffer,
-    HAL_DeviceSize:$target_offset,
-    HAL_DeviceSize:$length
-  );
-
-  let assemblyFormat = "operands attr-dict `:` type($source_buffer)";
-}
-
-def HAL_BufferCopyDataOp : HAL_Op<"buffer.copy_data"> {
+def HAL_BufferCopyOp : HAL_Op<"buffer.copy"> {
   let summary = [{buffer-to-buffer copy operation}];
   let description = [{
     Copies data from the provided source_buffer into the buffer.
   }];
 
   let arguments = (ins
-    HAL_Buffer:$source_buffer,
+    HAL_BufferType:$source_buffer,
     HAL_DeviceSize:$source_offset,
-    HAL_Buffer:$target_buffer,
+    HAL_BufferType:$target_buffer,
     HAL_DeviceSize:$target_offset,
     HAL_DeviceSize:$length
   );
 
-  let assemblyFormat = "operands attr-dict";
+  let assemblyFormat = [{
+    `source` `(` $source_buffer `:` type($source_buffer) `)`
+    `` `[` $source_offset `]`
+    `target` `(` $target_buffer `:` type($target_buffer) `)`
+    `` `[` $target_offset `]`
+    `length` `(` $length `)`
+    attr-dict-with-keyword
+  }];
 }
 
 def HAL_BufferLoadOp : HAL_PureOp<"buffer.load"> {
@@ -636,7 +614,7 @@ def HAL_BufferLoadOp : HAL_PureOp<"buffer.load"> {
   }];
 
   let arguments = (ins
-    HAL_Buffer:$source_buffer,
+    HAL_BufferType:$source_buffer,
     HAL_DeviceSize:$source_offset
   );
   let results = (outs
@@ -644,7 +622,10 @@ def HAL_BufferLoadOp : HAL_PureOp<"buffer.load"> {
   );
 
   let assemblyFormat = [{
-    $source_buffer `[` $source_offset `]` `:` type($result) attr-dict
+    `<` $source_buffer `:` type($source_buffer) `>`
+    `` `[` $source_offset `]`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 }
 
@@ -656,52 +637,21 @@ def HAL_BufferStoreOp : HAL_Op<"buffer.store"> {
 
   let arguments = (ins
     AnyTypeOf<[HAL_PrimitiveType, AnyVector]>:$value,
-    HAL_Buffer:$target_buffer,
+    HAL_BufferType:$target_buffer,
     HAL_DeviceSize:$target_offset
   );
 
   let assemblyFormat = [{
-    $value `,` $target_buffer `[` $target_offset `]` `:` type($value) attr-dict
+    `<` $target_buffer `:` type($target_buffer) `>`
+    `` `[` $target_offset `]`
+    `value` `(` $value `:` type($value) `)`
+    attr-dict-with-keyword
   }];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::BufferView
+// !hal.buffer_view / iree_hal_buffer_view_t
 //===----------------------------------------------------------------------===//
-
-def HAL_BufferViewConstOp : HAL_PureOp<"buffer_view.const", [
-    DeclareOpInterfaceMethods<OpAsmOpInterface>,
-  ]> {
-  let summary = [{buffer view constant initializer}];
-  let description = [{
-    Pseudo-op for allocating a constant buffer view. Expands to a buffer
-    allocation and a buffer view wrapper.
-  }];
-
-  let arguments = (ins
-    HAL_Allocator:$allocator,
-    HAL_MemoryTypeBitfieldAttr:$memory_types,
-    HAL_BufferUsageBitfieldAttr:$buffer_usage,
-    ElementsAttr:$value
-  );
-  let results = (outs
-    HAL_BufferView:$result
-  );
-
-  let assemblyFormat = [{
-    $allocator `,` $memory_types `,` $buffer_usage `:` type($result)
-    attr-dict-with-keyword `=` $value
-  }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$allocator,
-      "IREE::HAL::MemoryTypeBitfield":$memoryTypes,
-      "IREE::HAL::BufferUsageBitfield":$bufferUsage, "ElementsAttr":$value)>,
-  ];
-
-  let hasCanonicalizer = 1;
-}
 
 def HAL_BufferViewCreateOp : HAL_PureOp<"buffer_view.create", [
     DeclareOpInterfaceMethods<OpAsmOpInterface>,
@@ -715,23 +665,33 @@ def HAL_BufferViewCreateOp : HAL_PureOp<"buffer_view.create", [
   }];
 
   let arguments = (ins
-    HAL_Buffer:$buffer,
-    HAL_Shape:$shape,
-    HAL_ElementTypeAttr:$element_type
+    HAL_BufferType:$buffer,
+    HAL_ElementType:$element_type,
+    HAL_Shape:$shape
   );
   let results = (outs
     HAL_BufferView:$result
   );
 
   let assemblyFormat = [{
-    $buffer `,` `shape` `=` `[` $shape `]` `,` `element_type` `=` $element_type
-    `:` type($result) attr-dict
+    $buffer `,`
+    `element_type` `=` $element_type `,`
+    `shape` `=` `[` $shape `]`
+    attr-dict `:` type($buffer) `->` type($result)
   }];
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Value":$buffer, "ValueRange":$shape,
-      "int32_t":$elementType)>,
+    OpBuilder<(ins
+      "Value":$buffer,
+      "int32_t":$elementType,
+      "ValueRange":$shape
+    )>,
+    OpBuilder<(ins
+      "Value":$buffer,
+      "Value":$elementType,
+      "ValueRange":$shape
+    )>,
   ];
 }
 
@@ -755,9 +715,13 @@ def HAL_BufferViewSubviewOp : HAL_PureOp<"buffer_view.subview", [
   );
 
   let assemblyFormat = [{
-    $buffer_view `,` `indices` `=` `[` $indices `]` `,` `lengths` `=` `[`
-    $lengths `]` `:` type($result) attr-dict
+    $buffer_view `,`
+    `indices` `=` `[` $indices `]` `,`
+    `lengths` `=` `[` $lengths `]`
+    attr-dict `:` type($result)
   }];
+
+  let hasCanonicalizer = 1;
 }
 
 def HAL_BufferViewBufferOp : HAL_PureOp<"buffer_view.buffer", [
@@ -772,15 +736,12 @@ def HAL_BufferViewBufferOp : HAL_PureOp<"buffer_view.buffer", [
     HAL_BufferView:$buffer_view
   );
   let results = (outs
-    HAL_Buffer:$result
+    HAL_BufferType:$result
   );
 
-  let assemblyFormat = "$buffer_view `:` type($result) attr-dict";
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$bufferView)>,
-  ];
+  let assemblyFormat = [{
+    $buffer_view attr-dict `:` type($result)
+  }];
 
   let hasCanonicalizer = 1;
 }
@@ -800,11 +761,13 @@ def HAL_BufferViewByteLengthOp : HAL_PureOp<"buffer_view.byte_length", [
     HAL_DeviceSize:$result
   );
 
-  let assemblyFormat = "$buffer_view `:` type($result) attr-dict";
+  let assemblyFormat = [{
+    $buffer_view attr-dict `:` type($result)
+  }];
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Value":$bufferView)>,
+    OpBuilder<(ins "Value":$bufferView)>,
   ];
 }
 
@@ -826,13 +789,17 @@ def HAL_BufferViewComputeOffsetOp : HAL_PureOp<"buffer_view.compute_offset", [
   );
 
   let assemblyFormat = [{
-    $buffer_view `,` `indices` `=` `[` $indices `]` attr-dict
+    $buffer_view `,`
+    `indices` `=` `[` $indices `]`
+    attr-dict `:` type($offset)
   }];
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Value":$bufferView, "ValueRange":$indices)>,
+    OpBuilder<(ins "Value":$bufferView, "ValueRange":$indices)>,
   ];
+
+  let hasCanonicalizer = 1;
 }
 
 def HAL_BufferViewComputeRangeOp : HAL_PureOp<"buffer_view.compute_range", [
@@ -856,15 +823,40 @@ def HAL_BufferViewComputeRangeOp : HAL_PureOp<"buffer_view.compute_range", [
   );
 
   let assemblyFormat = [{
-    $buffer_view `,` `indices` `=` `[` $indices `]` `,` `lengths` `=` `[`
-    $lengths `]` attr-dict
+    $buffer_view `,`
+    `indices` `=` `[` $indices `]` `,`
+    `lengths` `=` `[` $lengths `]`
+    attr-dict `:` type($offset) `,` type($length)
   }];
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Value":$bufferView, "ValueRange":$indices,
-      "ValueRange":$lengths)>,
+    OpBuilder<(ins
+      "Value":$bufferView,
+      "ValueRange":$indices,
+      "ValueRange":$lengths
+    )>,
   ];
+
+  let hasCanonicalizer = 1;
+}
+
+def HAL_BufferViewElementTypeOp : HAL_PureOp<"buffer_view.element_type"> {
+  let summary = [{buffer view element type query}];
+  let description = [{
+    Returns the element type of the buffer view.
+  }];
+
+  let arguments = (ins
+    HAL_BufferView:$buffer_view
+  );
+  let results = (outs
+    HAL_ElementType:$result
+  );
+
+  let assemblyFormat = [{
+    $buffer_view attr-dict `:` type($result)
+  }];
 }
 
 def HAL_BufferViewRankOp : HAL_PureOp<"buffer_view.rank"> {
@@ -877,10 +869,12 @@ def HAL_BufferViewRankOp : HAL_PureOp<"buffer_view.rank"> {
     HAL_BufferView:$buffer_view
   );
   let results = (outs
-    Index:$result
+    HAL_Dim:$result
   );
 
-  let assemblyFormat = [{$buffer_view attr-dict `:` type($result)}];
+  let assemblyFormat = [{
+    $buffer_view attr-dict `:` type($result)
+  }];
 }
 
 def HAL_BufferViewDimOp : HAL_PureOp<"buffer_view.dim"> {
@@ -891,13 +885,15 @@ def HAL_BufferViewDimOp : HAL_PureOp<"buffer_view.dim"> {
 
   let arguments = (ins
     HAL_BufferView:$buffer_view,
-    I32Attr:$index
+    IndexAttr:$index
   );
   let results = (outs
-    Index:$result
+    HAL_Dim:$result
   );
 
-  let assemblyFormat = [{$buffer_view `,` $index attr-dict `:` type($result)}];
+  let assemblyFormat = [{
+    $buffer_view `,` $index attr-dict `:` type($result)
+  }];
 }
 
 def HAL_BufferViewDimsOp : HAL_PureOp<"buffer_view.dims"> {
@@ -913,25 +909,33 @@ def HAL_BufferViewDimsOp : HAL_PureOp<"buffer_view.dims"> {
     Variadic<Index>:$result
   );
 
-  let assemblyFormat = [{$buffer_view attr-dict `:` type($result)}];
+  let assemblyFormat = [{
+    $buffer_view attr-dict `:` type($result)
+  }];
+
+  let hasCanonicalizer = 1;
 }
 
 def HAL_BufferViewTraceOp : HAL_Op<"buffer_view.trace", []> {
   let summary = [{trace value(s) operation}];
   let description = [{
-    Trace point for dispatchable functions.
+    Traces out to a runtime trace sink (console, log file, etc) the given buffer
+    views and titles them with the given key. The key is informational only and
+    useful for titling/marking specific sets of buffers for easier searching.
   }];
 
   let arguments = (ins
-    Variadic<HAL_BufferView>:$operands,
-    StrAttr:$trace_info
+    StrAttr:$key,
+    Variadic<HAL_BufferView>:$operands
   );
 
-  let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
+  let assemblyFormat = [{
+    attr-dict ($operands^ `:` type($operands))?
+  }];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::CommandBuffer
+// !hal.command_buffer / iree_hal_command_buffer_t
 //===----------------------------------------------------------------------===//
 
 def HAL_CommandBufferCreateOp : HAL_Op<"command_buffer.create", [
@@ -952,16 +956,12 @@ def HAL_CommandBufferCreateOp : HAL_Op<"command_buffer.create", [
   );
 
   let assemblyFormat = [{
-    $device `,` $modes `,` $command_categories attr-dict-with-keyword `:`
-    type($result)
+    `device` `(` $device `:` type($device) `)`
+    `mode` `(` $modes `)`
+    `categories` `(` $command_categories `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$device,
-      "IREE::HAL::CommandBufferModeBitfield":$modes,
-      "IREE::HAL::CommandCategoryBitfield":$commandCategories)>,
-  ];
 }
 
 def HAL_CommandBufferBeginOp : HAL_Op<"command_buffer.begin"> {
@@ -975,7 +975,10 @@ def HAL_CommandBufferBeginOp : HAL_Op<"command_buffer.begin"> {
     HAL_CommandBuffer:$command_buffer
   );
 
-  let assemblyFormat = "$command_buffer attr-dict";
+  let assemblyFormat = [{
+    `<` $command_buffer `:` type($command_buffer) `>`
+    attr-dict-with-keyword
+  }];
 }
 
 def HAL_CommandBufferEndOp : HAL_Op<"command_buffer.end"> {
@@ -988,7 +991,10 @@ def HAL_CommandBufferEndOp : HAL_Op<"command_buffer.end"> {
     HAL_CommandBuffer:$command_buffer
   );
 
-  let assemblyFormat = "$command_buffer attr-dict";
+  let assemblyFormat = [{
+    `<` $command_buffer `:` type($command_buffer) `>`
+    attr-dict-with-keyword
+  }];
 }
 
 def HAL_CommandBufferDeviceOp : HAL_PureOp<"command_buffer.device"> {
@@ -1004,35 +1010,37 @@ def HAL_CommandBufferDeviceOp : HAL_PureOp<"command_buffer.device"> {
     HAL_Device:$device
   );
 
-  let assemblyFormat = "$command_buffer attr-dict `:` type($device)";
+  let assemblyFormat = [{
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `:` type($device)
+    attr-dict-with-keyword
+  }];
 
   let hasCanonicalizer = 1;
 }
 
-def HAL_CommandBufferExecutionBarrierOp : HAL_Op<"command_buffer.execution_barrier", [
-    AttrSizedOperandSegments,
-  ]> {
+def HAL_CommandBufferExecutionBarrierOp : HAL_Op<"command_buffer.execution_barrier"> {
   let summary = [{command buffer execution barrier recording operation}];
   let description = [{
-    Defines a memory dependency between commands recorded before and after the
-    barrier.
+    Defines an execution dependency between all commands recorded before the
+    barrier and all commands recorded after the barrier. Only the stages
+    provided will be affected.
   }];
 
   let arguments = (ins
     HAL_CommandBuffer:$command_buffer,
     HAL_ExecutionStageBitfieldAttr:$source_stage_mask,
     HAL_ExecutionStageBitfieldAttr:$target_stage_mask,
-    Variadic<HAL_MemoryBarrier>:$memory_barriers,
-    Variadic<HAL_BufferBarrier>:$buffer_barriers
+    HAL_ExecutionBarrierFlagBitfieldAttr:$flags
   );
 
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$commandBuffer,
-      "IREE::HAL::ExecutionStageBitfield":$sourceStageMask,
-      "IREE::HAL::ExecutionStageBitfield":$targetStageMask,
-      "ValueRange":$memoryBarriers, "ValueRange":$bufferBarriers)>,
-  ];
+  let assemblyFormat = [{
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `source` `(` $source_stage_mask `)`
+    `target` `(` $target_stage_mask `)`
+    `flags` `(` $flags `)`
+    attr-dict-with-keyword
+  }];
 }
 
 // TODO(benvanik): event ops.
@@ -1045,13 +1053,19 @@ def HAL_CommandBufferFillBufferOp : HAL_Op<"command_buffer.fill_buffer"> {
 
   let arguments = (ins
     HAL_CommandBuffer:$command_buffer,
-    HAL_Buffer:$target_buffer,
+    HAL_BufferType:$target_buffer,
     HAL_DeviceSize:$target_offset,
     HAL_DeviceSize:$length,
     I32:$pattern
   );
 
-  let assemblyFormat = "operands attr-dict";
+  let assemblyFormat = [{
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `target` `(` $target_buffer `:` type($target_buffer) `)`
+    `` `[` $target_offset `,` $length `]`
+    `pattern` `(` $pattern `:` type($pattern) `)`
+    attr-dict-with-keyword
+  }];
 }
 
 // TODO(benvanik): update buffer op.
@@ -1064,14 +1078,22 @@ def HAL_CommandBufferCopyBufferOp : HAL_Op<"command_buffer.copy_buffer"> {
 
   let arguments = (ins
     HAL_CommandBuffer:$command_buffer,
-    HAL_Buffer:$source_buffer,
+    HAL_BufferType:$source_buffer,
     HAL_DeviceSize:$source_offset,
-    HAL_Buffer:$target_buffer,
+    HAL_BufferType:$target_buffer,
     HAL_DeviceSize:$target_offset,
     HAL_DeviceSize:$length
   );
 
-  let assemblyFormat = "operands attr-dict";
+  let assemblyFormat = [{
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `source` `(` $source_buffer `:` type($source_buffer) `)`
+    `` `[` $source_offset `]`
+    `target` `(` $target_buffer `:` type($target_buffer) `)`
+    `` `[` $target_offset `]`
+    `length` `(` $length `)`
+    attr-dict-with-keyword
+  }];
 }
 
 def HAL_CommandBufferPushConstantsOp :
@@ -1083,27 +1105,22 @@ def HAL_CommandBufferPushConstantsOp :
 
     Push constants are always 4-byte values and treated as opaque, meaning that
     they may be bit-casted floats, bit-packed booleans, etc.
-
-    ```mlir
-    hal.command_buffer.push_constants %cmd, %exe_layout,
-                                      offset = 0,
-                                      values = [%value0, %value1] : i32
-    hal.command_buffer.push_constants %cmd, %exe_layout,
-                                      offset = 2,
-                                      values = [%value2, %value3] : i32
-    ```
   }];
 
   let arguments = (ins
     HAL_CommandBuffer:$command_buffer,
     HAL_ExecutableLayout:$executable_layout,
-    I32Attr:$offset,
+    IndexAttr:$offset,
     Variadic<I32>:$values
   );
 
   let assemblyFormat = [{
-    $command_buffer `,` $executable_layout `,` `offset` `=` $offset `,`
-    `values` `=` `[` $values `]` `:` `i32` attr-dict-with-keyword
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `layout` `(` $executable_layout `:` type($executable_layout) `)`
+    `offset` `(` $offset `)`
+    `values` `(` `[` $values `]` `)`
+    `:` type($values)
+    attr-dict-with-keyword
   }];
 }
 
@@ -1114,30 +1131,38 @@ def HAL_CommandBufferPushDescriptorSetOp :
   let summary = [{command buffer descriptor set push binding operation}];
   let description = [{
     Pushes an inline-defined descriptor set to the command buffer.
-
-    ```mlir
-    hal.command_buffer.push_descriptor_set %cmd, %executable_layout, set = 0, bindings = [
-      0 = (%buffer_0, %buffer_offset_0, %buffer_length_0),
-      1 = (%buffer_1, %buffer_offset_1, %buffer_length_1),
-      2 = (%buffer_2, %buffer_offset_2, %buffer_length_2)
-    ]
-    ```
   }];
 
   let arguments = (ins
     HAL_CommandBuffer:$command_buffer,
     HAL_ExecutableLayout:$executable_layout,
-    I32Attr:$set,
-    I32ArrayAttr:$bindings,
-    Variadic<HAL_Buffer>:$binding_buffers,
+    Index:$set,
+    Variadic<Index>:$binding_ordinals,
+    Variadic<HAL_BufferType>:$binding_buffers,
     Variadic<HAL_DeviceSize>:$binding_offsets,
     Variadic<HAL_DeviceSize>:$binding_lengths
   );
 
+  let assemblyFormat = [{
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `layout` `(` $executable_layout `:` type($executable_layout) `)`
+    `` `[` $set `]`
+    `bindings` `(` `[`
+    custom<DescriptorSetBindings>($binding_ordinals,
+                                  $binding_buffers,
+                                  type($binding_buffers),
+                                  $binding_offsets,
+                                  $binding_lengths)
+    `]` `)`
+    attr-dict-with-keyword
+  }];
+
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Value":$commandBuffer, "Value":$executableLayout,
-      "uint32_t":$set, "ArrayRef<DescriptorSetBindingValue>":$bindings)>,
+    OpBuilder<(ins "Value":$commandBuffer, "Value":$executableLayout,
+      "int64_t":$set, "ArrayRef<DescriptorSetBindingValue>":$bindings)>,
+    OpBuilder<(ins "Value":$commandBuffer, "Value":$executableLayout,
+      "Value":$set, "ArrayRef<DescriptorSetBindingValue>":$bindings)>,
   ];
 
   let hasCanonicalizer = 1;
@@ -1154,37 +1179,25 @@ def HAL_CommandBufferBindDescriptorSetOp :
   let arguments = (ins
     HAL_CommandBuffer:$command_buffer,
     HAL_ExecutableLayout:$executable_layout,
-    I32Attr:$set,
+    Index:$set,
     HAL_DescriptorSet:$descriptor_set,
     Variadic<HAL_DeviceSize>:$dynamic_offsets
   );
 
   let assemblyFormat = [{
-    $command_buffer `,` $executable_layout `,` `set` `=` $set `,`
-    $descriptor_set (`,` `offsets` `=` `[` $dynamic_offsets^ `]`)?
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `layout` `(` $executable_layout `:` type($executable_layout) `)`
+    `` `[` $set `]`
+    `set` `(` $descriptor_set `:` type($descriptor_set) `)`
+    (`offsets` `(` `[` $dynamic_offsets^ `]` `)`)?
     attr-dict-with-keyword
   }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$commandBuffer, "Value":$executableLayout,
-      "uint32_t":$set, "Value":$descriptorSet,
-      CArg<"ValueRange", "{}">:$dynamicOffsets)>,
-  ];
 }
 
 def HAL_CommandBufferDispatchSymbolOp : HAL_Op<"command_buffer.dispatch.symbol"> {
   let summary = [{command buffer dispatch recording operation, using symbolref}];
   let description = [{
     Dispatches an execution request, using a nested symbol reference to the entry point.
-
-    ```mlir
-    %x = constant 128 : index
-    %y = constant 32 : index
-    %z = constant 1 : index
-    hal.command_buffer.dispatch.symbol %cmd, @executable::@target::@entry,
-                                       workgroup_xyz = [%x, %y, %z]
-    ```
   }];
 
   let arguments = (ins
@@ -1196,32 +1209,21 @@ def HAL_CommandBufferDispatchSymbolOp : HAL_Op<"command_buffer.dispatch.symbol">
   );
 
   let assemblyFormat = [{
-    $command_buffer `,` $entry_point `,`
-    `workgroup_xyz` `=` `[` $workgroup_x `,` $workgroup_y `,` $workgroup_z `]`
-    attr-dict
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `target` `(` $entry_point `)`
+    `workgroups` `(` `[`
+        $workgroup_x `,`
+        $workgroup_y `,`
+        $workgroup_z
+    `]` `)`
+    attr-dict-with-keyword
   }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Value":$commandBuffer,
-      "IREE::HAL::ExecutableEntryPointOp":$entryPoint, "Value":$workgroupX,
-      "Value":$workgroupY, "Value":$workgroupZ)>,
-  ];
 }
 
 def HAL_CommandBufferDispatchOp : HAL_Op<"command_buffer.dispatch"> {
   let summary = [{command buffer dispatch recording operation}];
   let description = [{
     Dispatches an execution request.
-
-    ```mlir
-    %x = constant 128 : index
-    %y = constant 32 : index
-    %z = constant 1 : index
-    hal.command_buffer.dispatch %cmd, %executable,
-                                entry_point = 0,
-                                workgroup_xyz = [%x, %y, %z]
-    ```
   }];
 
   let arguments = (ins
@@ -1234,9 +1236,15 @@ def HAL_CommandBufferDispatchOp : HAL_Op<"command_buffer.dispatch"> {
   );
 
   let assemblyFormat = [{
-    $command_buffer `,` $executable `,` `entry_point` `=` $entry_point `,`
-    `workgroup_xyz` `=` `[` $workgroup_x `,` $workgroup_y `,` $workgroup_z `]`
-    attr-dict
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `target` `(` $executable `:` type($executable) `)`
+    `` `[` $entry_point `]`
+    `workgroups` `(` `[`
+        $workgroup_x `,`
+        $workgroup_y `,`
+        $workgroup_z
+    `]` `)`
+    attr-dict-with-keyword
   }];
 }
 
@@ -1255,13 +1263,16 @@ def HAL_CommandBufferDispatchIndirectSymbolOp : HAL_Op<"command_buffer.dispatch.
   let arguments = (ins
     HAL_CommandBuffer:$command_buffer,
     SymbolRefAttr:$entry_point,
-    HAL_Buffer:$workgroups_buffer,
+    HAL_BufferType:$workgroups_buffer,
     HAL_DeviceSize:$workgroups_offset
   );
 
   let assemblyFormat = [{
-    $command_buffer `,` $entry_point `,`
-    `workgroups` `=` $workgroups_buffer `[` $workgroups_offset `]` attr-dict
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `target` `(` $entry_point `)`
+    `workgroups` `(` $workgroups_buffer `:` type($workgroups_buffer) `)`
+    `` `[` $workgroups_offset `]`
+    attr-dict-with-keyword
   }];
 }
 
@@ -1270,25 +1281,23 @@ def HAL_CommandBufferDispatchIndirectOp : HAL_Op<"command_buffer.dispatch.indire
   let description = [{
     Dispatches an execution request with the dispatch parameters loaded from the
     given buffer.
-
-    ```mlir
-    hal.command_buffer.dispatch.indirect %cmd, %executable,
-                                         entry_point = 0,
-                                         workgroups = %buffer[%offset]
-    ```
   }];
 
   let arguments = (ins
     HAL_CommandBuffer:$command_buffer,
     HAL_Executable:$executable,
     HAL_OrdinalAttr:$entry_point,
-    HAL_Buffer:$workgroups_buffer,
+    HAL_BufferType:$workgroups_buffer,
     HAL_DeviceSize:$workgroups_offset
   );
 
   let assemblyFormat = [{
-    $command_buffer `,` $executable `,` `entry_point` `=` $entry_point `,`
-    `workgroups` `=` $workgroups_buffer `[` $workgroups_offset `]` attr-dict
+    `<` $command_buffer `:` type($command_buffer) `>`
+    `target` `(` $executable `:` type($executable) `)`
+    `` `[` $entry_point `]`
+    `workgroups` `(` $workgroups_buffer `:` type($workgroups_buffer) `)`
+    `` `[` $workgroups_offset `]`
+    attr-dict-with-keyword
   }];
 }
 
@@ -1321,8 +1330,10 @@ def HAL_ConstantPoolOp : HAL_Op<"constant_pool", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name,
-      "BufferConstraintsAttr":$bufferConstraints)>,
+    OpBuilder<(ins
+      "StringRef":$name,
+      "BufferConstraintsAttr":$bufferConstraints
+    )>,
   ];
 
   let extraClassDeclaration = [{
@@ -1354,7 +1365,7 @@ def HAL_ConstantPoolValueOp : HAL_Op<"constant_pool.value", [
   );
 
   let assemblyFormat = [{
-    $sym_name attr-dict `=` $value
+    $sym_name `=` $value attr-dict-with-keyword
   }];
 }
 
@@ -1379,9 +1390,10 @@ def HAL_ConstantPoolSpanOp : HAL_Op<"constant_pool.span", [
   );
 
   let assemblyFormat = [{
-    $sym_name `:` $tensor_type attr-dict
+    $sym_name `:` $tensor_type
     `=` $storage_buffer `[` $storage_range `]`
     (`->` $runtime_buffer^ `[` $runtime_range `]`)?
+    attr-dict-with-keyword
   }];
 }
 
@@ -1403,8 +1415,9 @@ def HAL_ConstantPoolSplatOp : HAL_Op<"constant_pool.splat", [
   );
 
   let assemblyFormat = [{
-    $sym_name attr-dict `=` $value
+    $sym_name `=` $value
     (`->` $runtime_buffer^ `[` $runtime_range `]`)?
+    attr-dict-with-keyword
   }];
 }
 
@@ -1425,11 +1438,13 @@ def HAL_ConstantPoolLoadOp : HAL_PureOp<"constant_pool.load", [
     TypeAlias<AnyRankedTensor>:$result
   );
 
-  let assemblyFormat = "$constant attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    $constant `:` type($result) attr-dict-with-keyword
+  }];
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Type":$resultType, "SymbolRefAttr":$constant),
+    OpBuilder<(ins "Type":$resultType, "SymbolRefAttr":$constant),
     [{
       $_state.addTypes({resultType});
       $_state.addAttribute("constant", constant);
@@ -1454,7 +1469,7 @@ def HAL_ConstantStorageOp : HAL_Op<"constant_storage", [
   );
 
   let assemblyFormat = [{
-    $sym_name attr-dict-with-keyword `=` $value
+    $sym_name `=` $value attr-dict-with-keyword
   }];
 }
 
@@ -1475,7 +1490,7 @@ def HAL_ConstantStorageLookupOp :
   );
 
   let assemblyFormat = [{
-    $constant `:` type($result) attr-dict
+    $constant `:` type($result) attr-dict-with-keyword
   }];
 }
 
@@ -1497,23 +1512,13 @@ def HAL_ConstantSubspanOp : HAL_PureOp<"constant.subspan", [
   );
 
   let assemblyFormat = [{
-    $runtime_buffer `[` $runtime_range `]` `:` type($result) attr-dict
+    $runtime_buffer `[` $runtime_range `]` `:` type($result)
+    attr-dict-with-keyword
   }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "Type":$resultType, "SymbolRefAttr":$runtimeBuffer,
-      "ByteRangeAttr":$runtimeRange),
-    [{
-      $_state.addTypes({resultType});
-      $_state.addAttribute("runtime_buffer", runtimeBuffer);
-      $_state.addAttribute("runtime_range", runtimeRange);
-    }]>,
-  ];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::DescriptorSet
+// !hal.descriptor_set / iree_hal_descriptor_set_layout_t
 //===----------------------------------------------------------------------===//
 
 def HAL_DescriptorSetCreateOp : HAL_PureOp<"descriptor_set.create", [
@@ -1528,8 +1533,8 @@ def HAL_DescriptorSetCreateOp : HAL_PureOp<"descriptor_set.create", [
   let arguments = (ins
     HAL_Device:$device,
     HAL_DescriptorSetLayout:$set_layout,
-    I32ArrayAttr:$bindings,
-    Variadic<HAL_Buffer>:$binding_buffers,
+    Variadic<Index>:$binding_ordinals,
+    Variadic<HAL_BufferType>:$binding_buffers,
     Variadic<HAL_DeviceSize>:$binding_offsets,
     Variadic<HAL_DeviceSize>:$binding_lengths
   );
@@ -1537,15 +1542,30 @@ def HAL_DescriptorSetCreateOp : HAL_PureOp<"descriptor_set.create", [
     HAL_DescriptorSet:$result
   );
 
-  let skipDefaultBuilders = 1;
+  let assemblyFormat = [{
+    `device` `(` $device `:` type($device) `)`
+    `layout` `(` $set_layout `:` type($set_layout) `)`
+    `bindings` `(` `[`
+    custom<DescriptorSetBindings>($binding_ordinals,
+                                  $binding_buffers,
+                                  type($binding_buffers),
+                                  $binding_offsets,
+                                  $binding_lengths)
+    `]` `)`
+    attr-dict-with-keyword
+  }];
+
   let builders = [
-    OpBuilderDAG<(ins "Value":$device, "Value":$setLayout,
-      "ArrayRef<DescriptorSetBindingValue>":$bindings)>,
+    OpBuilder<(ins
+      "Value":$device,
+      "Value":$setLayout,
+      "ArrayRef<DescriptorSetBindingValue>":$bindings
+    )>,
   ];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::DescriptorSetLayout
+// !hal.descriptor_set_layout / iree_hal_descriptor_set_layout_t
 //===----------------------------------------------------------------------===//
 
 def HAL_DescriptorSetLayoutCreateOp :
@@ -1558,13 +1578,6 @@ def HAL_DescriptorSetLayoutCreateOp :
     The same descriptor set layout may be shared with many different executable
     layouts and by doing so some runtime binding overhead when switching between
     executables that use the same set layouts can be reduced.
-
-    ```mlir
-    %layout = hal.descriptor_set_layout.create %device, "PushOnly", bindings = [
-      #hal.descriptor_set_layout_binding<0, "StorageBuffer", "Read">,
-      #hal.descriptor_set_layout_binding<1, "StorageBuffer", "Write">
-    ] : !hal.descriptor_set_layout
-    ```
   }];
 
   let arguments = (ins
@@ -1577,7 +1590,11 @@ def HAL_DescriptorSetLayoutCreateOp :
   );
 
   let assemblyFormat = [{
-    $device `,` $usage_type `,` `bindings` `=` $bindings attr-dict `:` type($result)
+    `device` `(` $device `:` type($device) `)`
+    `usage` `(` $usage_type `)`
+    `bindings` `(` $bindings `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 }
 
@@ -1588,13 +1605,6 @@ def HAL_DescriptorSetLayoutLookupOp : HAL_PureOp<"descriptor_set_layout.lookup",
   let description = [{
     Used during conversion to provide a placeholder for a globally cached and
     possibly lazy-initialized descriptor set layout.
-
-    ```mlir
-    %layout = hal.descriptor_set_layout.lookup %device, "PushOnly", bindings = [
-      #hal.descriptor_set_layout_binding<0, "StorageBuffer", "Read">,
-      #hal.descriptor_set_layout_binding<1, "StorageBuffer", "Write">
-    ] : !hal.descriptor_set_layout
-    ```
   }];
 
   let arguments = (ins
@@ -1607,12 +1617,16 @@ def HAL_DescriptorSetLayoutLookupOp : HAL_PureOp<"descriptor_set_layout.lookup",
   );
 
   let assemblyFormat = [{
-    $device `,` $usage_type `,` `bindings` `=` $bindings attr-dict `:` type($result)
+    `device` `(` $device `:` type($device) `)`
+    `usage` `(` $usage_type `)`
+    `bindings` `(` $bindings `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::Device
+// !hal.device / iree_hal_device_t
 //===----------------------------------------------------------------------===//
 
 def HAL_DeviceAllocatorOp : HAL_PureOp<"device.allocator", [
@@ -1631,11 +1645,13 @@ def HAL_DeviceAllocatorOp : HAL_PureOp<"device.allocator", [
     HAL_Allocator:$result
   );
 
-  let assemblyFormat = "$device attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    `<` $device `:` type($device) `>` `:` type($result) attr-dict-with-keyword
+  }];
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Value":$device),
+    OpBuilder<(ins "Value":$device),
     [{
       $_state.addOperands({device});
       $_state.addTypes({AllocatorType::get($_builder.getContext())});
@@ -1683,7 +1699,7 @@ def HAL_DeviceSwitchOp : HAL_Op<"device.switch", [IsolatedFromAbove]> {
     %c1 = constant 1 : i32
     %c2 = constant 2 : i32
     %device = ... : !hal.device
-    %0 = hal.device.switch(%device : !hal.device) -> i32
+    %0 = hal.device.switch<%device : !hal.device> -> i32
       #hal.device.match.id<"vulkan-v1.?-*">(%c1a = %c1 : i32) {
         hal.return %c1a : i32
       },
@@ -1707,18 +1723,22 @@ def HAL_DeviceSwitchOp : HAL_Op<"device.switch", [IsolatedFromAbove]> {
 
   let regions = (region VariadicRegion<AnyRegion>:$condition_regions);
 
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins
+      "TypeRange":$resultTypes,
+      "Value":$device,
+      "ArrayRef<Attribute>":$conditions,
+      "ArrayRef<SmallVector<Value, 4>>":$conditionArgs,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attributes
+    )>,
+  ];
+
   let extraClassDeclaration = [{
     /// Returns the index of the args() operand in the Operation operands list.
     unsigned mapArgOperandToOpOperand(unsigned i) { return i + 1; }
   }];
 
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilderDAG<(ins "TypeRange":$resultTypes, "Value":$device,
-      "ArrayRef<Attribute>":$conditions,
-      "ArrayRef<SmallVector<Value, 4>>":$conditionArgs,
-      CArg<"ArrayRef<NamedAttribute>", "{}">:$attributes)>,
-  ];
 
   let verifier = [{ return verifyDeviceSwitchOp(*this); }];
 }
@@ -1733,10 +1753,12 @@ def HAL_ReturnOp : HAL_Op<"return", [Terminator]> {
     Variadic<AnyType>:$operands
   );
 
-  let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
+  let assemblyFormat = [{
+    ($operands^ `:` type($operands))? attr-dict
+  }];
 
   let builders = [
-    OpBuilderDAG<(ins),
+    OpBuilder<(ins),
     [{
       build($_builder, $_state, llvm::None);
     }]>,
@@ -1754,7 +1776,8 @@ def HAL_DeviceMatchIDOp : HAL_PureOp<"device.match.id"> {
     device is not known at compile-time.
 
     ```mlir
-    %is_match = hal.device.match.id %device, pattern = ["vulkan-*"] : (!hal.device) -> i1
+    %is_match = hal.device.match.id<%device : !hal.device>
+                            pattern("vulkan-*") : i1
     ```
   }];
 
@@ -1767,8 +1790,10 @@ def HAL_DeviceMatchIDOp : HAL_PureOp<"device.match.id"> {
   );
 
   let assemblyFormat = [{
-    $device `,` `pattern` `=` `[` $pattern `]` attr-dict
-    `:` `(` type($device) `)` `->` type($result)
+    `<` $device `:` type($device) `>`
+    `pattern` `(` $pattern `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 }
 
@@ -1780,7 +1805,8 @@ def HAL_DeviceMatchMemoryModelOp : HAL_PureOp<"device.match.memory_model"> {
     device is not known at compile-time.
 
     ```mlir
-    %is_match = hal.device.match.memory_model %device, memory_model = "Unified" : (!hal.device) -> i1
+    %is_match = hal.device.match.memory_model<%device : !hal.device>
+                                        value("Unified") : i1
     ```
   }];
 
@@ -1793,13 +1819,15 @@ def HAL_DeviceMatchMemoryModelOp : HAL_PureOp<"device.match.memory_model"> {
   );
 
   let assemblyFormat = [{
-    $device `,` `model` `=` `[` $model `]` attr-dict
-    `:` `(` type($device) `)` `->` type($result)
+    `<` $device `:` type($device) `>`
+    `value` `(` $model `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::Executable
+// !hal.executable / iree_hal_executable_t
 //===----------------------------------------------------------------------===//
 
 def HAL_ExecutableOp : HAL_Op<"executable", [
@@ -1823,12 +1851,11 @@ def HAL_ExecutableOp : HAL_Op<"executable", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name)>,
+    OpBuilder<(ins "StringRef":$name)>,
   ];
 
   let extraClassDeclaration = [{
     Block& getBlock() { return body().front(); }
-    IREE::HAL::InterfaceOp getFirstInterfaceOp();
   }];
 
   let verifier = [{ return verifyExecutableOp(*this); }];
@@ -1845,11 +1872,23 @@ def HAL_ExecutableEndOp : HAL_Op<"executable_end", [
 def HAL_ExecutableEntryPointOp : HAL_Op<"executable.entry_point", [
     Symbol,
     HasParent<"IREE::HAL::ExecutableTargetOp">,
+    IsolatedFromAbove
   ]> {
   let summary = [{executable entry point declaration}];
   let description = [{
     An entry point exported by the executable with statically-available
     information describing the IO interface it uses and other dispatch metadata.
+
+    The optional `workgroup_count_region` region represents the
+    computation that returns the number of workgroups to use. The
+    arguments to the region represents the workload along x, y and
+    z. It returns the number of workgroups along x, y, and z.
+
+    TODO(ravishankarm): In reality there is no need to define what the
+    arguments represent. They could be any values that are needed to
+    compute the number of workgroups. Its unclear what these are in
+    general and how to plumb them through. So for now just accepting
+    the workload along x, y, and z.
   }];
 
   let arguments = (ins
@@ -1859,6 +1898,45 @@ def HAL_ExecutableEntryPointOp : HAL_Op<"executable.entry_point", [
     TypeAttr:$signature,
     OptionalAttr<HAL_WorkgroupSizeAttr>:$workgroup_size
   );
+
+  let regions = (region VariadicRegion<SizedRegion<1>>:$workgroup_count_region);
+
+  let builders = [
+    OpBuilder<(ins
+      "::llvm::StringRef":$sym_name,
+      "::llvm::APInt":$ordinal,
+      "::llvm::StringRef":$interface,
+      "::mlir::Type":$signature,
+      "::mlir::ArrayAttr":$workgroup_size
+    ), [{
+      build($_builder, $_state, sym_name, ordinal, interface, signature,
+            workgroup_size, 0);
+    }]>,
+    OpBuilder<(ins
+      "::mlir::StringAttr":$sym_name,
+      "::mlir::IntegerAttr":$ordinal,
+      "::mlir::FlatSymbolRefAttr":$interface,
+      "::mlir::TypeAttr":$signature,
+      "::mlir::ArrayAttr":$workgroup_size
+    ), [{
+      build($_builder, $_state, sym_name, ordinal, interface, signature,
+            workgroup_size, 0);
+    }]>
+  ];
+
+  let verifier = [{ return verifyExecutableEntryPointOp(*this); }];
+
+  let extraClassDeclaration = [{
+    Region *getBody() {
+      auto regions = workgroup_count_region();
+      if (!regions.empty()) return &regions.front();
+      return nullptr;
+    }
+    Block* getBlock() {
+      if (Region *region = getBody()) return &region->front();
+      return nullptr;
+    }
+  }];
 }
 
 def HAL_ExecutableTargetOp : HAL_Op<"executable.target", [
@@ -1886,7 +1964,7 @@ def HAL_ExecutableTargetOp : HAL_Op<"executable.target", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name, "StringRef":$targetBackendFilter)>,
+    OpBuilder<(ins "StringRef":$name, "StringRef":$targetBackendFilter)>,
   ];
 
   let extraClassDeclaration = [{
@@ -1912,6 +1990,7 @@ def HAL_ExecutableBinaryOp : HAL_Op<"executable.binary", [
     IsolatedFromAbove,
     HasParent<"IREE::HAL::ExecutableOp">,
     SingleBlockImplicitTerminator<"IREE::HAL::ExecutableBinaryEndOp">,
+    Symbol,
   ]> {
   let summary = [{compiled executable binary data}];
   let description = [{
@@ -1923,6 +2002,7 @@ def HAL_ExecutableBinaryOp : HAL_Op<"executable.binary", [
   }];
 
   let arguments = (ins
+    StrAttr:$sym_name,
     HAL_ExecutableFormatAttr:$format,
     HAL_ExecutableDataAttr:$data
     // TODO(benvanik): add compatibility and versioning attributes.
@@ -1932,8 +2012,16 @@ def HAL_ExecutableBinaryOp : HAL_Op<"executable.binary", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "uint32_t":$format, "std::vector<uint8_t>":$data)>,
-    OpBuilderDAG<(ins "uint32_t":$format, "DenseIntElementsAttr":$data)>,
+    OpBuilder<(ins
+      "StringRef":$name,
+      "uint32_t":$format,
+      "std::vector<uint8_t>":$data
+    )>,
+    OpBuilder<(ins
+      "StringRef":$name,
+      "uint32_t":$format,
+      "DenseIntElementsAttr":$data
+    )>,
   ];
 
   let extraClassDeclaration = [{
@@ -1957,6 +2045,39 @@ def HAL_ExecutableBinaryEndOp : HAL_Op<"executable.binary_end", [
   let assemblyFormat = "attr-dict";
 }
 
+def HAL_ExecutableCreateOp : HAL_PureOp<"executable.create", [
+    DeclareOpInterfaceMethods<OpAsmOpInterface>,
+  ]> {
+  let summary = [{creates an executable}];
+  let description = [{
+    Creates a target-dependent executable cached on the provided device. Entry
+    points contained within the executable can be dispatched using the resulting
+    executable handle.
+
+    Depending on the driver creation may take a non-trivial amount of time
+    (such as when JITing/etc). As the cache is internally synchronized callers
+    can issue preparation requests from multiple threads - even for the same
+    executables - and calls will block until preparation completes.
+  }];
+
+  let arguments = (ins
+    HAL_Device:$device,
+    SymbolRefAttr:$executable_target,
+    Variadic<HAL_ExecutableLayout>:$layouts
+  );
+  let results = (outs
+    HAL_Executable:$result
+  );
+
+  let assemblyFormat = [{
+    `device` `(` $device `:` type($device) `)`
+    `target` `(` $executable_target `)`
+    `layouts` `(` `[` $layouts `]` `)`
+    `:` type($result)
+    attr-dict-with-keyword
+  }];
+}
+
 def HAL_ExecutableLookupOp : HAL_PureOp<"executable.lookup", [
     DeclareOpInterfaceMethods<OpAsmOpInterface>,
   ]> {
@@ -1974,11 +2095,16 @@ def HAL_ExecutableLookupOp : HAL_PureOp<"executable.lookup", [
     HAL_Executable:$result
   );
 
-  let assemblyFormat = "$device `,` $executable attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    `device` `(` $device `:` type($device) `)`
+    `executable` `(` $executable `)`
+    `:` type($result)
+    attr-dict-with-keyword
+  }];
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Value":$device, "StringRef":$executable),
+    OpBuilder<(ins "Value":$device, "StringRef":$executable),
     [{
       $_state.addOperands({device});
       $_state.addAttribute("executable", $_builder.getSymbolRefAttr(executable));
@@ -1988,7 +2114,7 @@ def HAL_ExecutableLookupOp : HAL_PureOp<"executable.lookup", [
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::Executable Interfaces
+// hal.interface
 //===----------------------------------------------------------------------===//
 
 def HAL_InterfaceOp : HAL_Op<"interface", [
@@ -2022,15 +2148,17 @@ def HAL_InterfaceOp : HAL_Op<"interface", [
 
   let arguments = (ins
     StrAttr:$sym_name,
-    OptionalAttr<I32Attr>:$push_constants
+    OptionalAttr<IndexAttr>:$push_constants
   );
 
   let regions = (region SizedRegion<1>:$body);
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name,
-      CArg<"IntegerAttr", "{}">:$pushConstants)>,
+    OpBuilder<(ins
+      "StringRef":$name,
+      CArg<"IntegerAttr", "{}">:$pushConstants
+    )>,
   ];
 
   let extraClassDeclaration = [{
@@ -2077,8 +2205,8 @@ def HAL_InterfaceBindingOp : HAL_Op<"interface.binding", [
 
   let arguments = (ins
     StrAttr:$sym_name,
-    I32Attr:$set,
-    I32Attr:$binding,
+    IndexAttr:$set,
+    IndexAttr:$binding,
     HAL_DescriptorTypeAttr:$type,
     HAL_MemoryAccessBitfieldAttr:$access
   );
@@ -2105,7 +2233,9 @@ def HAL_InterfaceWorkgroupIDOp : HAL_PureOp<"interface.workgroup.id", [
   let arguments = (ins IndexAttr:$dimension);
   let results = (outs HAL_Dim:$result);
 
-  let assemblyFormat = "`[` $dimension `]` attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    `[` $dimension `]` attr-dict `:` type($result)
+  }];
 }
 
 def HAL_InterfaceWorkgroupCountOp : HAL_PureOp<"interface.workgroup.count", [
@@ -2130,7 +2260,9 @@ def HAL_InterfaceWorkgroupCountOp : HAL_PureOp<"interface.workgroup.count", [
   let arguments = (ins IndexAttr:$dimension);
   let results = (outs HAL_Dim:$result);
 
-  let assemblyFormat = "`[` $dimension `]` attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    `[` $dimension `]` attr-dict `:` type($result)
+  }];
 }
 
 def HAL_InterfaceWorkgroupSizeOp : HAL_PureOp<"interface.workgroup.size", [
@@ -2155,7 +2287,9 @@ def HAL_InterfaceWorkgroupSizeOp : HAL_PureOp<"interface.workgroup.size", [
   let arguments = (ins IndexAttr:$dimension);
   let results = (outs HAL_Dim:$result);
 
-  let assemblyFormat = "`[` $dimension `]` attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    `[` $dimension `]` attr-dict `:` type($result)
+  }];
 }
 
 def HAL_InterfaceLoadConstantOp : HAL_PureOp<"interface.load.constant"> {
@@ -2178,7 +2312,8 @@ def HAL_InterfaceLoadConstantOp : HAL_PureOp<"interface.load.constant"> {
   }];
 }
 
-def HAL_InterfaceBindingSubspanOp : HAL_PureOp<"interface.binding.subspan"> {
+def HAL_InterfaceBindingSubspanOp : HAL_Op<"interface.binding.subspan", [
+    MemoryEffects<[MemAlloc]>]> {
   let summary = [{returns an alias to a subspan of interface binding data}];
   let description = [{
     // TODO(benvanik): add description
@@ -2190,7 +2325,7 @@ def HAL_InterfaceBindingSubspanOp : HAL_PureOp<"interface.binding.subspan"> {
     Optional<HAL_DeviceSize>:$byte_length
   );
   let results = (outs
-    AnyType:$result
+    Res<AnyType, "", [MemAlloc]>:$result
   );
 
   let assemblyFormat = [{
@@ -2269,7 +2404,8 @@ def HAL_InterfaceStoreTensorOp : HAL_Op<"interface.store.tensor"> {
   );
 
   let assemblyFormat = [{
-    $operand `,` $binding `,` `offset` `=` $offset attr-dict `:` type($operand)
+    $operand `,` $binding `,` `offset` `=` $offset
+    attr-dict `:` type($operand)
   }];
 
   let extraClassDeclaration = [{
@@ -2279,9 +2415,10 @@ def HAL_InterfaceStoreTensorOp : HAL_Op<"interface.store.tensor"> {
   }];
 }
 
-def HAL_InterfaceLoadTensorTileOp : HAL_PureOp<
-    "interface.load.tensor.tile",
-    [AttrSizedOperandSegments, OffsetSizeAndStrideOpInterface]> {
+def HAL_InterfaceLoadTensorTileOp : HAL_PureOp<"interface.load.tensor.tile", [
+    AttrSizedOperandSegments,
+    OffsetSizeAndStrideOpInterface,
+  ]> {
   let summary = [{loads a tensor tile from an executable IO binding}];
   let description = [{
     Loads a tensor tile value from an executable IO binding at the given
@@ -2327,6 +2464,18 @@ def HAL_InterfaceLoadTensorTileOp : HAL_PureOp<
     AnyRankedTensor:$result
   );
 
+  let assemblyFormat = [{
+    $binding `,`
+    `base_offset` `=` $base_offset `,`
+    `offsets` `=`
+    custom<OperandsOrIntegersOffsetsOrStridesList>($offsets, $static_offsets) `,`
+    `sizes` `=`
+    custom<OperandsOrIntegersSizesList>($sizes, $static_sizes) `,`
+    `strides` `=`
+    custom<OperandsOrIntegersOffsetsOrStridesList>($strides, $static_strides)
+    attr-dict `:` type($result)
+  }];
+
   let extraClassDeclaration = [{
     /// Returns the hal.interface.binding op associated with this op.
     /// Returns null op if not found.
@@ -2334,7 +2483,7 @@ def HAL_InterfaceLoadTensorTileOp : HAL_PureOp<
 
     /// Return the expected rank of each of the`static_offsets`, `static_sizes`
     /// and `static_strides` attributes.
-    std::array<unsigned, 3> getArrayAttrRanks() {
+    std::array<unsigned, 3> getArrayAttrMaxRanks() {
       unsigned resultRank = getResult().getType().cast<ShapedType>().getRank();
       return {resultRank, resultRank, resultRank};
     }
@@ -2352,12 +2501,17 @@ def HAL_InterfaceLoadTensorTileOp : HAL_PureOp<
       }
       return names;
     }
+
+    /// Return the number of leading operands before the `offsets`, `sizes` and
+    /// and `strides` operands.
+    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 1; }
   }];
 }
 
-def HAL_InterfaceStoreTensorTileOp :  HAL_Op<
-    "interface.store.tensor.tile",
-    [AttrSizedOperandSegments, OffsetSizeAndStrideOpInterface]> {
+def HAL_InterfaceStoreTensorTileOp : HAL_Op<"interface.store.tensor.tile", [
+    AttrSizedOperandSegments,
+    OffsetSizeAndStrideOpInterface,
+  ]> {
   let summary = [{stores a tensor tile in an executable IO binding}];
   let description = [{
     Stores a tensor value into an executable IO binding. This is a pseudo op
@@ -2381,7 +2535,7 @@ def HAL_InterfaceStoreTensorTileOp :  HAL_Op<
 
     Grammar:
     ```
-      `hal.interface.store.tensor.tile` $operand $binding `,`
+      `hal.interface.store.tensor.tile` $operand `,` $binding `,`
         `base_offset` `=` base_offset `,`
         `offsets` `=` `[` offset-list `]` `,`
         `sizes` `=` `[` size-list `]` `,`
@@ -2401,6 +2555,18 @@ def HAL_InterfaceStoreTensorTileOp :  HAL_Op<
     I64ArrayAttr:$static_strides
   );
 
+  let assemblyFormat = [{
+    $operand `,` $binding `,`
+    `base_offset` `=` $base_offset `,`
+    `offsets` `=`
+    custom<OperandsOrIntegersOffsetsOrStridesList>($offsets, $static_offsets) `,`
+    `sizes` `=`
+    custom<OperandsOrIntegersSizesList>($sizes, $static_sizes) `,`
+    `strides` `=`
+    custom<OperandsOrIntegersOffsetsOrStridesList>($strides, $static_strides)
+    attr-dict `:` type($operand)
+  }];
+
   let extraClassDeclaration = [{
     /// Returns the hal.interface.binding op associated with this op.
     /// Returns null op if not found.
@@ -2408,7 +2574,7 @@ def HAL_InterfaceStoreTensorTileOp :  HAL_Op<
 
     /// Return the expected rank of each of the`static_offsets`, `static_sizes`
     /// and `static_strides` attributes.
-    std::array<unsigned, 3> getArrayAttrRanks() {
+    std::array<unsigned, 3> getArrayAttrMaxRanks() {
       unsigned rank = operand().getType().cast<ShapedType>().getRank();
       return {rank, rank, rank};
     }
@@ -2426,122 +2592,15 @@ def HAL_InterfaceStoreTensorTileOp :  HAL_Op<
       }
       return names;
     }
-  }];
-}
-//===----------------------------------------------------------------------===//
-// iree::hal::ExecutableCache
-//===----------------------------------------------------------------------===//
 
-def HAL_ExecutableCacheCreateOp : HAL_Op<"executable_cache.create", [
-    DeclareOpInterfaceMethods<OpAsmOpInterface>,
-  ]> {
-  let summary = [{creates an executable cache}];
-  let description = [{
-    Caches may be shared across multiple devices from the same driver or
-    specific to individual devices. Caches may persist prepared executables
-    across process launches or re-prepare them each run. Callers should assume
-    that the cache is a no-op and the returned hal.executables only live for as
-    long as the cache does.
-
-    The term 'cache' here is rather optimistic - it's perfectly acceptable for
-    implementations to not cache at all and return new hal.executables for each
-    preparation (even for the same executable). Callers should expect such
-    behavior and try to retain the results of the preparation to reduce overhead
-    from re-preparing executables.
-
-    Currently caches are synchronous but the intent is to support asynchronous
-    compilation of multiple executables with semaphores used to indicate when
-    the executables are ready for use.
-
-    ```mlir
-    %cache = hal.executable_cache.create %device, identifier = "some_guid" : !hal.executable_cache
-    ```
-  }];
-
-  let arguments = (ins
-    HAL_Device:$device,
-    StrAttr:$identifier
-  );
-  let results = (outs
-    HAL_ExecutableCache:$result
-  );
-
-  let assemblyFormat = [{
-    $device `,` `identifier` `=` $identifier
-    attr-dict-with-keyword `:` type($result)
-  }];
-}
-
-def HAL_ExecutableCacheSelectFormatOp :
-  HAL_PureOp<"executable_cache.select_format", [
-    DeclareOpInterfaceMethods<OpAsmOpInterface>,
-  ]> {
-  let summary = [{selects the preferred format from the given list}];
-  let description = [{
-    Returns the index of the preferred format of the cache from the given set or
-    -1 if none can be used. Preparation may still fail if the particular version
-    or features required by the executable are not supported.
-
-    ```mlir
-    // Returns indices 0 or 1 if either of the two inputs are usable or -1 otherwise.
-    %index = hal.executable_cache.select_format %cache, available_formats = [1447906369 : i32, 123482395 : i32] : i32
-    ```
-  }];
-
-  let arguments = (ins
-    HAL_ExecutableCache:$executable_cache,
-    HAL_ExecutableFormatArrayAttr:$available_formats
-  );
-  let results = (outs
-    I32:$result
-  );
-
-  let assemblyFormat = [{
-    $executable_cache `,` `available_formats` `=` $available_formats
-    attr-dict-with-keyword `:` type($result)
-  }];
-}
-
-def HAL_ExecutableCachePrepareOp : HAL_PureOp<"executable_cache.prepare", [
-    DeclareOpInterfaceMethods<OpAsmOpInterface>,
-  ]> {
-  let summary = [{synchronously prepares an executable for use}];
-  let description = [{
-    The provided spec and data will be used to either lookup a previously
-    prepared executable in the cache or prepare a new one.
-
-    Depending on the driver preparation may take a non-trivial amount of time
-    (such as when JITing/etc). As the cache is internally synchronized callers
-    can issue preparation requests from multiple threads - even for the same
-    executables - and calls will block until preparation completes.
-
-    ```mlir
-    %exe = hal.executable_cache.prepare %executable_cache,
-                                        layout = %layout,
-                                        caching_mode = "AllowPersistentCaching|AllowOptimization",
-                                        @executable : !hal.executable
-    ```
-  }];
-
-  let arguments = (ins
-    HAL_ExecutableCache:$executable_cache,
-    HAL_ExecutableLayout:$executable_layout,
-    HAL_ExecutableCachingModeBitfieldAttr:$caching_mode,
-    FlatSymbolRefAttr:$executable
-  );
-  let results = (outs
-    HAL_Executable:$result
-  );
-
-  let assemblyFormat = [{
-    $executable_cache `,` `layout` `=` $executable_layout `,`
-    `caching_mode` `=` $caching_mode `,` $executable
-    attr-dict-with-keyword `:` type($result)
+    /// Return the number of leading operands before the `offsets`, `sizes` and
+    /// and `strides` operands.
+    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 2; }
   }];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::ExecutableLayout
+// !hal.executable_layout / iree_hal_executable_layout_t
 //===----------------------------------------------------------------------===//
 
 def HAL_ExecutableLayoutCreateOp : HAL_PureOp<"executable_layout.create", [
@@ -2556,29 +2615,24 @@ def HAL_ExecutableLayoutCreateOp : HAL_PureOp<"executable_layout.create", [
     is often worth the cost to allow a small number of unused bindings in one
     executable such that it can share layouts with others that will be scheduled
     adjacent to it.
-
-    ```mlir
-    %set0 = hal.descriptor_set_layout.create ...
-    %set1 = hal.descriptor_set_layout.create ...
-    %layout = hal.executable_layout.create %device,
-                                           set_layouts = [%set0, %set1],
-                                           push_constants = 3 : !hal.executable_layout
-    ```
   }];
 
   let arguments = (ins
     HAL_Device:$device,
-    Variadic<HAL_DescriptorSetLayout>:$set_layouts,
-    I32Attr:$push_constants
+    IndexAttr:$push_constants,
+    Variadic<HAL_DescriptorSetLayout>:$set_layouts
   );
   let results = (outs
     HAL_ExecutableLayout:$result
   );
 
+  // TODO(benvanik): include descriptor set layout types.
   let assemblyFormat = [{
-    $device `,` `set_layouts` `=` `[` $set_layouts `]` `,`
-    `push_constants` `=` $push_constants
-    attr-dict-with-keyword `:` type($result)
+    `device` `(` $device `:` type($device) `)`
+    `push_constants` `(` $push_constants `)`
+    `layouts` `(` `[` $set_layouts `]` `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 }
 
@@ -2589,43 +2643,30 @@ def HAL_ExecutableLayoutLookupOp : HAL_PureOp<"executable_layout.lookup", [
   let description = [{
     Used during conversion to provide a placeholder for a globally cached and
     possibly lazy-initialized executable layout.
-
-    ```mlir
-    %layout = hal.executable_layout.lookup %device, set_layouts = [
-      [
-        #hal.descriptor_set_layout_binding<0, "StorageBuffer", "Read">,
-        #hal.descriptor_set_layout_binding<1, "StorageBuffer", "Write">
-      ]
-    ] : !hal.executable_layout
-    ```
   }];
 
   let arguments = (ins
     HAL_Device:$device,
+    OptionalAttr<IndexAttr>:$push_constants,
     // TODO(benvanik): replace with a nested typed attr that works.
     // Array of HAL_DescriptorSetLayoutBindingArrayAttr.
-    ArrayAttr:$set_layouts,
-    OptionalAttr<I32Attr>:$push_constants
+    ArrayAttr:$set_layouts
   );
   let results = (outs
     HAL_ExecutableLayout:$result
   );
 
   let assemblyFormat = [{
-    $device `,` `set_layouts` `=` $set_layouts
-    (`,` `push_constants` `=` $push_constants^)?
-    attr-dict-with-keyword `:` type($result)
+    `device` `(` $device `:` type($device) `)`
+    (`push_constants` `(` $push_constants^ `)`)?
+    `layouts` `(` $set_layouts `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 }
 
 //===----------------------------------------------------------------------===//
-// iree::hal::RingBuffer
-//===----------------------------------------------------------------------===//
-
-// TODO(benvanik): ring buffer.
-
-//===----------------------------------------------------------------------===//
-// iree::hal::Semaphore
+// !hal.semaphore / iree_hal_semaphore_t
 //===----------------------------------------------------------------------===//
 
 def HAL_SemaphoreCreateOp : HAL_Op<"semaphore.create", [
@@ -2645,8 +2686,10 @@ def HAL_SemaphoreCreateOp : HAL_Op<"semaphore.create", [
   );
 
   let assemblyFormat = [{
-    $device `,` `initial_value` `=` $initial_value
-    attr-dict-with-keyword `:` type($result)
+    `device` `(` $device `:` type($device) `)`
+    `initial` `(` $initial_value `)`
+    `:` type($result)
+    attr-dict-with-keyword
   }];
 }
 
@@ -2669,7 +2712,9 @@ def HAL_SemaphoreQueryOp : HAL_Op<"semaphore.query"> {
   );
 
   let assemblyFormat = [{
-    $semaphore attr-dict-with-keyword `:` type($status) `,` type($value)
+    `<` $semaphore `:` type($semaphore) `>`
+    `:` type($status) `,` type($value)
+    attr-dict-with-keyword
   }];
 }
 
@@ -2686,7 +2731,9 @@ def HAL_SemaphoreSignalOp : HAL_Op<"semaphore.signal"> {
   );
 
   let assemblyFormat = [{
-    $semaphore `,` `value` `=` $new_value attr-dict-with-keyword
+    `<` $semaphore `:` type($semaphore) `>`
+    `value` `(` $new_value `)`
+    attr-dict-with-keyword
   }];
 }
 
@@ -2704,7 +2751,9 @@ def HAL_SemaphoreFailOp : HAL_Op<"semaphore.fail"> {
   );
 
   let assemblyFormat = [{
-    $semaphore `,` `status` `=` $status attr-dict-with-keyword
+    `<` $semaphore `:` type($semaphore) `>`
+    `status` `(` $status `)`
+    attr-dict-with-keyword
   }];
 }
 
@@ -2727,7 +2776,10 @@ def HAL_SemaphoreAwaitOp : HAL_Op<"semaphore.await", [YieldPoint]> {
   );
 
   let assemblyFormat = [{
-    $semaphore `,` `min_value` `=` $min_value attr-dict-with-keyword `:` type($status)
+    `<` $semaphore `:` type($semaphore) `>`
+    `until` `(` $min_value `)`
+    `:` type($status)
+    attr-dict-with-keyword
   }];
 }
 

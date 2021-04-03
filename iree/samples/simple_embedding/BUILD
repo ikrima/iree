@@ -34,23 +34,19 @@ iree_bytecode_module(
 cc_test(
     name = "simple_embedding_test",
     srcs = ["simple_embedding_test.cc"],
-    data = [
-        # For AddressSanitizer when using Vulkan + a local Nvidia GPU
-        "//iree/tools:sanitizer_suppressions.txt",
-    ],
     deps = [
         ":simple_embedding_test_bytecode_module_cc",
         "//iree/base:api",
         "//iree/base:logging",
         "//iree/hal:api",
-        "//iree/hal/testing:driver_registry",
+        "//iree/hal/vmla/registration",
+        "//iree/hal/vulkan/registration",
         "//iree/modules/hal",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
         "//iree/vm",
         "//iree/vm:bytecode_module",
         "//iree/vm:cc",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],

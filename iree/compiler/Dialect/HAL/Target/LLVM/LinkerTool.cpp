@@ -14,6 +14,8 @@
 
 #include "iree/compiler/Dialect/HAL/Target/LLVM/LinkerTool.h"
 
+#include "llvm/Support/Process.h"
+
 #define DEBUG_TYPE "llvmaot-linker"
 
 namespace mlir {
@@ -21,11 +23,30 @@ namespace iree_compiler {
 namespace IREE {
 namespace HAL {
 
+// Sanitizes potentially user provided portions of a file name by replacing
+// all but a small set of alpha numeric and safe punctuation characters with
+// '_'. This is intended for components of temporary files that are uniqued
+// independently, where the input is meant to aid debugability but does not
+// need to be retained verbatim.
+static void sanitizeFilePart(llvm::SmallVectorImpl<char> &part) {
+  for (char &c : part) {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')
+      continue;
+    c = '_';
+  }
+}
+
 // static
 Artifact Artifact::createTemporary(StringRef prefix, StringRef suffix) {
+  llvm::SmallString<8> prefixCopy(prefix);
+  llvm::SmallString<8> suffixCopy(suffix);
+  sanitizeFilePart(prefixCopy);
+  sanitizeFilePart(suffixCopy);
+
   llvm::SmallString<32> filePath;
-  if (std::error_code error =
-          llvm::sys::fs::createTemporaryFile(prefix, suffix, filePath)) {
+  if (std::error_code error = llvm::sys::fs::createTemporaryFile(
+          prefixCopy, suffixCopy, filePath)) {
     llvm::errs() << "failed to generate temporary file: " << error.message();
     return {};
   }
@@ -102,22 +123,57 @@ std::string LinkerTool::getToolPath() const {
   }
 }
 
+// It's easy to run afoul of quoting rules on Windows, such as when using
+// spaces in the linker environment variable.
+// See: https://stackoverflow.com/a/9965141
+static std::string escapeCommandLineComponent(const std::string &commandLine) {
+#if defined(_MSC_VER)
+  return "\"" + commandLine + "\"";
+#else
+  return commandLine;
+#endif
+}
+
+static std::string normalizeToolNameForPlatform(const std::string &toolName) {
+#if defined(_MSC_VER)
+  return toolName + ".exe";
+#else
+  return toolName;
+#endif
+}
+
 LogicalResult LinkerTool::runLinkCommand(const std::string &commandLine) {
   LLVM_DEBUG(llvm::dbgs() << "Running linker command:\n" << commandLine);
-#if defined(_MSC_VER)
-  // It's easy to run afoul of quoting rules on Windows (such as when using
-  // spaces in the linker environment variable). See:
-  // https://stackoverflow.com/a/9965141
-  auto quotedCommandLine = "\"" + commandLine + "\"";
-  int exitCode = system(quotedCommandLine.c_str());
-#else
-  int exitCode = system(commandLine.c_str());
-#endif  // _MSC_VER
+  auto escapedCommandLine = escapeCommandLineComponent(commandLine);
+  int exitCode = system(escapedCommandLine.c_str());
   if (exitCode == 0) return success();
-  llvm::errs() << "Linking failed; command line returned exit code " << exitCode
-               << ":\n\n"
-               << commandLine << "\n\n";
+  llvm::errs() << "Linking failed; escaped command line returned exit code "
+               << exitCode << ":\n\n"
+               << escapedCommandLine << "\n\n";
   return failure();
+}
+
+std::string LinkerTool::findToolInEnvironment(
+    SmallVector<std::string, 4> toolNames) const {
+  // First search the current directory.
+  for (auto toolName : toolNames) {
+    toolName = normalizeToolNameForPlatform(toolName);
+    if (llvm::sys::fs::exists(toolName)) {
+      llvm::SmallString<256> absolutePath(toolName);
+      llvm::sys::fs::make_absolute(absolutePath);
+      return escapeCommandLineComponent(std::string(absolutePath));
+    }
+  }
+
+  // Next search the environment path.
+  for (auto toolName : toolNames) {
+    toolName = normalizeToolNameForPlatform(toolName);
+    if (auto result = llvm::sys::Process::FindInEnvPath("PATH", toolName)) {
+      return escapeCommandLineComponent(std::string(*result));
+    }
+  }
+
+  return "";
 }
 
 }  // namespace HAL

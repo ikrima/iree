@@ -58,6 +58,7 @@ DOC_TITLE_DICT = {
     'getting_started_android_cmake.md': 'Android with CMake',
     'generic_vulkan_env_setup.md': 'Generic Vulkan Setup',
     'getting_started_python.md': 'Python',
+    'getting_started_tensorflow.md': 'TensorFlow',
     'design_roadmap.md': 'Long-term Design Roadmap',
     'objectives.md': 'Short-term Objectives',
     'tensorflow_integrations.md': 'TensorFlow Integrations',
@@ -85,17 +86,16 @@ PERMALINK_DICT = {
 NAVI_ORDER_DICT = {
     # Top level entries
     'index.md': 1,
-    # 'Using IREE' is 2.
-    # 'Getting Started' is 3.
-    # 'Developing IREE' is 4.
-    'design_roadmap.md': 5,
-    'objectives.md': 6,
-    'xla_op_coverage.md': 7,
-    # 'Tensorflow Coverage' is 8,
-    'iree_community.md': 9,
-    # 'Design Docs' is 10.
-    # 'IR Conversion Examples' is 11.
-    # 'Dialect Definitions' is 12.
+    # 'Getting Started' is 2.
+    # 'Developing IREE' is 3.
+    'design_roadmap.md': 4,
+    'objectives.md': 5,
+    'xla_op_coverage.md': 6,
+    # 'Tensorflow Coverage' is 7,
+    'iree_community.md': 8,
+    # 'Design Docs' is 9.
+    # 'IR Conversion Examples' is 10.
+    # 'Dialect Definitions' is 11.
 
     # Within 'Getting Started' use explicit ordering.
     # Alphabetical would put 'bazel' before 'cmake' and 'python' between 'linux'
@@ -110,8 +110,9 @@ NAVI_ORDER_DICT = {
     'getting_started_macos_bazel.md': 8,
     'getting_started_android_cmake.md': 9,
     'getting_started_python.md': 10,
-    'generic_vulkan_env_setup.md': 11,
-    'cmake_options_and_variables.md': 12,
+    'getting_started_tensorflow.md': 11,
+    'generic_vulkan_env_setup.md': 12,
+    'cmake_options_and_variables.md': 13,
 
     # Within 'Developing IREE' use explicit ordering.
     'developer_overview.md': 1,
@@ -121,9 +122,6 @@ NAVI_ORDER_DICT = {
     'tensorflow_integrations.md': 5,
     'e2e_benchmarking.md': 6,
     'repository_management.md': 7,
-
-    # Within 'Using IREE' use explicit ordering.
-    'using_colab.md': 1,
 
     # Within 'TensorFlow Coverage' use explicit ordering.
     'tf_base_coverage.md': 1,
@@ -145,7 +143,6 @@ DIRECTORY_TITLE_DICT = {
     'Dialects': 'Dialect Definitions',
     'get_started': 'Getting Started',
     'ir_examples': 'IR Conversion Examples',
-    'using_iree': 'Using IREE',
     'tensorflow_coverage': 'TensorFlow Coverage',
 }
 
@@ -164,7 +161,7 @@ def process_file(basedir, relpath, filename):
 
   full_path = os.path.join(basedir, relpath, filename)
   base_name = os.path.splitext(filename)[0]
-  with open(full_path, 'r') as f:
+  with open(full_path, 'r', encoding="utf8") as f:
     content = f.read()
 
   # Directly return if the file already has front matter.
@@ -236,7 +233,7 @@ def process_file(basedir, relpath, filename):
                             '> Note\n> {: .label .label-blue }\n> ')
 
   # Update in place.
-  with open(full_path, 'w') as f:
+  with open(full_path, 'w', encoding="utf8") as f:
     f.write(f'{prefix}{content}')
 
 

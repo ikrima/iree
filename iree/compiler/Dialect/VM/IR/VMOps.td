@@ -42,7 +42,7 @@ def VM_ModuleOp : VM_Op<"module", [
   let arguments = (ins
     StrAttr:$sym_name,
     // TODO(benvanik): add compatibility and versioning attributes.
-    OptionalAttr<DictionaryAttr>:$ordinal_counts
+    OptionalAttr<VM_OrdinalCountsAttr>:$ordinal_counts
   );
 
   let regions = (region SizedRegion<1>:$body);
@@ -51,7 +51,7 @@ def VM_ModuleOp : VM_Op<"module", [
   // the auto-generated builders do not guarantee that.
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name)>,
+    OpBuilder<(ins "StringRef":$name)>,
   ];
 
   let extraClassDeclaration = [{
@@ -95,7 +95,7 @@ def VM_FuncOp : VM_Op<"func", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name, "FunctionType":$type,
+    OpBuilder<(ins "StringRef":$name, "FunctionType":$type,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs,
       CArg<"ArrayRef<DictionaryAttr>", "{}">:$argAttrs)>,
   ];
@@ -141,7 +141,8 @@ def VM_FuncOp : VM_Op<"func", [
 }
 
 def VM_ExportOp : VM_Op<"export", [
-    HasParent<"IREE::VM::ModuleOp">,
+    // TODO(#3968): working around iree.module.export hackability woes.
+    // HasParent<"IREE::VM::ModuleOp">,
   ]> {
   let summary = [{exports a function from the module}];
   let description = [{
@@ -157,10 +158,10 @@ def VM_ExportOp : VM_Op<"export", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "FuncOp":$functionRef,
+    OpBuilder<(ins "FuncOp":$functionRef,
       CArg<"StringRef", [{""}]>:$exportName,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
-    OpBuilderDAG<(ins "FlatSymbolRefAttr":$functionRef,
+    OpBuilder<(ins "FlatSymbolRefAttr":$functionRef,
       CArg<"StringRef", [{""}]>:$exportName,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
   ];
@@ -185,7 +186,7 @@ def VM_ImportOp : VM_Op<"import", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name, "FunctionType":$type,
+    OpBuilder<(ins "StringRef":$name, "FunctionType":$type,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs,
       CArg<"ArrayRef<DictionaryAttr>", "{}">:$argAttrs)>,
   ];
@@ -261,7 +262,7 @@ class VM_GlobalOp<string mnemonic, Attr attr_type, list<OpTrait> traits = []> :
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
+    OpBuilder<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
       "Optional<StringRef>":$initializer, "Optional<Attribute>":$initialValue,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs),
     [{
@@ -280,7 +281,7 @@ class VM_GlobalOp<string mnemonic, Attr attr_type, list<OpTrait> traits = []> :
       $_state.addAttribute("type", TypeAttr::get(type));
       $_state.attributes.append(attrs.begin(), attrs.end());
     }]>,
-    OpBuilderDAG<(ins "StringRef":$name, "bool":$isMutable,
+    OpBuilder<(ins "StringRef":$name, "bool":$isMutable,
       "IREE::VM::FuncOp":$initializer,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs),
     [{
@@ -288,13 +289,13 @@ class VM_GlobalOp<string mnemonic, Attr attr_type, list<OpTrait> traits = []> :
             initializer.getType().getResult(0), initializer.getName(),
             llvm::None, attrs);
     }]>,
-    OpBuilderDAG<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
+    OpBuilder<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
       "Attribute":$initialValue, CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs),
     [{
       build($_builder, $_state, name, isMutable, type, llvm::None, initialValue,
             attrs);
     }]>,
-    OpBuilderDAG<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
+    OpBuilder<(ins "StringRef":$name, "bool":$isMutable, "Type":$type,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs),
     [{
       build($_builder, $_state, name, isMutable, type, llvm::None, llvm::None,
@@ -308,9 +309,9 @@ class VM_GlobalOp<string mnemonic, Attr attr_type, list<OpTrait> traits = []> :
     bool isMutable() { return is_mutable(); }
     void makeMutable() { (*this)->setAttr("is_mutable", UnitAttr::get(getContext())); }
     Optional<StringRef> getInitializerAttr() { return initializer(); }
-    void clearInitializer() { removeAttr("initializer"); }
+    void clearInitializer() { (*this)->removeAttr("initializer"); }
     Optional<Attribute> getInitialValueAttr() { return initial_valueAttr(); }
-    void clearInitialValue() { removeAttr("initial_value"); }
+    void clearInitialValue() { (*this)->removeAttr("initial_value"); }
     Optional<IntegerAttr> getOrdinalAttr() { return ordinalAttr(); }
   }];
 
@@ -341,9 +342,9 @@ def VM_GlobalI64Op : VM_GlobalOp<"global.i64", VM_ConstIntValueAttr<I64>,
 }
 
 def VM_GlobalRefOp : VM_GlobalOp<"global.ref", UnitAttr> {
-  let summary = [{ref_ptr<T> global declaration}];
+  let summary = [{ref<T> global declaration}];
   let description = [{
-    Defines a global value that is a ref_ptr of a specific type. The global will
+    Defines a global value that is a ref of a specific type. The global will
     retain the ref object for the lifetime of the context or until the value is
     replaced with a store or reset.
   }];
@@ -544,9 +545,9 @@ def VM_GlobalStoreIndirectI64Op :
 }
 
 def VM_GlobalLoadRefOp : VM_GlobalLoadOp<VM_AnyRef, "global.load.ref"> {
-  let summary = [{global ref_ptr<T> load operation}];
+  let summary = [{global ref<T> load operation}];
   let description = [{
-    Loads the value of a global containing a ref_ptr of the given type.
+    Loads the value of a global containing a ref of the given type.
   }];
 
   let encoding = [
@@ -560,9 +561,9 @@ def VM_GlobalLoadRefOp : VM_GlobalLoadOp<VM_AnyRef, "global.load.ref"> {
 }
 
 def VM_GlobalStoreRefOp : VM_GlobalStoreOp<VM_AnyRef, "global.store.ref"> {
-  let summary = [{global ref_ptr<T> stores operation}];
+  let summary = [{global ref<T> stores operation}];
   let description = [{
-    Stores a ref_ptr<T> to a global, retaining it until the global is reset.
+    Stores a ref<T> to a global, retaining it until the global is reset.
   }];
 
   let encoding = [
@@ -575,9 +576,9 @@ def VM_GlobalStoreRefOp : VM_GlobalStoreOp<VM_AnyRef, "global.store.ref"> {
 
 def VM_GlobalLoadIndirectRefOp :
     VM_GlobalLoadIndirectOp<VM_AnyRef, "global.load.indirect.ref"> {
-  let summary = [{global ref_ptr<T> load operation}];
+  let summary = [{global ref<T> load operation}];
   let description = [{
-    Loads the value of a global containing a ref_ptr of the given type.
+    Loads the value of a global containing a ref of the given type.
   }];
 
   let encoding = [
@@ -592,9 +593,9 @@ def VM_GlobalLoadIndirectRefOp :
 
 def VM_GlobalStoreIndirectRefOp :
     VM_GlobalStoreIndirectOp<VM_AnyRef, "global.store.indirect.ref"> {
-  let summary = [{global ref_ptr<T> stores operation}];
+  let summary = [{global ref<T> stores operation}];
   let description = [{
-    Stores a ref_ptr<T> to a global, retaining it until the global is reset.
+    Stores a ref<T> to a global, retaining it until the global is reset.
   }];
 
   let encoding = [
@@ -618,8 +619,8 @@ class VM_ConstOp<string mnemonic, string ctype, list<OpTrait> traits = []> :
     ])> {
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Attribute":$value)>,
-    OpBuilderDAG<(ins ctype:$value)>,
+    OpBuilder<(ins "Attribute":$value)>,
+    OpBuilder<(ins ctype:$value)>,
   ];
 
   let extraClassDeclaration = [{
@@ -660,6 +661,7 @@ def VM_ConstI32Op :
     VM_ConstIntegerOp<I32, "const.i32", VM_OPC_ConstI32, "int32_t"> {
   let summary = [{32-bit integer constant operation}];
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def VM_ConstI64Op :
@@ -667,6 +669,7 @@ def VM_ConstI64Op :
                       [VM_ExtI64]> {
   let summary = [{64-bit integer constant operation}];
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 class VM_ConstIntegerZeroOp<I type, string mnemonic, VM_OPC opcode,
@@ -689,7 +692,7 @@ class VM_ConstIntegerZeroOp<I type, string mnemonic, VM_OPC opcode,
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins)>,
+    OpBuilder<(ins)>,
   ];
 }
 
@@ -711,9 +714,9 @@ def VM_ConstRefZeroOp : VM_PureOp<"const.ref.zero", [
     ConstantLike,
     DeclareOpInterfaceMethods<VM_SerializableOpInterface>,
   ]> {
-  let summary = [{null ref_ptr constant operation}];
+  let summary = [{null ref constant operation}];
   let description = [{
-    Defines a constant null ref_ptr that can be used in comparisons and
+    Defines a constant null ref that can be used in comparisons and
     initialization.
   }];
 
@@ -730,7 +733,7 @@ def VM_ConstRefZeroOp : VM_PureOp<"const.ref.zero", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Type":$objectType)>,
+    OpBuilder<(ins "Type":$objectType)>,
   ];
 
   let hasFolder = 1;
@@ -744,7 +747,7 @@ def VM_RodataOp : VM_Op<"rodata", [
   let summary = [{read-only data definition operation}];
   let description = [{
     Defines a blob of read-only constant data that can be represented as a
-    ref_ptr. This can be used to store arbitrary data within modules such as
+    ref. This can be used to store arbitrary data within modules such as
     large constant buffers and other file contents.
 
     Note that the data is reference counted as a way to track its usage once the
@@ -761,7 +764,7 @@ def VM_RodataOp : VM_Op<"rodata", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$name, "ElementsAttr":$value,
+    OpBuilder<(ins "StringRef":$name, "ElementsAttr":$value,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
   ];
 }
@@ -792,9 +795,9 @@ def VM_ConstRefRodataOp : VM_PureOp<"const.ref.rodata", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "StringRef":$rodataName,
+    OpBuilder<(ins "StringRef":$rodataName,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
-    OpBuilderDAG<(ins "RodataOp":$rodataOp,
+    OpBuilder<(ins "RodataOp":$rodataOp,
       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
   ];
 
@@ -1112,7 +1115,7 @@ def VM_SelectRefOp : VM_PureOp<"select.ref", [
     DeclareOpInterfaceMethods<VM_SerializableOpInterface>,
     AllTypesMatch<["true_value", "false_value", "result"]>,
   ]> {
-  let summary = [{ref_ptr select operation}];
+  let summary = [{ref<T> select operation}];
   let description = [{
     Chooses one value based on a binary condition supplied as its first operand.
     If the value of the condition is true the `true_value` operand is chosen,
@@ -1196,7 +1199,7 @@ def VM_SwitchRefOp : VM_PureOp<"switch.ref", [
     DeclareOpInterfaceMethods<VM_SerializableOpInterface>,
     AllTypesMatch<["default_value", "result"]>,
   ]> {
-  let summary = [{ref_ptr switch operation}];
+  let summary = [{ref<T> switch operation}];
   let description = [{
     Returns the value with the given `index` in `values` or `default_value` if
     the index is out of bounds.
@@ -1866,7 +1869,7 @@ def VM_CmpNZI64Op :
 def VM_CmpEQRefOp :
     VM_BinaryComparisonOp<VM_AnyRef, "cmp.eq.ref", VM_OPC_CmpEQRef,
                           [Commutative]> {
-  let summary = [{ref_ptr equality comparison operation}];
+  let summary = [{ref<T> equality comparison operation}];
   let hasFolder = 1;
   let hasCanonicalizer = 1;
 }
@@ -1875,16 +1878,16 @@ def VM_CmpEQRefOp :
 def VM_CmpNERefOp :
     VM_BinaryComparisonOp<VM_AnyRef, "cmp.ne.ref", VM_OPC_CmpNERef,
                           [Commutative]> {
-  let summary = [{ref_ptr inequality comparison operation}];
+  let summary = [{ref<T> inequality comparison operation}];
   let hasFolder = 1;
   let hasCanonicalizer = 1;
 }
 
 def VM_CmpNZRefOp :
     VM_UnaryComparisonOp<VM_AnyRef, "cmp.nz.ref", VM_OPC_CmpNZRef> {
-  let summary = [{ref_ptr non-zero comparison operation}];
+  let summary = [{ref<T> non-zero comparison operation}];
   let description = [{
-    Compares the given ref_ptr operand for a non-zero/null value.
+    Compares the given ref operand for a non-zero/null value.
   }];
   let hasFolder = 1;
 }
@@ -1929,7 +1932,7 @@ def VM_BranchOp : VM_Op<"br", [
   ];
 
   let builders = [
-    OpBuilderDAG<(ins "Block *":$dest, CArg<"ValueRange", "{}">:$destOperands),
+    OpBuilder<(ins "Block *":$dest, CArg<"ValueRange", "{}">:$destOperands),
     [{
       $_state.addSuccessors(dest);
       $_state.addOperands(destOperands);
@@ -1993,14 +1996,14 @@ def VM_CondBranchOp : VM_Op<"cond_br", [
   ];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$condition, "Block *":$trueDest,
+    OpBuilder<(ins "Value":$condition, "Block *":$trueDest,
       "ValueRange":$trueOperands, "Block *":$falseDest,
       "ValueRange":$falseOperands),
     [{
       build($_builder, $_state, condition, trueOperands, falseOperands, trueDest,
             falseDest);
     }]>,
-  OpBuilderDAG<(ins "Value":$condition, "Block *":$trueDest,
+  OpBuilder<(ins "Value":$condition, "Block *":$trueDest,
     "Block *":$falseDest, CArg<"ValueRange", "{}">:$falseOperands),
   [{
       build($_builder, $_state, condition, trueDest, ValueRange(), falseDest,
@@ -2128,21 +2131,21 @@ def VM_CallOp : VM_CallBaseOp<"call"> {
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "IREE::VM::FuncOp":$callee,
+    OpBuilder<(ins "IREE::VM::FuncOp":$callee,
       CArg<"ValueRange", "{}">:$operands),
     [{
       $_state.addOperands(operands);
       $_state.addAttribute("callee", $_builder.getSymbolRefAttr(callee));
       $_state.addTypes(callee.getType().getResults());
     }]>,
-    OpBuilderDAG<(ins "FlatSymbolRefAttr":$callee,
+    OpBuilder<(ins "FlatSymbolRefAttr":$callee,
       "ArrayRef<Type>":$resultTypes, CArg<"ValueRange", "{}">:$operands),
     [{
       $_state.addOperands(operands);
       $_state.addAttribute("callee", callee);
       $_state.addTypes(resultTypes);
     }]>,
-    OpBuilderDAG<(ins "StringRef":$callee, "ArrayRef<Type>":$resultTypes,
+    OpBuilder<(ins "StringRef":$callee, "ArrayRef<Type>":$resultTypes,
       CArg<"ValueRange", "{}">:$operands),
     [{
       build($_builder, $_state, $_builder.getSymbolRefAttr(callee),
@@ -2183,7 +2186,7 @@ def VM_CallVariadicOp : VM_CallBaseOp<"call.variadic"> {
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "FlatSymbolRefAttr":$callee,
+    OpBuilder<(ins "FlatSymbolRefAttr":$callee,
       "ArrayRef<Type>":$resultTypes,
       CArg<"ArrayRef<int16_t>", "{}">:$segmentSizes,
       CArg<"ArrayRef<Type>", "{}">:$segmentTypes,
@@ -2235,7 +2238,7 @@ def VM_ReturnOp : VM_Op<"return", [
   ];
 
   let builders = [
-    OpBuilderDAG<(ins),
+    OpBuilder<(ins),
     [{
       build($_builder, $_state, llvm::None);
     }]>,
@@ -2281,7 +2284,7 @@ def VM_FailOp : VM_Op<"fail", [
   ];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$status, CArg<"StringRef", [{""}]>:$message),
+    OpBuilder<(ins "Value":$status, CArg<"StringRef", [{""}]>:$message),
     [{
       build(
           $_builder, $_state, status,
@@ -2326,14 +2329,14 @@ def VM_CondFailOp : VM_Op<"cond_fail", [
   );
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$condition, "Value":$status,
+    OpBuilder<(ins "Value":$condition, "Value":$status,
       CArg<"StringRef", [{""}]>:$message),
     [{
       build(
           $_builder, $_state, condition, status,
           message.empty() ? StringAttr{} : $_builder.getStringAttr(message));
     }]>,
-    OpBuilderDAG<(ins "Value":$status, CArg<"StringRef", [{""}]>:$message),
+    OpBuilder<(ins "Value":$status, CArg<"StringRef", [{""}]>:$message),
     [{
       build($_builder, $_state, status, status, message);
     }]>,
@@ -2379,7 +2382,7 @@ class VM_UnaryCheckOp<string mnemonic, list<OpTrait> traits = []> :
   }];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$value, CArg<"StringRef", [{""}]>:$message),
+    OpBuilder<(ins "Value":$value, CArg<"StringRef", [{""}]>:$message),
     [{
       build(
           $_builder, $_state, value,
@@ -2403,7 +2406,7 @@ class VM_BinaryCheckOp<string mnemonic, list<OpTrait> traits = []> :
   }];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$lhs, "Value":$rhs,
+    OpBuilder<(ins "Value":$lhs, "Value":$rhs,
       CArg<"StringRef", [{""}]>:$message),
     [{
       build(
@@ -2547,7 +2550,7 @@ def VM_BreakOp : VM_Op<"break", [
   ];
 
   let builders = [
-    OpBuilderDAG<(ins "Block *":$dest, CArg<"ValueRange", "{}">:$destOperands),
+    OpBuilder<(ins "Block *":$dest, CArg<"ValueRange", "{}">:$destOperands),
     [{
       $_state.addSuccessors(dest);
       $_state.addOperands(destOperands);
@@ -2600,7 +2603,7 @@ def VM_CondBreakOp : VM_Op<"cond_break", [
   ];
 
   let builders = [
-    OpBuilderDAG<(ins "Value":$condition, "Block *":$dest,
+    OpBuilder<(ins "Value":$condition, "Block *":$dest,
       CArg<"ValueRange", "{}">:$destOperands),
     [{
       $_state.addOperands({condition});

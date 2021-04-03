@@ -41,6 +41,12 @@ struct TransformOptions : public PassPipelineOptions<TransformOptions> {
       llvm::cl::init(true)};
 };
 
+static llvm::cl::opt<unsigned> benchmarkDispatchRepeatCount{
+    "iree-hal-benchmark-dispatch-repeat-count",
+    llvm::cl::desc(
+        "The number of times to repeat each hal.command_buffer.dispatch op."),
+    llvm::cl::init(1)};
+
 }  // namespace
 
 void buildHALTransformPassPipeline(OpPassManager &passManager,
@@ -110,9 +116,19 @@ void buildHALTransformPassPipeline(OpPassManager &passManager,
   // Inline hal.device.switch ops and memoize their queries such that we can
   // better CSE/fold dispatch logic.
   passManager.addNestedPass<FuncOp>(createInlineDeviceSwitchesPass());
+  if (benchmarkDispatchRepeatCount != 1) {
+    passManager.addNestedPass<FuncOp>(
+        createBenchmarkBatchDispatchesPass(benchmarkDispatchRepeatCount));
+  }
+  passManager.addPass(createLowerAffinePass());
   passManager.addPass(createMemoizeDeviceQueriesPass());
   passManager.addNestedPass<FuncOp>(createCanonicalizerPass());
   passManager.addNestedPass<FuncOp>(createCSEPass());
+
+  // Run our own CSE on variable loads before moving on.
+  // When specifying side effects can help MLIR's core CSE pass eliminate
+  // redundant loads we can remove this.
+  passManager.addNestedPass<FuncOp>(createCSEVariableLoadsPass());
 
   if (transformOptions.serializeExecutables) {
     passManager.addNestedPass<ExecutableOp>(
@@ -121,6 +137,9 @@ void buildHALTransformPassPipeline(OpPassManager &passManager,
     // if we serialized things.
     passManager.addPass(createSymbolDCEPass());
   }
+
+  // Final cleanup of IR; cleans up things left behind by CSE/DCE above.
+  passManager.addNestedPass<FuncOp>(createCanonicalizerPass());
 }
 
 void buildHALTransformPassPipeline(OpPassManager &passManager,

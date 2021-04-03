@@ -23,6 +23,7 @@
 #include "iree/compiler/Dialect/HAL/Transforms/Passes.h"
 #include "iree/compiler/Dialect/HAL/Utils/TypeUtils.h"
 #include "llvm/ADT/StringSet.h"
+#include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -70,29 +71,45 @@ static llvm::Optional<IREE::HAL::InterfaceOp> declareInterfaceIO(
   // NOTE: we assume right now that all entry points have the same signature.
   // TODO(benvanik): replace when we have descriptor sets in the HAL IR.
   auto anyFuncOp = entryFuncOps.front();
-  int binding = 0;
+  int nextBindingOrdinal = 0;
   int pushConstantCount = 0;
-  int argOrdinal = 0;
-  int retOrdinal = 0;
   for (auto inputType : llvm::enumerate(anyFuncOp.getType().getInputs())) {
     if (inputType.value().isa<TensorType>()) {
+      int bindingOrdinal = nextBindingOrdinal++;
       auto bindingName = "arg" + std::to_string(inputType.index());
       interfaceBuilder.create<IREE::HAL::InterfaceBindingOp>(
-          interfaceLoc, bindingName, /*set=*/0, /*binding=*/binding++,
+          interfaceLoc, bindingName, /*set=*/APInt(64, 0),
+          /*binding=*/APInt(64, bindingOrdinal),
           IREE::HAL::DescriptorType::StorageBuffer,
           IREE::HAL::MemoryAccessBitfield::Read);
-    } else if (inputType.value().isa<IREE::Flow::DispatchInputType>()) {
-      auto bindingName = "arg" + std::to_string(argOrdinal++);
+    } else if (auto tensorType =
+                   inputType.value()
+                       .dyn_cast<IREE::Flow::DispatchTensorType>()) {
+      StringRef prefix;
+      IREE::HAL::MemoryAccessBitfield memoryAccess =
+          IREE::HAL::MemoryAccessBitfield::None;
+      switch (tensorType.getAccess()) {
+        case IREE::Flow::TensorAccess::ReadOnly:
+          prefix = "ro";
+          memoryAccess = IREE::HAL::MemoryAccessBitfield::Read;
+          break;
+        case IREE::Flow::TensorAccess::ReadWrite:
+          prefix = "rw";
+          memoryAccess = IREE::HAL::MemoryAccessBitfield::Read |
+                         IREE::HAL::MemoryAccessBitfield::Write;
+          break;
+        case IREE::Flow::TensorAccess::WriteOnly:
+          prefix = "wo";
+          memoryAccess = IREE::HAL::MemoryAccessBitfield::DiscardWrite;
+          break;
+      }
+      int bindingOrdinal = nextBindingOrdinal++;
+      std::string bindingName =
+          std::string(prefix) + std::to_string(bindingOrdinal);
       interfaceBuilder.create<IREE::HAL::InterfaceBindingOp>(
-          interfaceLoc, bindingName, /*set=*/0, /*binding=*/binding++,
-          IREE::HAL::DescriptorType::StorageBuffer,
-          IREE::HAL::MemoryAccessBitfield::Read);
-    } else if (inputType.value().isa<IREE::Flow::DispatchOutputType>()) {
-      auto bindingName = "ret" + std::to_string(retOrdinal++);
-      interfaceBuilder.create<IREE::HAL::InterfaceBindingOp>(
-          interfaceLoc, bindingName, /*set=*/0, /*binding=*/binding++,
-          IREE::HAL::DescriptorType::StorageBuffer,
-          IREE::HAL::MemoryAccessBitfield::DiscardWrite);
+          interfaceLoc, bindingName, /*set=*/APInt(64, 0),
+          /*binding=*/APInt(64, bindingOrdinal),
+          IREE::HAL::DescriptorType::StorageBuffer, memoryAccess);
     } else if (auto indexType = inputType.value().dyn_cast<IndexType>()) {
       ++pushConstantCount;
     } else if (auto integerType = inputType.value().dyn_cast<IntegerType>()) {
@@ -113,10 +130,12 @@ static llvm::Optional<IREE::HAL::InterfaceOp> declareInterfaceIO(
     }
   }
   for (auto outputType : llvm::enumerate(anyFuncOp.getType().getResults())) {
+    int bindingOrdinal = nextBindingOrdinal++;
     auto bindingName = "ret" + std::to_string(outputType.index());
     if (outputType.value().isa<TensorType>()) {
       interfaceBuilder.create<IREE::HAL::InterfaceBindingOp>(
-          interfaceLoc, bindingName, /*set=*/0, /*binding=*/binding++,
+          interfaceLoc, bindingName, /*set=*/APInt(64, 0),
+          /*binding=*/APInt(64, bindingOrdinal),
           IREE::HAL::DescriptorType::StorageBuffer,
           IREE::HAL::MemoryAccessBitfield::DiscardWrite);
     } else {
@@ -129,10 +148,32 @@ static llvm::Optional<IREE::HAL::InterfaceOp> declareInterfaceIO(
 
   if (pushConstantCount > 0) {
     interfaceOp->setAttr("push_constants",
-                         interfaceBuilder.getI32IntegerAttr(pushConstantCount));
+                         interfaceBuilder.getIndexAttr(pushConstantCount));
   }
 
   return interfaceOp;
+}
+
+// Converts a value to/from one supported by the ABI from/to an arbitrary tensor
+// type.
+//
+// Ideally we'd use some type-aware conversion to handle signed/unsigned
+// saturation vs. truncation. As an example, we'd want to zero-extend an
+// unsigned i4 to a signed i8. We also don't want to use HLO ops here, but the
+// standard ops (trunci, zexti, etc) are not supported by subsequent lowerings
+// and just cause pain.
+//
+// Example: `tensor<4xi8>` -> `tensor<4xi1>`
+//      or  `tensor<4xi1>` -> `tensor<4xi8>`
+static Value convertABITensorType(Location loc, Value sourceValue,
+                                  TensorType targetType, OpBuilder &builder) {
+  auto sourceType = sourceValue.getType().cast<TensorType>();
+  if (sourceType == targetType) {
+    return sourceValue;
+  }
+  // TODO(benvanik): use a type converter or a dialect interface.
+  return builder.createOrFold<mhlo::ConvertOp>(loc, sourceValue,
+                                               targetType.getElementType());
 }
 
 // Creates a new entry function that uses the hal.interface bindings to marshal
@@ -360,7 +401,7 @@ static LogicalResult declareEntryPointOps(
         builder.create<IREE::HAL::ExecutableEntryPointOp>(
             dispatchEntryOp.getLoc(),
             builder.getStringAttr(dispatchEntryOp.function_ref()),
-            builder.getI32IntegerAttr(nextOrdinal++),
+            builder.getIndexAttr(nextOrdinal++),
             builder.getSymbolRefAttr(interfaceOp),
             TypeAttr::get(sourceFuncOp.getType()), ArrayAttr{});
       }
@@ -468,7 +509,7 @@ class MaterializeInterfacesPass
       builder.setInsertionPointAfter(sourceOp);
       auto executableOp = builder.create<IREE::HAL::ExecutableOp>(
           sourceOp.getLoc(), sourceOp.getName());
-      executableOp.setPrivate();
+      executableOp.setVisibility(sourceOp.getVisibility());
 
       // Add IO ops to define the bindings and how parameters are passed.
       auto interfaceOp = declareInterfaceIO(sourceOp, executableOp);
@@ -489,7 +530,7 @@ class MaterializeInterfacesPass
       }
 
       // Convert interface-related flow.dispatch.* ops to their hal.* versions.
-      OwningRewritePatternList patterns;
+      OwningRewritePatternList patterns(&getContext());
       patterns.insert<ConverterDispatchWorkgroupInfoPattern<
                           IREE::Flow::DispatchWorkgroupIDOp,
                           IREE::HAL::InterfaceWorkgroupIDOp>,

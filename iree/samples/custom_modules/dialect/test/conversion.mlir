@@ -20,12 +20,13 @@
 
 // CHECK-LABEL: @tensorToMessage
 func @tensorToMessage(%tensor : tensor<2x4xf32>) {
-  // CHECK-DAG: [[TYPE:%.+]] = vm.const.i32 50331680 : i32
-  // CHECK-DAG: [[DIM0:%.+]] = vm.const.i32 2 : i32
-  // CHECK-DAG: [[DIM1:%.+]] = vm.const.i32 4 : i32
-  // CHECK-NEXT: [[VIEW:%.+]] = vm.call.variadic @hal.buffer_view.create(%arg0, [
-  // CHECK-SAME:     [[DIM0]], [[DIM1]]
-  // CHECK-SAME: ], [[TYPE]])
+  //  CHECK-DAG: [[TYPE:%.+]] = vm.const.i32 50331680 : i32
+  //  CHECK-DAG: [[DIM0:%.+]] = vm.const.i32 2 : i32
+  //  CHECK-DAG: [[DIM1:%.+]] = vm.const.i32 4 : i32
+  // CHECK-NEXT: [[VIEW:%.+]] = vm.call.variadic @hal.buffer_view.create(
+  // CHECK-SAME:     %arg0, [[TYPE]], [
+  // CHECK-SAME:       [[DIM0]], [[DIM1]]
+  // CHECK-SAME:     ])
   // CHECK-NEXT: [[MSG:%.+]] = vm.call @custom.buffer_to_message([[VIEW]]) : (!vm.ref<!hal.buffer_view>) -> !vm.ref<!custom.message>
   %0 = "custom.tensor_to_message"(%tensor) : (tensor<2x4xf32>) -> !custom.message
   %c1 = constant 1 : i32
@@ -38,10 +39,11 @@ func @tensorToMessage(%tensor : tensor<2x4xf32>) {
 
 // CHECK-LABEL: @dynamicTensorToMessage
 func @dynamicTensorToMessage(%arg0 : tensor<?x?xf32>, %arg1 : index, %arg2 : index) {
-  // CHECK-DAG: [[TYPE:%.+]] = vm.const.i32 50331680 : i32
-  // CHECK-NEXT: [[VIEW:%.+]] = vm.call.variadic @hal.buffer_view.create(%arg0, [
-  // CHECK-SAME:     %arg1, %arg2
-  // CHECK-SAME: ], [[TYPE]])
+  //  CHECK-DAG: [[TYPE:%.+]] = vm.const.i32 50331680 : i32
+  // CHECK-NEXT: [[VIEW:%.+]] = vm.call.variadic @hal.buffer_view.create(
+  // CHECK-SAME:     %arg0, [[TYPE]], [
+  // CHECK-SAME:       %arg1, %arg2
+  // CHECK-SAME:     ])
   // CHECK-NEXT: [[MSG:%.+]] = vm.call @custom.buffer_to_message([[VIEW]]) : (!vm.ref<!hal.buffer_view>) -> !vm.ref<!custom.message>
   %shape = shapex.make_ranked_shape %arg1, %arg2 : (index, index) -> !shapex.ranked_shape<[?, ?]>
   %shaped_tensor = shapex.tie_shape %arg0, %shape : tensor<?x?xf32>, !shapex.ranked_shape<[?, ?]>
@@ -57,8 +59,8 @@ func @dynamicTensorToMessage(%arg0 : tensor<?x?xf32>, %arg1 : index, %arg2 : ind
 // CHECK-LABEL: @dynamicTensorToMessage2
 func @dynamicTensorToMessage2(%arg0 : tensor<?x?xf32>, %arg1: !shapex.ranked_shape<[?, ?]> {iree.reflection = {}}) {
   // CHECK-DAG: [[TYPE:%.+]] = vm.const.i32 50331680 : i32
-  // CHECK-NEXT: [[VIEW:%.+]] = vm.call.variadic @hal.buffer_view.create(%arg0,
-  // CHECK-SAME: [%arg1, %arg2], [[TYPE]])
+  // CHECK-NEXT: [[VIEW:%.+]] = vm.call.variadic @hal.buffer_view.create(%arg0, [[TYPE]],
+  // CHECK-SAME: [%arg1, %arg2])
   // CHECK-NEXT: [[MSG:%.+]] = vm.call @custom.buffer_to_message([[VIEW]]) : (!vm.ref<!hal.buffer_view>) -> !vm.ref<!custom.message>
   %shaped_tensor = shapex.tie_shape %arg0, %arg1 : tensor<?x?xf32>, !shapex.ranked_shape<[?, ?]>
   %0 = "custom.tensor_to_message"(%shaped_tensor) : (tensor<?x?xf32>) -> !custom.message
@@ -85,7 +87,7 @@ func @messageToTensor(%arg0 : !custom.message) -> tensor<2x4xf32> {
 func @messageToTensorReturnDim(%arg0 : !custom.message) -> index {
   %0 = "custom.message_to_tensor"(%arg0) : (!custom.message) -> tensor<?x4xf32>
   %c0 = constant 0 : index
-  %1 = dim %0, %c0 : tensor<?x4xf32>
+  %1 = memref.dim %0, %c0 : tensor<?x4xf32>
   // CHECK: [[VIEW:%.+]] = vm.call @custom.message_to_buffer(%arg0) : (!vm.ref<!custom.message>) -> !vm.ref<!hal.buffer_view>
   // CHECK: [[BUFFER:%.+]] = vm.call @hal.buffer_view.buffer([[VIEW]]) : (!vm.ref<!hal.buffer_view>) -> !vm.ref<!hal.buffer>
   // CHECK: %{{.*}} = vm.const.i32.zero
@@ -133,11 +135,11 @@ func @reverseOp(%arg0 : !custom.message) -> !custom.message {
 
 // -----
 
-// CHECK-LABEL: @getUniqueMessageOp
+// CHECK: vm.import @custom.get_unique_message
+// CHECK-LABEL: func @getUniqueMessageOp
 func @getUniqueMessageOp() -> !custom.message {
   // CHECK: %ref = vm.call @custom.get_unique_message() : () -> !vm.ref<!custom.message>
   %0 = "custom.get_unique_message"() : () -> !custom.message
   return %0 : !custom.message
 }
 
-// CHECK: vm.import @custom.get_unique_message

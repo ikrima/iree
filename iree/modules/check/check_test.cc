@@ -14,7 +14,6 @@
 
 // Tests that our bytecode module can call through into our native module.
 
-#include "absl/base/macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "iree/base/api.h"
@@ -29,6 +28,7 @@
 #include "iree/vm/api.h"
 #include "iree/vm/bytecode_module.h"
 #include "iree/vm/ref_cc.h"
+#include "third_party/half/half.hpp"
 
 namespace iree {
 namespace {
@@ -94,17 +94,34 @@ class CheckTest : public ::testing::Test {
             IREE_HAL_MEMORY_TYPE_HOST_LOCAL |
             IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE),
         IREE_HAL_BUFFER_USAGE_ALL, contents.size() * sizeof(int32_t), &buffer));
-    iree_hal_mapped_memory_t mapped_memory;
-    IREE_ASSERT_OK(iree_hal_buffer_map(buffer.get(),
-                                       IREE_HAL_MEMORY_ACCESS_WRITE, 0,
-                                       IREE_WHOLE_BUFFER, &mapped_memory));
-    memcpy(mapped_memory.contents.data,
-           static_cast<const void*>(contents.data()),
-           mapped_memory.contents.data_length);
-    IREE_ASSERT_OK(iree_hal_buffer_unmap(buffer.get(), &mapped_memory));
+    IREE_ASSERT_OK(iree_hal_buffer_write_data(
+        buffer.get(), 0, contents.data(), contents.size() * sizeof(int32_t)));
     IREE_ASSERT_OK(iree_hal_buffer_view_create(
-        buffer.get(), shape.data(), shape.size(), IREE_HAL_ELEMENT_TYPE_SINT_32,
-        iree_allocator_system(), &*out_buffer_view));
+        buffer.get(), IREE_HAL_ELEMENT_TYPE_SINT_32, shape.data(), shape.size(),
+        &*out_buffer_view));
+  }
+
+  void CreateFloat16BufferView(absl::Span<const uint16_t> contents,
+                               absl::Span<const int32_t> shape,
+                               iree_hal_buffer_view_t** out_buffer_view) {
+    size_t num_elements = 1;
+    for (int32_t dim : shape) {
+      num_elements *= dim;
+    }
+    ASSERT_EQ(contents.size(), num_elements);
+    vm::ref<iree_hal_buffer_t> buffer;
+    IREE_ASSERT_OK(iree_hal_allocator_allocate_buffer(
+        allocator_,
+        static_cast<iree_hal_memory_type_t>(
+            IREE_HAL_MEMORY_TYPE_HOST_LOCAL |
+            IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE),
+        IREE_HAL_BUFFER_USAGE_ALL, contents.size() * sizeof(uint16_t),
+        &buffer));
+    IREE_ASSERT_OK(iree_hal_buffer_write_data(
+        buffer.get(), 0, contents.data(), contents.size() * sizeof(uint16_t)));
+    IREE_ASSERT_OK(iree_hal_buffer_view_create(
+        buffer.get(), IREE_HAL_ELEMENT_TYPE_FLOAT_16, shape.data(),
+        shape.size(), &*out_buffer_view));
   }
 
   void CreateFloat32BufferView(absl::Span<const float> contents,
@@ -122,18 +139,11 @@ class CheckTest : public ::testing::Test {
             IREE_HAL_MEMORY_TYPE_HOST_LOCAL |
             IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE),
         IREE_HAL_BUFFER_USAGE_ALL, contents.size() * sizeof(float), &buffer));
-    iree_hal_mapped_memory_t mapped_memory;
-    IREE_ASSERT_OK(iree_hal_buffer_map(buffer.get(),
-                                       IREE_HAL_MEMORY_ACCESS_WRITE, 0,
-                                       IREE_WHOLE_BUFFER, &mapped_memory));
-    memcpy(mapped_memory.contents.data,
-           static_cast<const void*>(contents.data()),
-           mapped_memory.contents.data_length);
-    IREE_ASSERT_OK(iree_hal_buffer_unmap(buffer.get(), &mapped_memory));
+    IREE_ASSERT_OK(iree_hal_buffer_write_data(buffer.get(), 0, contents.data(),
+                                              contents.size() * sizeof(float)));
     IREE_ASSERT_OK(iree_hal_buffer_view_create(
-        buffer.get(), shape.data(), shape.size(),
-        IREE_HAL_ELEMENT_TYPE_FLOAT_32, iree_allocator_system(),
-        &*out_buffer_view));
+        buffer.get(), IREE_HAL_ELEMENT_TYPE_FLOAT_32, shape.data(),
+        shape.size(), &*out_buffer_view));
   }
 
   void CreateFloat64BufferView(absl::Span<const double> contents,
@@ -151,27 +161,22 @@ class CheckTest : public ::testing::Test {
             IREE_HAL_MEMORY_TYPE_HOST_LOCAL |
             IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE),
         IREE_HAL_BUFFER_USAGE_ALL, contents.size() * sizeof(double), &buffer));
-    iree_hal_mapped_memory_t mapped_memory;
-    IREE_ASSERT_OK(iree_hal_buffer_map(buffer.get(),
-                                       IREE_HAL_MEMORY_ACCESS_WRITE, 0,
-                                       IREE_WHOLE_BUFFER, &mapped_memory));
-    memcpy(mapped_memory.contents.data,
-           static_cast<const void*>(contents.data()),
-           mapped_memory.contents.data_length);
-    IREE_ASSERT_OK(iree_hal_buffer_unmap(buffer.get(), &mapped_memory));
+    IREE_ASSERT_OK(iree_hal_buffer_write_data(
+        buffer.get(), 0, contents.data(), contents.size() * sizeof(double)));
     IREE_ASSERT_OK(iree_hal_buffer_view_create(
-        buffer.get(), shape.data(), shape.size(),
-        IREE_HAL_ELEMENT_TYPE_FLOAT_64, iree_allocator_system(),
-        &*out_buffer_view));
+        buffer.get(), IREE_HAL_ELEMENT_TYPE_FLOAT_64, shape.data(),
+        shape.size(), &*out_buffer_view));
   }
 
   Status Invoke(absl::string_view function_name) {
     iree_vm_function_t function;
-    IREE_RETURN_IF_ERROR(check_module_->lookup_function(
-        check_module_->self, IREE_VM_FUNCTION_LINKAGE_EXPORT,
-        iree_string_view_t{function_name.data(), function_name.size()},
-        &function))
-        << "Exported function '" << function_name << "' not found";
+    IREE_RETURN_IF_ERROR(
+        check_module_->lookup_function(
+            check_module_->self, IREE_VM_FUNCTION_LINKAGE_EXPORT,
+            iree_string_view_t{function_name.data(), function_name.size()},
+            &function),
+        "exported function '%.*s' not found", (int)function_name.size(),
+        function_name.data());
     // TODO(#2075): don't directly invoke native functions like this.
     return iree_vm_invoke(context_, function,
                           /*policy=*/nullptr, inputs_.get(),
@@ -545,6 +550,51 @@ TEST_F(CheckTest, ExpectAlmostEqDifferentContents3DFullMessageFailure) {
       "    2x2x2xf32=[[1 2][3 4]][[5 6][7 8]]\n"
       "  rhs:\n"
       "    2x2x2xf32=[[1 2][3 42]][[5 6][7 8]]");
+}
+
+TEST_F(CheckTest, ExpectAlmostEqIdenticalBufferF16Success) {
+  vm::ref<iree_hal_buffer_view_t> lhs;
+  vm::ref<iree_hal_buffer_view_t> rhs;
+  uint16_t contents[] = {
+      half_float::detail::float2half<std::round_to_nearest>(1.f)};
+  int32_t shape[] = {1};
+  ASSERT_NO_FATAL_FAILURE(CreateFloat16BufferView(contents, shape, &lhs));
+  ASSERT_NO_FATAL_FAILURE(CreateFloat16BufferView(contents, shape, &rhs));
+  IREE_ASSERT_OK(Invoke("expect_almost_eq", {lhs, rhs}));
+}
+
+TEST_F(CheckTest, ExpectAlmostEqNearIdenticalBufferF16Success) {
+  vm::ref<iree_hal_buffer_view_t> lhs;
+  vm::ref<iree_hal_buffer_view_t> rhs;
+  uint16_t lhs_contents[] = {
+      half_float::detail::float2half<std::round_to_nearest>(1.0f),
+      half_float::detail::float2half<std::round_to_nearest>(1.99999f),
+      half_float::detail::float2half<std::round_to_nearest>(0.00001f),
+      half_float::detail::float2half<std::round_to_nearest>(4.0f)};
+  uint16_t rhs_contents[] = {
+      half_float::detail::float2half<std::round_to_nearest>(1.00001f),
+      half_float::detail::float2half<std::round_to_nearest>(2.0f),
+      half_float::detail::float2half<std::round_to_nearest>(0.0f),
+      half_float::detail::float2half<std::round_to_nearest>(4.0f)};
+  int32_t shape[] = {4};
+  ASSERT_NO_FATAL_FAILURE(CreateFloat16BufferView(lhs_contents, shape, &lhs));
+  ASSERT_NO_FATAL_FAILURE(CreateFloat16BufferView(rhs_contents, shape, &rhs));
+  IREE_ASSERT_OK(Invoke("expect_almost_eq", {lhs, rhs}));
+}
+
+TEST_F(CheckTest, ExpectAlmostEqDifferentContentsF16Failure) {
+  vm::ref<iree_hal_buffer_view_t> lhs;
+  vm::ref<iree_hal_buffer_view_t> rhs;
+  uint16_t lhs_contents[] = {
+      half_float::detail::float2half<std::round_to_nearest>(1.f)};
+  uint16_t rhs_contents[] = {
+      half_float::detail::float2half<std::round_to_nearest>(2.f)};
+  int32_t shape[] = {1};
+  ASSERT_NO_FATAL_FAILURE(CreateFloat16BufferView(lhs_contents, shape, &lhs));
+  ASSERT_NO_FATAL_FAILURE(CreateFloat16BufferView(rhs_contents, shape, &rhs));
+  EXPECT_NONFATAL_FAILURE(
+      IREE_ASSERT_OK(Invoke("expect_almost_eq", {lhs, rhs})),
+      "Contents does not match");
 }
 }  // namespace
 }  // namespace iree

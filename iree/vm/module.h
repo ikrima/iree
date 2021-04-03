@@ -19,7 +19,7 @@
 
 #include "iree/base/alignment.h"
 #include "iree/base/api.h"
-#include "iree/base/atomics.h"
+#include "iree/base/internal/atomics.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -91,6 +91,11 @@ typedef struct {
 static_assert(sizeof(iree_vm_function_t) <= 2 * sizeof(void*),
               "Must remain small as stored on the stack");
 
+// Returns true if the |function| is null (didn't exist, etc).
+static inline bool iree_vm_function_is_null(iree_vm_function_t function) {
+  return function.module == NULL;
+}
+
 // Describes the expected calling convention and arguments/results of a
 // function.
 typedef struct {
@@ -104,17 +109,17 @@ typedef struct {
   //   - 'i': int32_t integer (i32)
   //   - 'I': int64_t integer (i64)
   //   - 'r': ref-counted type pointer (!vm.ref<?>)
-  //   - '[' ... ']': variadic list of flattened tuples of a specified type
-  // - EOL or '.'
+  //   - 'C' ... 'D': variadic list of flattened tuples of a specified type
+  // - EOL or '_'
   // - Zero or more results:
   //   - 'i' or 'I'
   //   - 'r'
   //
   // Examples:
-  //   `0` or `0.`: () -> ()
-  //   `0i` or `0i.`: (i32) -> ()
-  //   `0ii[ii].i`: (i32, i32, tuple<i32, i32>...) -> i32
-  //   `0ir[ir].r`: (i32, !vm.ref<?>, tuple<i32, !vm.ref<?>>) -> !vm.ref<?>
+  //   `0` or `0_`: () -> ()
+  //   `0i` or `0i_`: (i32) -> ()
+  //   `0iiCiiD_i`: (i32, i32, tuple<i32, i32>...) -> i32
+  //   `0irCirD_r`: (i32, !vm.ref<?>, tuple<i32, !vm.ref<?>>) -> !vm.ref<?>
   //
   // Users of this field must verify the version prefix in the first byte before
   // using the declaration.
@@ -187,9 +192,8 @@ typedef struct {
   // Argument buffer in the format described above.
   // This is only read on beginning the function and need not live beyond that.
   //
-  // Refs contained will be moved into the target function or released if not
-  // needed. Callers must ensure they move or retain arguments when populating
-  // the arguments buffer.
+  // Refs contained are retained by the caller and callees must retain them if
+  // they need them to live beyond the call.
   iree_byte_span_t arguments;
 
   // Storage for the result buffer; assumed undefined and then populated with
@@ -202,11 +206,12 @@ typedef struct {
   iree_byte_span_t results;
 } iree_vm_function_call_t;
 
+#define IREE_VM_CCONV_TYPE_VOID 'v'
 #define IREE_VM_CCONV_TYPE_INT32 'i'
 #define IREE_VM_CCONV_TYPE_INT64 'I'
 #define IREE_VM_CCONV_TYPE_REF 'r'
-#define IREE_VM_CCONV_TYPE_SPAN_START '['
-#define IREE_VM_CCONV_TYPE_SPAN_END ']'
+#define IREE_VM_CCONV_TYPE_SPAN_START 'C'
+#define IREE_VM_CCONV_TYPE_SPAN_END 'D'
 
 // Returns the arguments and results fragments from the function signature.
 // Either may be empty if they have no values.
@@ -214,9 +219,11 @@ typedef struct {
 // Example:
 //  ``          -> arguments = ``, results = ``
 //  `0`         -> arguments = ``, results = ``
+//  `0v`        -> arguments = ``, results = ``
 //  `0ri`       -> arguments = `ri`, results = ``
-//  `0.ir`      -> arguments = ``, results = `ir`
-//  `0i[i].rr`  -> arguments = `i[i]`, results = `rr`
+//  `0_ir`      -> arguments = ``, results = `ir`
+//  `0v_ir`     -> arguments = ``, results = `ir`
+//  `0iCiD_rr`  -> arguments = `iCiD`, results = `rr`
 IREE_API_EXPORT iree_status_t IREE_API_CALL
 iree_vm_function_call_get_cconv_fragments(
     const iree_vm_function_signature_t* signature,
@@ -227,7 +234,7 @@ IREE_API_EXPORT bool IREE_API_CALL
 iree_vm_function_call_is_variadic_cconv(iree_string_view_t cconv);
 
 // Returns the required size, in bytes, to store the data in the given cconv
-// fragment (like `iI[ri]r`).
+// fragment (like `iICriDr`).
 //
 // The provided |segment_size_list| is used for variadic arguments/results. Each
 // entry represents one of the top level arguments with spans being flattened.

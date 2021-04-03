@@ -22,6 +22,7 @@
 
 #include "iree/compiler/Dialect/Shape/IR/ShapeDialect.h"
 #include "iree/compiler/Dialect/Shape/IR/ShapeOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -55,10 +56,10 @@ namespace {
 /// ...
 /// %get_dim = shapex.ranked_dim %shape ...
 /// ```
-struct StdDimResolver final : public OpRewritePattern<DimOp> {
-  using OpRewritePattern<DimOp>::OpRewritePattern;
+struct StdDimResolver final : public OpRewritePattern<memref::DimOp> {
+  using OpRewritePattern<memref::DimOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(DimOp dimOp,
+  LogicalResult matchAndRewrite(memref::DimOp dimOp,
                                 PatternRewriter &rewriter) const override {
     auto tieShapeOp =
         dyn_cast<Shape::TieShapeOp>(dimOp.memrefOrTensor().getDefiningOp());
@@ -97,26 +98,26 @@ struct ResolveShapeOpsPass
 void ResolveShapeOpsPass::runOnFunction() {
   MLIRContext *context = &getContext();
 
-  OwningRewritePatternList dimPatterns;
+  OwningRewritePatternList dimPatterns(&getContext());
   dimPatterns.insert<StdDimResolver>(context);
 
   // Set up a target to convert all std.dim ops. We need a conversion target
   // here to error out early if some std.dim op cannot be converted.
   ConversionTarget target(*context);
-  target.addIllegalOp<DimOp>();
+  target.addIllegalOp<memref::DimOp>();
   target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
   if (failed(
           applyFullConversion(getFunction(), target, std::move(dimPatterns)))) {
     return signalPassFailure();
   }
 
-  OwningRewritePatternList shapePatterns;
+  OwningRewritePatternList shapePatterns(&getContext());
   shapePatterns.insert<TieShapeElider>(context);
   Shape::RankedDimOp::getCanonicalizationPatterns(shapePatterns, context);
 
   // Then elide all shapex.tie_shape ops and canonicalize shapex.ranked_dim
   // given that we don't need the shape annotation anymore.
-  applyPatternsAndFoldGreedily(getFunction(), std::move(shapePatterns));
+  (void)applyPatternsAndFoldGreedily(getFunction(), std::move(shapePatterns));
 }
 
 std::unique_ptr<OperationPass<FuncOp>> createResolveShapeOpsPass() {

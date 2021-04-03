@@ -60,14 +60,14 @@ def HAL_MemoryModelAttr :
   let cppNamespace = "::mlir::iree_compiler::IREE::HAL";
 }
 
-def HAL_MemoryType_None : BitEnumAttrCase<"None", 0x0000>;
-def HAL_MemoryType_Transient : BitEnumAttrCase<"Transient", 0x0001>;
-def HAL_MemoryType_HostVisible : BitEnumAttrCase<"HostVisible", 0x0002>;
-def HAL_MemoryType_HostCoherent : BitEnumAttrCase<"HostCoherent", 0x0004>;
-def HAL_MemoryType_HostCached : BitEnumAttrCase<"HostCached", 0x0008>;
-def HAL_MemoryType_HostLocal : BitEnumAttrCase<"HostLocal", 0x0006>;
-def HAL_MemoryType_DeviceVisible : BitEnumAttrCase<"DeviceVisible", 0x0010>;
-def HAL_MemoryType_DeviceLocal : BitEnumAttrCase<"DeviceLocal", 0x0030>;
+def HAL_MemoryType_None           : BitEnumAttrCase<"None",           0x0000>;  // ?
+def HAL_MemoryType_Transient      : BitEnumAttrCase<"Transient",      0x0001>;  // T
+def HAL_MemoryType_HostVisible    : BitEnumAttrCase<"HostVisible",    0x0002>;  // h
+def HAL_MemoryType_HostCoherent   : BitEnumAttrCase<"HostCoherent",   0x0004>;  // c
+def HAL_MemoryType_HostCached     : BitEnumAttrCase<"HostCached",     0x0008>;  // C
+def HAL_MemoryType_HostLocal      : BitEnumAttrCase<"HostLocal",      0x0006>;  // H
+def HAL_MemoryType_DeviceVisible  : BitEnumAttrCase<"DeviceVisible",  0x0010>;  // d
+def HAL_MemoryType_DeviceLocal    : BitEnumAttrCase<"DeviceLocal",    0x0030>;  // D
 def HAL_MemoryTypeBitfieldAttr :
     BitEnumAttr<"MemoryTypeBitfield", "valid MemoryType", [
       HAL_MemoryType_None,
@@ -82,13 +82,13 @@ def HAL_MemoryTypeBitfieldAttr :
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
 
-def HAL_MemoryAccess_None : BitEnumAttrCase<"None", 0x0000>;
-def HAL_MemoryAccess_Read : BitEnumAttrCase<"Read", 0x0001>;
-def HAL_MemoryAccess_Write : BitEnumAttrCase<"Write", 0x0002>;
-def HAL_MemoryAccess_Discard : BitEnumAttrCase<"Discard", 0x0004>;
+def HAL_MemoryAccess_None         : BitEnumAttrCase<"None",         0x0000>;  // ?
+def HAL_MemoryAccess_Read         : BitEnumAttrCase<"Read",         0x0001>;  // R
+def HAL_MemoryAccess_Write        : BitEnumAttrCase<"Write",        0x0002>;  // W
+def HAL_MemoryAccess_Discard      : BitEnumAttrCase<"Discard",      0x0004>;  // D
 def HAL_MemoryAccess_DiscardWrite : BitEnumAttrCase<"DiscardWrite", 0x0006>;
-def HAL_MemoryAccess_MayAlias : BitEnumAttrCase<"MayAlias", 0x0008>;
-def HAL_MemoryAccess_All : BitEnumAttrCase<"All", 0x0007>;
+def HAL_MemoryAccess_MayAlias     : BitEnumAttrCase<"MayAlias",     0x0008>;  // A
+def HAL_MemoryAccess_All          : BitEnumAttrCase<"All",          0x0007>;
 def HAL_MemoryAccessBitfieldAttr :
     BitEnumAttr<"MemoryAccessBitfield", "valid MemoryAccess", [
       HAL_MemoryAccess_None,
@@ -102,12 +102,12 @@ def HAL_MemoryAccessBitfieldAttr :
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
 
-def HAL_BufferUsage_None : BitEnumAttrCase<"None", 0x0000>;
-def HAL_BufferUsage_Constant : BitEnumAttrCase<"Constant", 0x0001>;
-def HAL_BufferUsage_Transfer : BitEnumAttrCase<"Transfer", 0x0002>;
-def HAL_BufferUsage_Mapping : BitEnumAttrCase<"Mapping", 0x0004>;
-def HAL_BufferUsage_Dispatch : BitEnumAttrCase<"Dispatch", 0x0008>;
-def HAL_BufferUsage_All : BitEnumAttrCase<"All", 0x000F>;
+def HAL_BufferUsage_None      : BitEnumAttrCase<"None",     0x0000>;  // ?
+def HAL_BufferUsage_Constant  : BitEnumAttrCase<"Constant", 0x0001>;  // C
+def HAL_BufferUsage_Transfer  : BitEnumAttrCase<"Transfer", 0x0002>;  // T
+def HAL_BufferUsage_Mapping   : BitEnumAttrCase<"Mapping",  0x0004>;  // M
+def HAL_BufferUsage_Dispatch  : BitEnumAttrCase<"Dispatch", 0x0008>;  // D
+def HAL_BufferUsage_All       : BitEnumAttrCase<"All",      0x000E>;
 def HAL_BufferUsageBitfieldAttr :
     BitEnumAttr<"BufferUsageBitfield", "valid BufferUsage", [
       HAL_BufferUsage_None,
@@ -186,6 +186,16 @@ def HAL_ExecutionStageBitfieldAttr :
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
 
+def HAL_ExecutionBarrierFlag_None : BitEnumAttrCase<"None", 0x0000>;
+def HAL_ExecutionBarrierFlag_Reserved : BitEnumAttrCase<"Reserved", 0x0001>;
+def HAL_ExecutionBarrierFlagBitfieldAttr :
+    BitEnumAttr<"ExecutionBarrierFlagBitfield", "valid ExecutionBarrierFlag", [
+      HAL_ExecutionBarrierFlag_None,
+      HAL_ExecutionBarrierFlag_Reserved,
+    ]> {
+  let cppNamespace = "mlir::iree_compiler::IREE::HAL";
+}
+
 def HAL_AccessScope_None : BitEnumAttrCase<"None", 0x0000>;
 def HAL_AccessScope_IndirectCommandRead : BitEnumAttrCase<"IndirectCommandRead", 0x0001>;
 def HAL_AccessScope_ConstantRead : BitEnumAttrCase<"ConstantRead", 0x0002>;
@@ -214,32 +224,11 @@ def HAL_AccessScopeBitfieldAttr :
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
 
-def HAL_ExecutableCachingMode_None : BitEnumAttrCase<"None", 0x0000>;
-def HAL_ExecutableCachingMode_AliasProvidedData : BitEnumAttrCase<"AliasProvidedData", 0x0001>;
-def HAL_ExecutableCachingMode_AllowPersistentCaching : BitEnumAttrCase<"AllowPersistentCaching", 0x0002>;
-def HAL_ExecutableCachingMode_AllowOptimization : BitEnumAttrCase<"AllowOptimization", 0x0004>;
-def HAL_ExecutableCachingMode_EnableDebugging : BitEnumAttrCase<"EnableDebugging", 0x0008>;
-def HAL_ExecutableCachingMode_EnableCoverage : BitEnumAttrCase<"EnableCoverage", 0x0010>;
-def HAL_ExecutableCachingMode_EnableProfiling : BitEnumAttrCase<"EnableProfiling", 0x0020>;
-def HAL_ExecutableCachingModeBitfieldAttr :
-    BitEnumAttr<"ExecutableCachingModeBitfield", "valid ExecutableCachingMode", [
-      HAL_ExecutableCachingMode_None,
-      HAL_ExecutableCachingMode_AliasProvidedData,
-      HAL_ExecutableCachingMode_AllowPersistentCaching,
-      HAL_ExecutableCachingMode_AllowOptimization,
-      HAL_ExecutableCachingMode_EnableDebugging,
-      HAL_ExecutableCachingMode_EnableCoverage,
-      HAL_ExecutableCachingMode_EnableProfiling,
-    ]> {
-  let cppNamespace = "mlir::iree_compiler::IREE::HAL";
-}
-
 // Values are FourCC codes.
 // See iree/hal/executable_format.h for more info. Keep these in sync with the
 // codes there.
 // https://ubershmekel.github.io/fourcc-to-text/ can be used to generate the
 // integer values for inclusion here.
-//
 def HAL_EF_Unspecified : I32EnumAttrCase<"Unspecified", 538976288>;
 def HAL_EF_MlirText : I32EnumAttrCase<"MlirText", 1296845138>;
 def HAL_EF_IreeBytecode : I32EnumAttrCase<"IreeBytecode", 1230128453>;
@@ -248,6 +237,8 @@ def HAL_EF_SpirV : I32EnumAttrCase<"SpirV", 1397773893>;
 def HAL_EF_Metal : I32EnumAttrCase<"Metal", 1297370181>;
 def HAL_EF_LLVM : I32EnumAttrCase<"LLVM", 1280071245>;
 def HAL_EF_DyLib : I32EnumAttrCase<"DyLib", 1145850178>;
+def HAL_EF_CUDA : I32EnumAttrCase<"CUDA", 1129661505>;
+def HAL_EF_WASM : I32EnumAttrCase<"WASM", 1463898957>;
 def HAL_ExecutableFormatAttr :
     I32EnumAttr<"ExecutableFormat", "IREE HAL Executable format", [
       HAL_EF_Unspecified,
@@ -256,7 +247,9 @@ def HAL_ExecutableFormatAttr :
       HAL_EF_VMLA,
       HAL_EF_SpirV,
       HAL_EF_Metal,
-      HAL_EF_DyLib
+      HAL_EF_DyLib,
+      HAL_EF_CUDA,
+      HAL_EF_WASM,
     ]> {
   let returnType = "IREE::HAL::ExecutableFormat";
   let convertFromStorage = "static_cast<IREE::HAL::ExecutableFormat>($_self.getInt())";
@@ -275,7 +268,7 @@ def HAL_Allocator : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::AllocatorType>()">,
     "allocator"> {
-  let typeDescription = [{
+  let description = [{
     Allocates buffers for a particular device memory space.
   }];
   let builderCall = "$_builder.getType<IREE::HAL::AllocatorType>()";
@@ -285,7 +278,7 @@ def HAL_Buffer : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::BufferType>()">,
     "buffer"> {
-  let typeDescription = [{
+  let description = [{
     A memory buffer with a specific memory_type that is used to describe the
     capabilities and behavior of the backing memory of the buffer. Buffers may
     be any mix of host-accessible, host-coherent, or device-accessible for
@@ -299,7 +292,7 @@ def HAL_BufferView : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::BufferViewType>()">,
     "buffer_view"> {
-  let typeDescription = [{
+  let description = [{
     A shaped and typed buffer reference. This just wraps an existing hal.buffer
     with its associated metadata to make it easier to pass across ABI
     boundaries. In most cases buffer views can be elided entirely by the
@@ -312,7 +305,7 @@ def HAL_CommandBuffer : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::CommandBufferType>()">,
     "command_buffer"> {
-  let typeDescription = [{
+  let description = [{
     Asynchronous command buffer recording interface. Commands are recorded by
     the implementation for later submission to command queues.
   }];
@@ -323,7 +316,7 @@ def HAL_DescriptorSet : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::DescriptorSetType>()">,
     "descriptor_set"> {
-  let typeDescription = [{
+  let description = [{
     Descriptor set.
   }];
   let builderCall = "$_builder.getType<IREE::HAL::DescriptorSetType>()";
@@ -333,7 +326,7 @@ def HAL_DescriptorSetLayout : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::DescriptorSetLayoutType>()">,
     "descriptor_set_layout"> {
-  let typeDescription = [{
+  let description = [{
     Descriptor set layout.
   }];
   let builderCall = "$_builder.getType<IREE::HAL::DescriptorSetLayoutType>()";
@@ -343,7 +336,7 @@ def HAL_Device : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::DeviceType>()">,
     "device"> {
-  let typeDescription = [{
+  let description = [{
     Logical device instance.
   }];
   let builderCall = "$_builder.getType<IREE::HAL::DeviceType>()";
@@ -353,7 +346,7 @@ def HAL_Event : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::EventType>()">,
     "event"> {
-  let typeDescription = [{
+  let description = [{
     Events are used for defining synchronization scopes within CommandBuffers.
     An event only exists within a single CommandBuffer and must not be used
     across CommandBuffers from the same device or others.
@@ -364,32 +357,17 @@ def HAL_Executable : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::ExecutableType>()">,
     "executable"> {
-  let typeDescription = [{
+  let description = [{
     A prepared and ready-to-dispatch executable.
   }];
   let builderCall = "$_builder.getType<IREE::HAL::ExecutableType>()";
-}
-
-def HAL_ExecutableCache : DialectType<
-    HAL_Dialect,
-    CPred<"$_self.isa<IREE::HAL::ExecutableCacheType>()">,
-    "executable_cache"> {
-  let typeDescription = [{
-    A cache of prepared executables for a particular device.
-    Caches may be shared across multiple devices from the same driver or
-    specific to individual devices. Caches may persist prepared executables
-    across process launches or reprepare them each run. Callers should assume
-    that the cache is a no-op and the returned Executables only live for as long
-    as the cache does.
-  }];
-  let builderCall = "$_builder.getType<IREE::HAL::ExecutableCacheType>()";
 }
 
 def HAL_ExecutableLayout : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::ExecutableLayoutType>()">,
     "executable_layout"> {
-  let typeDescription = [{
+  let description = [{
     An executable layout describing the descriptor sets and push constants used.
   }];
   let builderCall = "$_builder.getType<IREE::HAL::ExecutableLayoutType>()";
@@ -399,7 +377,7 @@ def HAL_RingBuffer : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::RingBufferType>()">,
     "ring_buffer"> {
-  let typeDescription = [{
+  let description = [{
     Ringbuffer used for transient buffer allocation.
   }];
   let builderCall = "$_builder.getType<IREE::HAL::RingBufferType>()";
@@ -409,7 +387,7 @@ def HAL_Semaphore : DialectType<
     HAL_Dialect,
     CPred<"$_self.isa<IREE::HAL::SemaphoreType>()">,
     "semaphore"> {
-  let typeDescription = [{
+  let description = [{
     Synchronization mechanism for host->device, device->host, host->host,
     and device->device notification. Semaphores behave like Vulkan timeline
     semaphores (or D3D12 fences) and contain a monotonically increasing
@@ -430,22 +408,26 @@ def HAL_ObjectType : AnyTypeOf<[
   HAL_Device,
   HAL_Event,
   HAL_Executable,
-  HAL_ExecutableCache,
   HAL_ExecutableLayout,
   HAL_RingBuffer,
   HAL_Semaphore,
 ]>;
 
-def HAL_OrdinalAttr : SignlessIntegerAttrBase<
-  I32, "32-bit integer ordinal attribute">;
+def HAL_BufferType : AnyTypeOf<[
+  HAL_Buffer,
+]>;
+
+def HAL_OrdinalAttr : IREE_IndexAttrBase<"size_t">;
 
 def HAL_ExecutableDataAttr : SignlessIntElementsAttr<8>;
 
+def HAL_ElementType : TypeAlias<I32>;
 def HAL_ElementTypeAttr : SignlessIntegerAttrBase<
   I32, "element type attribute">;
 
 def HAL_DeviceSize : TypeAlias<Index>;
-def HAL_DeviceSizeAttr : IREE_IndexAttrBase<"device_size_t">;
+def HAL_DeviceSizeAttr : IREE_IndexAttrBase<"iree_device_size_t">;
+def HAL_DeviceSizes : Variadic<HAL_DeviceSize>;
 
 def HAL_HostSize : TypeAlias<Index>;
 def HAL_HostSizeAttr : IREE_IndexAttrBase<"size_t">;
@@ -457,6 +439,12 @@ def HAL_PrimitiveType : AnyTypeOf<[Index, AnySignlessInteger, AnyFloat]>;
 def HAL_VariableRefAttr : AliasedSymbolRefAttr;
 def HAL_VariableType : AnyTypeOf<[HAL_PrimitiveType, AnyVector, HAL_ObjectType]>;
 def HAL_VariablePtr : PtrOf<HAL_VariableType>;
+
+def HAL_IndexAttr : IREE_IndexAttrBase<"index">;
+def HAL_IndexArrayAttr : TypedArrayAttrBase<HAL_IndexAttr,
+                                      "index array attribute"> {
+  let constBuilderCall = "$_builder.getIndexArrayAttr($0)";
+}
 
 def HAL_Dim : TypeAlias<Index>;
 def HAL_Dims : Variadic<HAL_Dim>;
@@ -476,7 +464,7 @@ def HAL_HostBuffer : AnyTypeOf<[
 
 def HAL_CommandQueueAffinityAttr : SignlessIntElementsAttr<32> {
   // TODO(b/143184519): add typeDescription support to other things.
-  // let typeDescription = [{
+  // let description = [{
   //   A bitmask defining which queues an operation is allowed to execute on.
   //   The selection is wrapped to the total number of available queues, so 0b0101
   //   would enable queues 0 and 2 if there were four queues or queue 0 if there
@@ -486,7 +474,7 @@ def HAL_CommandQueueAffinityAttr : SignlessIntElementsAttr<32> {
 
 def HAL_DurationMillisAttr : SignlessIntElementsAttr<32> {
   // TODO(b/143184519): add typeDescription support to other things.
-  // let typeDescription = [{
+  // let description = [{
   //   A duration to wait in milliseconds. 0 indicates that the operation should
   //   return immediately without waiting and can be used as a way to poll handles.
   //   INT32_MAX will wait forever until the handle is signaled.
@@ -525,31 +513,6 @@ def HAL_ByteRangeAttr :
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
 
-def HAL_MemoryBarrier : NamedTupleOf<[
-    NamedTupleElement<0, "source_scope", I32>,
-    NamedTupleElement<1, "target_scope", I32>
-  ], "MemoryBarrier"> {
-  let typeDescription = [{
-    MemoryBarrier struct that can be passed to the command buffer barrier
-    operations.
-  }];
-}
-def HAL_MemoryBarrierList : TupleOf<[HAL_MemoryBarrier]>;
-
-def HAL_BufferBarrier : NamedTupleOf<[
-    NamedTupleElement<0, "source_scope", I32>,
-    NamedTupleElement<1, "target_scope", I32>,
-    NamedTupleElement<2, "buffer", HAL_Buffer>,
-    NamedTupleElement<3, "offset", HAL_DeviceSize>,
-    NamedTupleElement<4, "length", HAL_DeviceSize>
-  ], "BufferBarrier"> {
-  let typeDescription = [{
-    BufferBarrier struct that can be passed to the command buffer barrier
-    operations.
-  }];
-}
-def HAL_BufferBarrierList : TupleOf<[HAL_BufferBarrier]>;
-
 def HAL_DescriptorSetLayoutBindingAttr :
   IREE_StructAttr<"descriptor_set_layout_binding",
                   "DescriptorSetLayoutBindingAttr",
@@ -564,15 +527,6 @@ def HAL_DescriptorSetLayoutBindingAttr :
 def HAL_DescriptorSetLayoutBindingArrayAttr : TypedArrayAttrBase<
     HAL_DescriptorSetLayoutBindingAttr,
     "HAL descriptor set layout binding array attribute">;
-
-def HAL_SemaphoreValue : NamedTupleOf<[
-    NamedTupleElement<0, "semaphore", HAL_Semaphore>,
-    NamedTupleElement<1, "value", HAL_TimelineValue>
-  ], "SemaphoreValue"> {
-  let typeDescription = [{
-    A reference to a semaphore and associated payload value.
-  }];
-}
 
 //===----------------------------------------------------------------------===//
 // Expression matching attributes
@@ -615,14 +569,8 @@ def HAL_DeviceMatchMemoryModelAttr : IREE_StructAttr<
 // Base HAL op classes
 //===----------------------------------------------------------------------===//
 
-def HAL_OpInterface : OpInterface<"HALOp"> {
-  let description = [{
-    Interface for HAL ops.
-  }];
-}
-
 class HAL_Op<string mnemonic, list<OpTrait> traits = []> :
-    Op<HAL_Dialect, mnemonic, !listconcat(traits, [HAL_OpInterface])> {
+    Op<HAL_Dialect, mnemonic, traits> {
   let parser = [{ return parse$cppClass(parser, &result); }];
   let printer = [{ return print$cppClass(p, *this); }];
 }

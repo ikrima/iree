@@ -22,8 +22,10 @@ jobs:
     steps:
       - name: Checking out repository
         uses: actions/checkout@v2
-      - name: Running bazel_to_cmake
-        run: ./build_tools/bazel_to_cmake/bazel_to_cmake.py
+      - name: Running bazel_to_cmake for IREE core
+        run: ./build_tools/bazel_to_cmake/bazel_to_cmake.py --verbosity=2
+      - name: Running bazel_to_cmake for IREE TF Integration Tests
+        run: ./build_tools/bazel_to_cmake/bazel_to_cmake.py --root_dir=integrations/tensorflow/e2e --verbosity=2
       - name: Checking Diff
         run: git diff --exit-code
 
@@ -39,7 +41,7 @@ jobs:
           excludes: "*/third_party/*"
           # For compatibility with Google's internal source repository, we still
           # use this.
-          warnings: "-native-cc"
+          warnings: "-native-cc,-native-py"
 
   yapf:
     runs-on: ubuntu-18.04

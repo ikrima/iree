@@ -83,7 +83,7 @@ bool OpDispatchPolicy::isDispatchable(Operation *op) {
     LLVM_DEBUG(llvm::dbgs() << "  NOT DISPATCHABLE (Flow Dialect): "
                             << op->getName() << "\n");
     return false;
-  } else if (op->isKnownTerminator()) {
+  } else if (op->hasTrait<OpTrait::IsTerminator>()) {
     // Currently we skip all terminators as we want to leave them in the block
     // to keep it valid. Future folding passes may take care of them if they are
     // worth bringing into the dispatch region.
@@ -161,7 +161,7 @@ int OpDispatchPolicy::getAnchorBenefit(Operation *op) {
 
 OpDispatchPolicy::FusionType OpDispatchPolicy::fuseInput(Operation *anchorOp,
                                                          Operation *inputOp) {
-  if (inputOp->isKnownTerminator()) return FusionType::DISABLED;
+  if (inputOp->hasTrait<OpTrait::IsTerminator>()) return FusionType::DISABLED;
 
   if (isIdentityMetadata(inputOp) || isViewModificationOp(inputOp)) {
     // Shape ties must always be duplicated into the region and remain in their
@@ -185,7 +185,8 @@ OpDispatchPolicy::FusionType OpDispatchPolicy::fuseInput(Operation *anchorOp,
 
 OpDispatchPolicy::FusionType OpDispatchPolicy::fuseOutput(Operation *anchorOp,
                                                           Operation *outputOp) {
-  if (outputOp->isKnownTerminator() || outputOp->getNumResults() == 0) {
+  if (outputOp->hasTrait<OpTrait::IsTerminator>() ||
+      outputOp->getNumResults() == 0) {
     return FusionType::DISABLED;
   }
   if (isIdentityMetadata(outputOp) || isViewModificationOp(outputOp)) {
@@ -224,15 +225,15 @@ bool OpDispatchPolicy::isFusableWithConsumersOnly(Operation *op) {
 // TODO(b/144530470): replace with tablegen attributes/interfaces.
 bool OpDispatchPolicy::isUnsupportedFusionOp(Operation *op) {
   return isa<linalg::IndexedGenericOp, linalg::GenericOp, mhlo::ConcatenateOp,
-             mhlo::ConvOp, mhlo::PadOp, mhlo::ReduceOp, mhlo::ReduceWindowOp>(
-             op) ||
+             mhlo::ConvOp, mhlo::PadOp, mhlo::ReduceOp, mhlo::ReduceWindowOp,
+             mhlo::SliceOp>(op) ||
          (!clEnableConsumerOnlyFusion &&
           isa<mhlo::DotOp, mhlo::DotGeneralOp>(op)) ||
          isLeafOnlyOp(op);
 }
 
 bool OpDispatchPolicy::isLeafOnlyOp(Operation *op) {
-  return isa<mhlo::SliceOp, mhlo::TorchIndexSelectOp>(op);
+  return isa<mhlo::TorchIndexSelectOp>(op);
 }
 
 }  // namespace Flow

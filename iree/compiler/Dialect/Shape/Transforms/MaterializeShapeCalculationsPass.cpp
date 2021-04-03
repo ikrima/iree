@@ -21,6 +21,7 @@
 #include "iree/compiler/Dialect/Shape/Transforms/Passes.h"
 #include "iree/compiler/Dialect/Shape/Transforms/Patterns.h"
 #include "iree/compiler/Utils/PatternUtils.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
@@ -38,6 +39,10 @@ namespace {
 class MaterializeShapeCalculationsPass
     : public PassWrapper<MaterializeShapeCalculationsPass, FunctionPass> {
  public:
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<memref::MemRefDialect>();
+  }
+
   void runOnFunction() override {
     auto *context = &getContext();
     // First run conversion.
@@ -46,12 +51,13 @@ class MaterializeShapeCalculationsPass
     // Allow any Shape dialect ops to persist.
     target.addLegalDialect<ShapeDialect>();
 
-    // Shape functions and runtime resolution generate ops in the standard
-    // dialect.
+    // Shape functions and runtime resolution generate ops in the memref and
+    // standard dialect.
+    target.addLegalDialect<memref::MemRefDialect>();
     target.addLegalDialect<StandardOpsDialect>();
 
     setupMaterializeShapeCalculationsLegality(target);
-    OwningRewritePatternList conversionPatterns;
+    OwningRewritePatternList conversionPatterns(&getContext());
     populateMaterializeShapeCalculationsConversionPatterns(conversionPatterns,
                                                            context);
     if (failed(applyPartialConversion(getOperation(), target,
@@ -63,7 +69,7 @@ class MaterializeShapeCalculationsPass
     // And then canonicalize shape ops.
     // TODO(laurenzo): I would prefer to get the list of ops in the dialect
     // versus doing this, but I don't know that is possible.
-    OwningRewritePatternList patterns;
+    OwningRewritePatternList patterns(&getContext());
     CastCompatibleShapeOp::getCanonicalizationPatterns(patterns, context);
     GetRankedShapeOp::getCanonicalizationPatterns(patterns, context);
     MakeRankedShapeOp::getCanonicalizationPatterns(patterns, context);
@@ -71,7 +77,7 @@ class MaterializeShapeCalculationsPass
     RankedDimsOp::getCanonicalizationPatterns(patterns, context);
     TieShapeOp::getCanonicalizationPatterns(patterns, context);
     FromExtentTensorOp::getCanonicalizationPatterns(patterns, context);
-    applyPatternsAndFoldGreedily(getOperation(), std::move(patterns));
+    (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns));
   }
 };
 

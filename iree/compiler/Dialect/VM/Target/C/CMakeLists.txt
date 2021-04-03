@@ -21,8 +21,10 @@ if(${IREE_ENABLE_EMITC})
       C
     HDRS
       "CModuleTarget.h"
+      "TranslationFlags.h"
     SRCS
       "CModuleTarget.cpp"
+      "TranslationFlags.cpp"
       "TranslationRegistration.cpp"
     DEPS
       LLVMSupport
@@ -32,6 +34,7 @@ if(${IREE_ENABLE_EMITC})
       MLIRSupport
       iree::compiler::Dialect::VM::IR
       iree::compiler::Dialect::VM::Conversion::VMToEmitC
+      iree::compiler::Dialect::VM::Target::CallingConventionUtils
     INCLUDES
       "${PROJECT_SOURCE_DIR}/third_party/mlir-emitc/include"
     PUBLIC

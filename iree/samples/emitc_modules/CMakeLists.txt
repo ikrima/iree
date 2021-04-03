@@ -13,31 +13,13 @@
 # limitations under the License.
 
 if(${IREE_ENABLE_EMITC})
-  # TODO(simon-camp): We are only interested in the output of iree-translate, i.e. add_module.module
-  # TODO(marbre): Use a custom command or rather implement a new CMake function.
-  iree_bytecode_module(
+  iree_c_module(
     NAME
       add_module
     SRC
       "add.mlir"
-    CC_NAMESPACE
-      "iree::samples::custom_modules"
-    FLAGS
-      "-iree-vm-ir-to-c-module"
-    PUBLIC
-  )
-
-  iree_cc_library(
-    NAME
-      add_module_test_hdrs
-    HDRS
-      "add_module_test.h"
-      "add_mlir_generated.h"
-    DEPS
-      ::add_module_cc
-      iree::base::api
-      iree::vm
-    PUBLIC
+    H_FILE_OUTPUT
+      "add_module.h"
   )
 
   iree_cc_test(
@@ -46,12 +28,14 @@ if(${IREE_ENABLE_EMITC})
     SRCS
       "add_module_test.cc"
     DEPS
-      ::add_module_test_hdrs
+      ::add_module
       iree::base::api
       iree::base::status
       iree::testing::gtest
       iree::testing::gtest_main
       iree::vm
       iree::vm::cc
+      iree::vm::ops
+      iree::vm::shims
   )
 endif()

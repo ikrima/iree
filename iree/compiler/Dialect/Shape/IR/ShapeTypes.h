@@ -43,10 +43,16 @@ class RankedShapeType : public Type::TypeBase<RankedShapeType, Type,
   // Any dynamic dim should be -1.
   static RankedShapeType get(ArrayRef<int64_t> dims, MLIRContext *context);
   static RankedShapeType getChecked(ArrayRef<int64_t> dims, Location loc);
+  static RankedShapeType getChecked(
+      function_ref<InFlightDiagnostic()> emitError, MLIRContext *context,
+      ArrayRef<int64_t> dims);
+
+  // Derives a RankedShapeType from a ShapedType.
+  static RankedShapeType get(ShapedType shapedType);
 
   // Verifies construction invariants and issues errors/warnings.
-  static LogicalResult verifyConstructionInvariants(Location loc,
-                                                    ArrayRef<int64_t> dims);
+  static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
+                              ArrayRef<int64_t> dims);
 
   // Gets the rank (counting all dims, static and dynamic).
   int64_t getRank() const;

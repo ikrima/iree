@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Conformance Test Suite (CTS) for HAL implementations.
-
 package(
     default_visibility = ["//visibility:public"],
     features = ["layering_check"],
@@ -24,15 +22,9 @@ cc_library(
     name = "cts_test_base",
     testonly = True,
     hdrs = ["cts_test_base.h"],
-    data = [
-        # For AddressSanitizer when using Vulkan + a local Nvidia GPU
-        "//iree/tools:sanitizer_suppressions.txt",
-    ],
     deps = [
-        "//iree/base:status",
-        "//iree/hal",
+        "//iree/base:api",
         "//iree/hal:api",
-        "//iree/hal/testing:driver_registry",
         "//iree/testing:gtest",
     ],
 )
@@ -42,7 +34,6 @@ cc_test(
     srcs = ["allocator_test.cc"],
     deps = [
         ":cts_test_base",
-        "//iree/base:status",
         "//iree/hal/testing:driver_registry",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
@@ -50,11 +41,10 @@ cc_test(
 )
 
 cc_test(
-    name = "buffer_test",
-    srcs = ["buffer_test.cc"],
+    name = "buffer_mapping_test",
+    srcs = ["buffer_mapping_test.cc"],
     deps = [
         ":cts_test_base",
-        "//iree/base:status",
         "//iree/hal/testing:driver_registry",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
@@ -66,7 +56,6 @@ cc_test(
     srcs = ["command_buffer_test.cc"],
     deps = [
         ":cts_test_base",
-        "//iree/base:status",
         "//iree/hal/testing:driver_registry",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
@@ -74,11 +63,21 @@ cc_test(
 )
 
 cc_test(
-    name = "command_queue_test",
-    srcs = ["command_queue_test.cc"],
+    name = "descriptor_set_test",
+    srcs = ["descriptor_set_test.cc"],
     deps = [
         ":cts_test_base",
-        "//iree/base:status",
+        "//iree/hal/testing:driver_registry",
+        "//iree/testing:gtest",
+        "//iree/testing:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "descriptor_set_layout_test",
+    srcs = ["descriptor_set_layout_test.cc"],
+    deps = [
+        ":cts_test_base",
         "//iree/hal/testing:driver_registry",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
@@ -97,8 +96,41 @@ cc_test(
 )
 
 cc_test(
+    name = "event_test",
+    srcs = ["event_test.cc"],
+    deps = [
+        ":cts_test_base",
+        "//iree/hal/testing:driver_registry",
+        "//iree/testing:gtest",
+        "//iree/testing:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "executable_layout_test",
+    srcs = ["executable_layout_test.cc"],
+    deps = [
+        ":cts_test_base",
+        "//iree/hal/testing:driver_registry",
+        "//iree/testing:gtest",
+        "//iree/testing:gtest_main",
+    ],
+)
+
+cc_test(
     name = "semaphore_test",
     srcs = ["semaphore_test.cc"],
+    deps = [
+        ":cts_test_base",
+        "//iree/hal/testing:driver_registry",
+        "//iree/testing:gtest",
+        "//iree/testing:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "semaphore_submission_test",
+    srcs = ["semaphore_submission_test.cc"],
     deps = [
         ":cts_test_base",
         "//iree/hal/testing:driver_registry",

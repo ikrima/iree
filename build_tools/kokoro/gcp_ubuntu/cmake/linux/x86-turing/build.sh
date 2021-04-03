@@ -29,6 +29,10 @@ export CMAKE_BIN="$(which cmake)"
 "${CXX?}" --version
 python3 --version
 
+# Print NVIDIA GPU information inside the docker
+dpkg -l | grep nvidia
+nvidia-smi || true
+
 ./build_tools/kokoro/gcp_ubuntu/check_vulkan.sh
 
 echo "Initializing submodules"
@@ -40,5 +44,7 @@ echo "Initializing submodules"
 echo "Building with cmake"
 ./build_tools/cmake/clean_build.sh
 
+export IREE_VULKAN_F16_DISABLE=0
+export IREE_CUDA_DISABLE=0
 echo "Testing with ctest"
 ./build_tools/cmake/test.sh

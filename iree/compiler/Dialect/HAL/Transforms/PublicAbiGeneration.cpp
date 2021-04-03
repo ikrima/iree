@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "absl/strings/string_view.h"
-#include "iree/base/signature_mangle.h"
+#include "iree/compiler/Bindings/SIP/Utils/SignatureParser.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "iree/compiler/Dialect/HAL/IR/HALTypes.h"
 #include "iree/compiler/Dialect/HAL/Transforms/Passes.h"
@@ -26,9 +25,6 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Types.h"
 
-using iree::RawSignatureParser;
-using iree::AbiConstants::ScalarType;
-
 namespace mlir {
 namespace iree_compiler {
 namespace IREE {
@@ -36,28 +32,31 @@ namespace HAL {
 
 namespace {
 
-Type mapScalarType(MLIRContext *ctx, ScalarType scalarType) {
+using mlir::iree_compiler::IREE::SIP::RawSignatureParser;
+using mlir::iree_compiler::IREE::SIP::AbiConstants::ScalarType;
+
+Type mapScalarType(MLIRContext *context, ScalarType scalarType) {
   switch (scalarType) {
     case ScalarType::kIeeeFloat32:
-      return FloatType::getF32(ctx);
+      return FloatType::getF32(context);
     case ScalarType::kIeeeFloat64:
-      return FloatType::getF64(ctx);
+      return FloatType::getF64(context);
     case ScalarType::kIeeeFloat16:
-      return FloatType::getF16(ctx);
+      return FloatType::getF16(context);
     case ScalarType::kGoogleBfloat16:
-      return FloatType::getBF16(ctx);
+      return FloatType::getBF16(context);
     case ScalarType::kSint32:
     case ScalarType::kUint32:
-      return IntegerType::get(ctx, 32);
+      return IntegerType::get(context, 32);
     case ScalarType::kSint64:
     case ScalarType::kUint64:
-      return IntegerType::get(ctx, 64);
+      return IntegerType::get(context, 64);
     case ScalarType::kSint16:
     case ScalarType::kUint16:
-      return IntegerType::get(ctx, 16);
+      return IntegerType::get(context, 16);
     case ScalarType::kSint8:
     case ScalarType::kUint8:
-      return IntegerType::get(ctx, 8);
+      return IntegerType::get(context, 8);
     default:
       return nullptr;
   }
@@ -66,7 +65,7 @@ Type mapScalarType(MLIRContext *ctx, ScalarType scalarType) {
 LogicalResult mapRawAbiTypes(
     Location loc, SmallVectorImpl<RawSignatureParser::Description> &descs,
     SmallVectorImpl<Type> &types) {
-  auto *ctx = loc.getContext();
+  auto *context = loc.getContext();
   auto bufferViewType = HAL::BufferViewType::get(loc.getContext());
   for (auto &d : descs) {
     switch (d.type) {
@@ -81,7 +80,7 @@ LogicalResult mapRawAbiTypes(
         return emitError(loc) << "unsupported ABI type: " << dstr;
       }
       case RawSignatureParser::Type::kScalar: {
-        auto t = mapScalarType(ctx, d.scalar.type);
+        auto t = mapScalarType(context, d.scalar.type);
         if (!t) {
           std::string dstr;
           d.ToString(dstr);
@@ -102,7 +101,7 @@ LogicalResult generateAsynchronousBody(
     SmallVectorImpl<RawSignatureParser::Description> &inputDescs,
     SmallVectorImpl<Type> &resultTypes,
     SmallVectorImpl<RawSignatureParser::Description> &resultDescs) {
-  auto *ctx = funcOp.getContext();
+  auto *context = funcOp.getContext();
   auto loc = funcOp.getLoc();
   Block *entryBlock = funcOp.addEntryBlock();
   OpBuilder builder = OpBuilder::atBlockEnd(entryBlock);
@@ -125,8 +124,8 @@ LogicalResult generateAsynchronousBody(
       case RawSignatureParser::Type::kBuffer: {
         // Pass the backing buffer.
         // TODO(laurenzo): Validate shape.
-        callOperands.push_back(
-            builder.create<HAL::BufferViewBufferOp>(loc, blockArg));
+        callOperands.push_back(builder.create<HAL::BufferViewBufferOp>(
+            loc, IREE::HAL::BufferType::get(context), blockArg));
 
         // Now, each dynamic dim is passed individually.
         for (auto dim : llvm::enumerate(input.value().dims)) {
@@ -140,7 +139,7 @@ LogicalResult generateAsynchronousBody(
           // at a time as needed.
           auto dimValue = builder.create<HAL::BufferViewDimOp>(
               loc, builder.getIndexType(), blockArg,
-              builder.getI32IntegerAttr(dim.index()));
+              builder.getIndexAttr(dim.index()));
           callOperands.push_back(dimValue);
         }
         break;
@@ -196,7 +195,8 @@ LogicalResult generateAsynchronousBody(
         }
 
         // Determine element type.
-        Type mappedScalarType = mapScalarType(ctx, output.value().scalar.type);
+        Type mappedScalarType =
+            mapScalarType(context, output.value().scalar.type);
         auto elementType = getElementTypeValue(mappedScalarType);
         if (!elementType) {
           return emitError(loc)
@@ -205,7 +205,7 @@ LogicalResult generateAsynchronousBody(
 
         // Build buffer_view.
         funcResults.push_back(builder.create<BufferViewCreateOp>(
-            loc, nextCallResult, dimValues, *elementType));
+            loc, nextCallResult, *elementType, dimValues));
         break;
       }
       case RawSignatureParser::Type::kScalar: {
@@ -277,10 +277,10 @@ LogicalResult generateRawAbiFunctions(OpBuilder &moduleBuilder,
                                       StringRef exportName,
                                       DictionaryAttr reflection,
                                       StringRef signatureSr) {
-  auto ctx = rawCalleeFuncOp.getContext();
+  auto context = rawCalleeFuncOp.getContext();
   auto loc = rawCalleeFuncOp.getLoc();
 
-  absl::string_view signature(signatureSr.data(), signatureSr.size());
+  StringRef signature(signatureSr.data(), signatureSr.size());
   SmallVector<RawSignatureParser::Description, 4> inputDescs;
   SmallVector<RawSignatureParser::Description, 4> resultDescs;
 
@@ -315,13 +315,13 @@ LogicalResult generateRawAbiFunctions(OpBuilder &moduleBuilder,
   // Prefix with wait semaphore and its value.
   // TODO(scotttodd): SemaphoreValue wrapper for single {semaphore, value}
   // TODO(scotttodd): SemaphoreList wrapper for list of SemaphoreValues
-  asyncInputTypes.push_back(HAL::SemaphoreType::get(ctx));
+  asyncInputTypes.push_back(HAL::SemaphoreType::get(context));
   asyncInputTypes.push_back(moduleBuilder.getIndexType());
   for (const auto &inputType : inputTypes) {
     asyncInputTypes.push_back(inputType);
   }
   // Postfix with signal semaphore and its value.
-  asyncInputTypes.push_back(HAL::SemaphoreType::get(ctx));
+  asyncInputTypes.push_back(HAL::SemaphoreType::get(context));
   asyncInputTypes.push_back(moduleBuilder.getIndexType());
 
   // TODO(scotttodd): populate async export attributes
@@ -330,9 +330,9 @@ LogicalResult generateRawAbiFunctions(OpBuilder &moduleBuilder,
   SmallVector<NamedAttribute, 1> asyncExportAttrs;
   asyncExportAttrs.push_back(moduleBuilder.getNamedAttr(
       "iree.module.export",
-      StringAttr::get((exportName + "$async").str(), ctx)));
+      StringAttr::get(context, (exportName + "$async").str())));
 
-  auto asyncType = FunctionType::get(ctx, asyncInputTypes, resultTypes);
+  auto asyncType = FunctionType::get(context, asyncInputTypes, resultTypes);
   auto asyncName = (rawCalleeFuncOp.getName() + "$async").str();
   auto asyncFuncOp =
       moduleBuilder.create<FuncOp>(loc, asyncName, asyncType, asyncExportAttrs);
@@ -350,9 +350,9 @@ LogicalResult generateRawAbiFunctions(OpBuilder &moduleBuilder,
   syncExportAttrs.push_back(
       moduleBuilder.getNamedAttr("iree.reflection", reflection));
   syncExportAttrs.push_back(
-      moduleBuilder.getNamedAttr("iree.abi.stub", UnitAttr::get(ctx)));
+      moduleBuilder.getNamedAttr("iree.abi.stub", UnitAttr::get(context)));
 
-  auto syncType = FunctionType::get(ctx, inputTypes, resultTypes);
+  auto syncType = FunctionType::get(context, inputTypes, resultTypes);
   auto syncName = (rawCalleeFuncOp.getName() + "$sync").str();
   auto syncFuncOp =
       moduleBuilder.create<FuncOp>(loc, syncName, syncType, syncExportAttrs);
@@ -398,14 +398,14 @@ class PublicABIGenerationPass
     : public PassWrapper<PublicABIGenerationPass, OperationPass<ModuleOp>> {
  public:
   void runOnOperation() override {
-    auto *ctx = &getContext();
+    auto *context = &getContext();
     for (auto &op : getOperation().getBody()->getOperations()) {
       if (auto funcOp = dyn_cast<FuncOp>(op)) {
         // Skip functions we generate.
         if (funcOp->getAttr("iree.abi.stub")) continue;
 
-        // Any function marked for export, we redirect to export with a
-        // '$raw' suffix and then generate ABI wrappers with the original name.
+        // Any function marked for export we make private and expose via
+        // generated ABI wrappers with the original name.
         Optional<StringRef> exportName = getFuncOpExportName(funcOp);
         if (!exportName) continue;
         auto reflection = funcOp->getAttr("iree.reflection")
@@ -413,10 +413,9 @@ class PublicABIGenerationPass
         if (!reflection) continue;
 
         // Rename and remove reflection (it will go on the ABI entry point).
-        funcOp->setAttr("iree.module.export",
-                        StringAttr::get((*exportName + "$raw").str(), ctx));
-        funcOp.removeAttr("iree.reflection");
-        funcOp->setAttr("noinline", UnitAttr::get(ctx));
+        funcOp->removeAttr("iree.module.export");
+        funcOp->removeAttr("iree.reflection");
+        funcOp->setAttr("noinline", UnitAttr::get(context));
 
         if (reflection) {
           if (failed(generateAbiFunctions(funcOp, *exportName, reflection))) {

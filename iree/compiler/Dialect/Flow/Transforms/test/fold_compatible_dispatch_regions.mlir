@@ -11,7 +11,7 @@ func @noFolding(%arg0 : tensor<4xf32>) -> tensor<4xf32> {
 
 // CHECK-LABEL: func @noFolding
 // CHECK-NEXT: %[[WORKLOAD0:.+]] = constant 4 : index
-// CHECK-NEXT: %0 = flow.dispatch.region[%[[WORKLOAD0]] : index](%arg1 = %arg0 : tensor<4xf32>) -> tensor<4xf32> {
+// CHECK-NEXT: %0 = flow.dispatch.region[%[[WORKLOAD0]] : index](%arg1 = %arg0 : tensor<4xf32>) -> (tensor<4xf32>) {
 // CHECK-NEXT:   %1 = mhlo.add %arg1, %arg1 : tensor<4xf32>
 // CHECK-NEXT:   flow.return %1 : tensor<4xf32>
 // CHECK-NEXT: }
@@ -38,7 +38,7 @@ func @elementwiseOps(%arg0 : tensor<4xf32>) -> tensor<4xf32> {
 
 // CHECK-LABEL: func @elementwiseOps
 // CHECK: %[[WORKLOAD0:.+]] = constant 4
-// CHECK: %[[R0:.+]] = flow.dispatch.region[%[[WORKLOAD0]] : index](%arg1 = %arg0 : tensor<4xf32>) -> tensor<4xf32> {
+// CHECK: %[[R0:.+]] = flow.dispatch.region[%[[WORKLOAD0]] : index](%arg1 = %arg0 : tensor<4xf32>) -> (tensor<4xf32>) {
 // CHECK-NEXT:   %1 = mhlo.add %arg1, %arg1 : tensor<4xf32>
 // CHECK-NEXT:   %2 = mhlo.subtract %1, %arg1 : tensor<4xf32>
 // CHECK-NEXT:   %3 = mhlo.multiply %arg1, %2 : tensor<4xf32>
@@ -69,17 +69,17 @@ func @interleavedDot(%arg0 : tensor<4x4xf32>) -> tensor<4x4xf32> {
 
 // CHECK-LABEL: func @interleavedDot
 // CHECK-NEXT: %[[WORKLOAD0:.+]] = constant 16 : index
-// CHECK-NEXT: %[[R0:.+]] = flow.dispatch.region[%[[WORKLOAD0]] : index](%arg1 = %arg0 : tensor<4x4xf32>) -> tensor<4x4xf32> {
+// CHECK-NEXT: %[[R0:.+]] = flow.dispatch.region[%[[WORKLOAD0]] : index](%arg1 = %arg0 : tensor<4x4xf32>) -> (tensor<4x4xf32>) {
 // CHECK-NEXT:   %3 = mhlo.add %arg1, %arg1 : tensor<4x4xf32>
 // CHECK-NEXT:   flow.return %3 : tensor<4x4xf32>
 // CHECK-NEXT: }
 // CHECK-NEXT: %[[WORKLOAD1:.+]] = constant 16 : index
-// CHECK-NEXT: %[[R1:.+]] = flow.dispatch.region[%[[WORKLOAD1]] : index](%arg1 = %[[R0]] : tensor<4x4xf32>, %arg2 = %arg0 : tensor<4x4xf32>) -> tensor<4x4xf32> {
+// CHECK-NEXT: %[[R1:.+]] = flow.dispatch.region[%[[WORKLOAD1]] : index](%arg1 = %[[R0]] : tensor<4x4xf32>, %arg2 = %arg0 : tensor<4x4xf32>) -> (tensor<4x4xf32>) {
 // CHECK-NEXT:   %3 = "mhlo.dot"(%arg1, %arg2) : (tensor<4x4xf32>, tensor<4x4xf32>) -> tensor<4x4xf32>
 // CHECK-NEXT:   flow.return %3 : tensor<4x4xf32>
 // CHECK-NEXT: }
 // CHECK-NEXT: %[[WORKLOAD2:.+]] = constant 16 : index
-// CHECK-NEXT: %[[R2:.+]] = flow.dispatch.region[%[[WORKLOAD2]] : index](%arg1 = %[[R1]] : tensor<4x4xf32>, %arg2 = %arg0 : tensor<4x4xf32>) -> tensor<4x4xf32> {
+// CHECK-NEXT: %[[R2:.+]] = flow.dispatch.region[%[[WORKLOAD2]] : index](%arg1 = %[[R1]] : tensor<4x4xf32>, %arg2 = %arg0 : tensor<4x4xf32>) -> (tensor<4x4xf32>) {
 // CHECK-NEXT:   %3 = mhlo.multiply %arg1, %arg2 : tensor<4x4xf32>
 // CHECK-NEXT:   flow.return %3 : tensor<4x4xf32>
 // CHECK-NEXT: }
@@ -132,36 +132,6 @@ module {
 // CHECK-LABEL: func @dominate
 //       CHECK: flow.dispatch.region
 //   CHECK-NOT: flow.dispatch.region
-
-// -----
-
-// Test if the op that only can be a leaf op fuse with consumer but not
-// producer. This test use a dummy workload to test on leaf only op
-// functionality.
-module {
-  func @leafOnlyOp(%arg0: tensor<3x4xi32>, %arg1: tensor<1x2xi32>) -> tensor<1x2xi32> {
-    %c0 = constant 0 : index
-    %0 = flow.dispatch.region[%c0 : index](%arg2 = %arg0 : tensor<3x4xi32>) -> tensor<3x4xi32> {
-      %3 = mhlo.add %arg2, %arg2 : tensor<3x4xi32>
-      flow.return %3 : tensor<3x4xi32>
-    }
-    %1 = flow.dispatch.region[%c0 : index](%arg2 = %0 : tensor<3x4xi32>) -> tensor<1x2xi32> {
-      %3 = "mhlo.slice"(%arg2) {limit_indices = dense<[2, 3]> : tensor<2xi64>, start_indices = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} : (tensor<3x4xi32>) -> tensor<1x2xi32>
-      flow.return %3 : tensor<1x2xi32>
-    }
-    %2 = flow.dispatch.region[%c0 : index](%arg2 = %1 : tensor<1x2xi32>, %arg3 = %arg1 : tensor<1x2xi32>) -> tensor<1x2xi32> {
-      %3 = mhlo.multiply %arg2, %arg3 : tensor<1x2xi32>
-      flow.return %3 : tensor<1x2xi32>
-    }
-    return %2 : tensor<1x2xi32>
-  }
-}
-// CHECK-LABEL: func @leafOnlyOp
-//       CHECK: flow.dispatch.region
-//  CHECK-NEXT:   mhlo.add
-//       CHECK: flow.dispatch.region
-//  CHECK-NEXT:   mhlo.slice
-//  CHECK-NEXT:   mhlo.multiply
 
 // -----
 

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -24,8 +25,8 @@ namespace {
 
 // clang-format off
 //
-// Convert linalg.conv op into img2col packing operation (linalg.generic) +
-// linalg.matmul. See details below:
+// Convert linalg.conv_2d_input_nhwc_filter_hwcf op into img2col packing
+// operation (linalg.generic) + linalg.matmul. See details below:
 // A convolution operaton can be written as a matrix-matrix multiplication by
 // unfolding the cross corrolation between input and filter and explcitiy copy
 // overlaped sliding window inputs.
@@ -51,15 +52,16 @@ namespace {
 // For the case where N > 1 its a batched matrxi-matrix multplication.
 //
 // clang-format on
-class ConvImg2ColMatmulConversion : public OpRewritePattern<linalg::ConvOp> {
+class ConvImg2ColMatmulConversion
+    : public OpRewritePattern<linalg::ConvInputNHWCFilterHWCFOp> {
  public:
-  using OpRewritePattern<linalg::ConvOp>::OpRewritePattern;
+  using OpRewritePattern<linalg::ConvInputNHWCFilterHWCFOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(linalg::ConvOp op,
+  LogicalResult matchAndRewrite(linalg::ConvInputNHWCFilterHWCFOp op,
                                 PatternRewriter &rewriter) const override {
-    auto filterShapeType = op.filter().getType().dyn_cast_or_null<ShapedType>();
-    auto inputShapeType = op.input().getType().dyn_cast_or_null<ShapedType>();
-    auto outputShapeType = op.output().getType().dyn_cast_or_null<ShapedType>();
+    ShapedType filterShapeType = op.getInputShapedType(1);
+    ShapedType inputShapeType = op.getInputShapedType(0);
+    ShapedType outputShapeType = op.getOutputShapedType(0);
     if (!filterShapeType || !inputShapeType) return failure();
     if (!filterShapeType.hasStaticShape() || !inputShapeType.hasStaticShape())
       return failure();
@@ -69,32 +71,37 @@ class ConvImg2ColMatmulConversion : public OpRewritePattern<linalg::ConvOp> {
 
     auto loc = op.getLoc();
 
+    int numBatchDims = 1;
+    int numSpatialDims = 2;
+    int numInputFeatureDims = 1;
+    int numOutputFeatureDims = 1;
     auto inputFeatures =
-        inputShapeType.getShape()[op.getNumBatchDimensions() +
-                                  op.getNumSpatialDimensions()];
+        inputShapeType.getShape()[numBatchDims + numSpatialDims];
     auto outputFeatures = filterShapeType.getShape().back();
+    Value input = op.getInput(0);
+    Value filter = op.getInput(1);
+    Value output = op.getOutput(0);
 
     // Col buffer shape (n, d1, d1, d2, ...dn, k1, k2, k3, ...kn, ci)
     SmallVector<int64_t, 4> colBufferShape;
     int64_t spatialSize = 1, filterSpatialSize = 1;
     colBufferShape.push_back(outputShapeType.getShape()[0]);
-    for (int i = 0; i < op.getNumSpatialDimensions(); ++i) {
-      auto dimSize = outputShapeType.getShape()[i + op.getNumBatchDimensions()];
+    for (int i = 0; i < numSpatialDims; ++i) {
+      auto dimSize = outputShapeType.getShape()[i + numBatchDims];
       colBufferShape.push_back(dimSize);
       spatialSize *= dimSize;
     }
-    for (int i = 0; i < op.getNumSpatialDimensions(); ++i) {
+    for (int i = 0; i < numSpatialDims; ++i) {
       auto dimSize = filterShapeType.getShape()[i];
       colBufferShape.push_back(dimSize);
       filterSpatialSize *= dimSize;
     }
-    colBufferShape.push_back(
-        filterShapeType.getShape()[op.getNumSpatialDimensions()]);
+    colBufferShape.push_back(filterShapeType.getShape()[numSpatialDims]);
 
     auto ColBufferMemrefType =
         MemRefType::get(colBufferShape, filterShapeType.getElementType());
 
-    Value result = rewriter.create<AllocaOp>(loc, ColBufferMemrefType);
+    Value result = rewriter.create<memref::AllocaOp>(loc, ColBufferMemrefType);
 
     // (n, d1, d2, d3, ..., dn, k1, k2, k3, ...kn, ci) ->
     // (n, d_1 * stride_1 + k_1, d_2 * stride_2 + k_2, ...d_n * stride_n + k_n,
@@ -102,14 +109,14 @@ class ConvImg2ColMatmulConversion : public OpRewritePattern<linalg::ConvOp> {
     SmallVector<AffineExpr, 4> inputExprs;
     inputExprs.push_back(rewriter.getAffineDimExpr(0));
     int spatialDimsOffset = 1;
-    auto kernelDimsOffset = spatialDimsOffset + op.getNumSpatialDimensions();
-    for (int i = 0; i < op.getNumSpatialDimensions(); ++i) {
+    auto kernelDimsOffset = spatialDimsOffset + numSpatialDims;
+    for (unsigned i = 0; i < numSpatialDims; ++i) {
       inputExprs.push_back(rewriter.getAffineDimExpr(i + spatialDimsOffset) *
-                               op.getStride(i) +
+                               op.strides().getValue<int64_t>({i}) +
                            rewriter.getAffineDimExpr(i + kernelDimsOffset));
     }
-    inputExprs.push_back(rewriter.getAffineDimExpr(
-        kernelDimsOffset + op.getNumSpatialDimensions()));
+    inputExprs.push_back(
+        rewriter.getAffineDimExpr(kernelDimsOffset + numSpatialDims));
 
     auto nloops = colBufferShape.size();
 
@@ -123,8 +130,7 @@ class ConvImg2ColMatmulConversion : public OpRewritePattern<linalg::ConvOp> {
 
     rewriter.create<linalg::GenericOp>(
         loc, /*resultTensorTypes=*/ArrayRef<Type>{},
-        /*inputs=*/op.input(), /*outputs=*/result, indexingMaps,
-        loopAttributeTypes,
+        /*inputs=*/input, /*outputs=*/result, indexingMaps, loopAttributeTypes,
         [&](OpBuilder &nestedBuilder, Location nestedLoc, ValueRange args) {
           nestedBuilder.create<linalg::YieldOp>(nestedLoc, args[0]);
         });
@@ -134,27 +140,20 @@ class ConvImg2ColMatmulConversion : public OpRewritePattern<linalg::ConvOp> {
     };
 
     SmallVector<linalg::ReassociationIndices, 4> lhsCollapsedDimsList = {
+        getIndicesVector(0, numBatchDims + numSpatialDims),
         getIndicesVector(
-            0, op.getNumBatchDimensions() + op.getNumSpatialDimensions()),
-        getIndicesVector(
-            op.getNumBatchDimensions() + op.getNumSpatialDimensions(),
-            op.getNumBatchDimensions() + op.getNumSpatialDimensions() * 2 +
-                op.getNumInputFeatureDimensions())};
+            numBatchDims + numSpatialDims,
+            numBatchDims + numSpatialDims * 2 + numInputFeatureDims)};
     SmallVector<linalg::ReassociationIndices, 4> rhsCollapsedDimsList = {
-        getIndicesVector(0, op.getNumSpatialDimensions() +
-                                op.getNumInputFeatureDimensions()),
+        getIndicesVector(0, numSpatialDims + numInputFeatureDims),
         getIndicesVector(
-            op.getNumSpatialDimensions() + op.getNumInputFeatureDimensions(),
-            op.getNumSpatialDimensions() + op.getNumInputFeatureDimensions() +
-                op.getNumOutputFeatureDimensions())};
+            numSpatialDims + numInputFeatureDims,
+            numSpatialDims + numInputFeatureDims + numOutputFeatureDims)};
 
     SmallVector<linalg::ReassociationIndices, 4> resultCollapsedDimsList = {
-        getIndicesVector(
-            0, op.getNumBatchDimensions() + op.getNumSpatialDimensions()),
-        getIndicesVector(
-            op.getNumBatchDimensions() + op.getNumSpatialDimensions(),
-            op.getNumBatchDimensions() + op.getNumSpatialDimensions() +
-                op.getNumOutputFeatureDimensions())};
+        getIndicesVector(0, numBatchDims + numSpatialDims),
+        getIndicesVector(numBatchDims + numSpatialDims,
+                         numBatchDims + numSpatialDims + numOutputFeatureDims)};
 
     auto reshapedColBufferType =
         MemRefType::get({spatialSize, filterSpatialSize * inputFeatures},
@@ -171,10 +170,10 @@ class ConvImg2ColMatmulConversion : public OpRewritePattern<linalg::ConvOp> {
         loc, reshapedColBufferType, result, lhsCollapsedDimsList);
 
     Value reshapedRhs = rewriter.create<linalg::ReshapeOp>(
-        loc, reshapedfilterType, op.filter(), rhsCollapsedDimsList);
+        loc, reshapedfilterType, filter, rhsCollapsedDimsList);
 
     Value reshapedResult = rewriter.create<linalg::ReshapeOp>(
-        loc, reshapedOutputType, op.output(), resultCollapsedDimsList);
+        loc, reshapedOutputType, output, resultCollapsedDimsList);
 
     rewriter.create<linalg::MatmulOp>(
         loc, ArrayRef<Value>{reshapedLhs, reshapedRhs}, reshapedResult);
@@ -187,7 +186,7 @@ class ConvImg2ColMatmulConversion : public OpRewritePattern<linalg::ConvOp> {
 struct ConvImg2ColMatmulConversionPass
     : PassWrapper<ConvImg2ColMatmulConversionPass, FunctionPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<linalg::LinalgDialect>();
+    registry.insert<linalg::LinalgDialect, memref::MemRefDialect>();
   }
   void runOnFunction() override;
 };
@@ -201,9 +200,9 @@ void populateConvImg2ColMatmulConversionPatterns(
 void ConvImg2ColMatmulConversionPass::runOnFunction() {
   auto funcOp = getOperation();
   auto context = funcOp.getContext();
-  OwningRewritePatternList patterns;
+  OwningRewritePatternList patterns(&getContext());
   populateConvImg2ColMatmulConversionPatterns(context, patterns);
-  applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
+  (void)applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
 }
 
 std::unique_ptr<FunctionPass> createConvImg2ColMatmulConversionPass() {
@@ -212,7 +211,8 @@ std::unique_ptr<FunctionPass> createConvImg2ColMatmulConversionPass() {
 
 static PassRegistration<ConvImg2ColMatmulConversionPass> pass(
     "iree-codegen-linalg-to-llvm-conv-img2col-conversion-pass",
-    "Convert linalg.conv on to img2col followd by linalg.matmul.",
+    "Convert linalg.conv_2d_input_nhwc_filter_hwcf on to img2col followd by "
+    "linalg.matmul.",
     [] { return std::make_unique<ConvImg2ColMatmulConversionPass>(); });
 }  // namespace iree_compiler
 }  // namespace mlir

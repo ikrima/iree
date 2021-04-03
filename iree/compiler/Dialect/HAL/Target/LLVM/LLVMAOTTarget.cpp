@@ -16,10 +16,11 @@
 
 #include <cstdlib>
 
-#include "iree/compiler/Conversion/CodegenUtils/GetNumWorkgroups.h"
 #include "iree/compiler/Conversion/Common/Attributes.h"
+#include "iree/compiler/Conversion/LinalgToLLVM/LLVMCodeGenOptions.h"
 #include "iree/compiler/Conversion/LinalgToLLVM/Passes.h"
 #include "iree/compiler/Dialect/HAL/Target/LLVM/LLVMIRPasses.h"
+#include "iree/compiler/Dialect/HAL/Target/LLVM/LibraryBuilder.h"
 #include "iree/compiler/Dialect/HAL/Target/LLVM/LinkerTool.h"
 #include "iree/compiler/Dialect/HAL/Target/TargetRegistry.h"
 #include "iree/compiler/Utils/FlatbufferUtils.h"
@@ -29,7 +30,8 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/TargetSelect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Target/LLVMIR.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Export.h"
 
 namespace mlir {
 namespace iree_compiler {
@@ -37,44 +39,6 @@ namespace IREE {
 namespace HAL {
 
 namespace {
-
-// Destructively merges |sourceModuleOp| into |targetModuleOp|.
-// |targetSymbolTable| is updated with the new symbols.
-void mergeModuleInto(mlir::ModuleOp sourceModuleOp,
-                     mlir::ModuleOp targetModuleOp,
-                     DenseMap<StringRef, Operation *> &targetSymbolMap) {
-  auto allOps = llvm::to_vector<8>(llvm::map_range(
-      *sourceModuleOp.getBody(), [&](Operation &op) { return &op; }));
-  for (auto &op : allOps) {
-    if (op->isKnownTerminator()) continue;
-    if (auto symbolInterface = dyn_cast<SymbolOpInterface>(op)) {
-      if (targetSymbolMap.count(symbolInterface.getName())) {
-        // TODO(scotttodd): compare ops to ensure we aren't copying different
-        // things with the same name.
-        continue;
-      }
-      targetSymbolMap[symbolInterface.getName()] = op;
-    }
-    op->moveBefore(&targetModuleOp.getBody()->back());
-  }
-
-  // Now that we're done cloning its ops, delete the original target op.
-  sourceModuleOp.erase();
-}
-
-// Replaces each usage of an entry point with its original symbol name with a
-// new symbol name.
-void replaceEntryPointUses(mlir::ModuleOp moduleOp,
-                           const DenseMap<Attribute, Attribute> &replacements) {
-  for (auto funcOp : moduleOp.getOps<mlir::FuncOp>()) {
-    funcOp.walk([&](IREE::HAL::CommandBufferDispatchSymbolOp dispatchOp) {
-      auto it = replacements.find(dispatchOp.entry_point());
-      if (it != replacements.end()) {
-        dispatchOp.entry_pointAttr(it->second.cast<SymbolRefAttr>());
-      }
-    });
-  }
-}
 
 llvm::Optional<FileLineColLoc> findFirstFileLoc(Location baseLoc) {
   if (auto loc = baseLoc.dyn_cast<FusedLoc>()) {
@@ -109,16 +73,65 @@ class LLVMAOTTargetBackend final : public TargetBackend {
 
   // NOTE: we could vary these based on the options, such as by arch/etc.
   std::string name() const override { return "llvm_aot"; }
-  std::string filter_pattern() const override { return "dylib*"; }
+  std::string filter_pattern() const override {
+    llvm::Triple targetTriple(options_.targetTriple);
+    if (targetTriple.isWasm()) {
+      return "wasm*";
+    } else {
+      return "dylib*";
+    }
+  }
 
   void buildTranslationPassPipeline(OpPassManager &passManager) override {
-    buildLLVMTransformPassPipeline(passManager);
+    auto codeGenOptions = getLLVMCodegenOptionsFromClOptions();
+    // Set target specific options.
+    // TODO(ataei): This is temporary here, should move when target specific
+    // overrides options grows.
+    llvm::Triple triple(options_.targetTriple);
+    if (triple.isWasm()) {
+      // WebAssembly does not (yet) support FMA ops natively, so unfuse them.
+      codeGenOptions.unfuseFMAOps = true;
+    }
+    buildLLVMTransformPassPipeline(passManager, codeGenOptions);
   }
 
   LogicalResult linkExecutables(mlir::ModuleOp moduleOp) override {
+    mlir::registerLLVMDialectTranslation(*moduleOp->getContext());
+
     OpBuilder builder = OpBuilder::atBlockBegin(moduleOp.getBody());
-    auto executableOps =
+
+    auto sourceExecutableOps =
         llvm::to_vector<8>(moduleOp.getOps<IREE::HAL::ExecutableOp>());
+    if (sourceExecutableOps.size() <= 1) return success();
+
+    // Private symbols (i.e. llvm dialect private symbols) get deduped
+    // incorrectly by the link executables pass even though they should be
+    // treated as different symbols. For now just change the names of the
+    // private symbols to avoid conflicts.
+    unsigned moduleNumber = 0;
+    for (auto sourceExecutableOp : enumerate(sourceExecutableOps)) {
+      auto targetOps = llvm::to_vector<4>(
+          sourceExecutableOp.value().getOps<IREE::HAL::ExecutableTargetOp>());
+      for (auto targetOp : targetOps) {
+        if (!matchPattern(targetOp.target_backend_filter(), filter_pattern())) {
+          continue;
+        }
+
+        auto sourceModuleOp = targetOp.getInnerModule();
+        for (auto globalOp : sourceModuleOp.getOps<LLVM::GlobalOp>()) {
+          if (globalOp.linkage() != LLVM::Linkage::Private) {
+            continue;
+          }
+          auto disambiguateName =
+              llvm::formatv("{0}_{1}", globalOp.sym_name(), moduleNumber).str();
+          SymbolTableCollection symbolTable;
+          SymbolUserMap symbolUsers(symbolTable, sourceModuleOp);
+          symbolUsers.replaceAllUsesWith(globalOp, disambiguateName);
+          SymbolTable::setSymbolName(globalOp, disambiguateName);
+        }
+        moduleNumber++;
+      }
+    }
 
     // Guess a module name, if needed, to make the output files readable.
     auto moduleName = guessModuleName(moduleOp);
@@ -128,172 +141,20 @@ class LLVMAOTTargetBackend final : public TargetBackend {
         llvm::formatv("{0}_linked_{1}", moduleName, name());
     auto linkedExecutableOp = builder.create<IREE::HAL::ExecutableOp>(
         moduleOp.getLoc(), linkedExecutableName);
-    linkedExecutableOp.setPrivate();
+    linkedExecutableOp.setVisibility(
+        sourceExecutableOps.front().getVisibility());
+
     // Add our hal.executable.target with an empty module.
     builder.setInsertionPointToStart(linkedExecutableOp.getBody());
     auto linkedTargetOp = builder.create<IREE::HAL::ExecutableTargetOp>(
         moduleOp.getLoc(), name(), filter_pattern());
     builder.setInsertionPoint(&linkedTargetOp.getBlock().back());
-    auto linkedModuleOp = builder.create<ModuleOp>(moduleOp.getLoc());
+    builder.create<ModuleOp>(moduleOp.getLoc());
 
-    llvm::SmallVector<IREE::HAL::InterfaceOp, 4> interfaceOps;
-    int nextEntryPointOrdinal = 0;
-    DenseMap<StringRef, Operation *> symbolMap;
-    DenseMap<Attribute, Attribute> entryPointRefReplacements;
-    auto linkedExecutableBuilder =
-        OpBuilder::atBlockBegin(linkedExecutableOp.getBody());
-    auto linkedTargetBuilder =
-        OpBuilder::atBlockBegin(linkedTargetOp.getBody());
-    for (auto executableOp : executableOps) {
-      auto targetOps = llvm::to_vector<4>(
-          executableOp.getOps<IREE::HAL::ExecutableTargetOp>());
-      for (auto targetOp : targetOps) {
-        // Only process targets matching our pattern.
-        if (!matchPattern(targetOp.target_backend_filter(), filter_pattern())) {
-          continue;
-        }
-
-        IREE::HAL::InterfaceOp interfaceOpForExecutable;
-        for (auto interfaceOp : interfaceOps) {
-          if (interfaceOp.isEquivalentTo(executableOp.getFirstInterfaceOp())) {
-            interfaceOpForExecutable = interfaceOp;
-            break;
-          }
-        }
-        if (!interfaceOpForExecutable) {
-          interfaceOpForExecutable =
-              dyn_cast<IREE::HAL::InterfaceOp>(linkedExecutableBuilder.clone(
-                  *executableOp.getFirstInterfaceOp()));
-          interfaceOpForExecutable.setName(
-              llvm::formatv("legacy_io_{0}", interfaceOps.size()).str());
-          interfaceOps.push_back(interfaceOpForExecutable);
-        }
-
-        // Clone entry point ops and queue remapping ordinals and updating
-        // symbol refs.
-        for (auto entryPointOp :
-             targetOp.getOps<IREE::HAL::ExecutableEntryPointOp>()) {
-          auto newEntryPointOp =
-              linkedTargetBuilder.create<IREE::HAL::ExecutableEntryPointOp>(
-                  entryPointOp.getLoc(), entryPointOp.sym_nameAttr(),
-                  builder.getI32IntegerAttr(nextEntryPointOrdinal++),
-                  builder.getSymbolRefAttr(interfaceOpForExecutable.getName()),
-                  entryPointOp.signatureAttr(), ArrayAttr{});
-
-          // Add to replacement table for fixing up dispatch calls referencing
-          // this entry point.
-          auto oldSymbolRefAttr = builder.getSymbolRefAttr(
-              executableOp.getName(), {builder.getSymbolRefAttr(targetOp),
-                                       builder.getSymbolRefAttr(entryPointOp)});
-          auto newSymbolRefAttr = builder.getSymbolRefAttr(
-              linkedExecutableOp.getName(),
-              {builder.getSymbolRefAttr(linkedTargetOp),
-               builder.getSymbolRefAttr(newEntryPointOp)});
-          entryPointRefReplacements[oldSymbolRefAttr] = newSymbolRefAttr;
-        }
-
-        mergeModuleInto(targetOp.getInnerModule(), linkedModuleOp, symbolMap);
-
-        targetOp.erase();
-      }
-
-      if (executableOp.getOps<IREE::HAL::ExecutableTargetOp>().empty()) {
-        executableOp.erase();
-      }
-    }
-
-    // Update references to @executable::@target::@entry symbols.
-    replaceEntryPointUses(moduleOp, entryPointRefReplacements);
-
-    // Remove if we didn't add anything.
-    if (linkedTargetOp.getOps<IREE::HAL::ExecutableEntryPointOp>().empty()) {
-      linkedTargetOp.erase();
-      linkedExecutableOp.erase();
-    }
-
-    return success();
-  }
-
-  LogicalResult recordDispatch(Location loc, DispatchState dispatchState,
-                               DeviceSwitchRewriter &switchRewriter) override {
-    // TODO(#4140): remove this legacy path when linalg-on-tensors is used.
-    // In the linalg-on-tensors world where we are performing the tiling logic
-    // in the flow dialect we don't even really need the ability to override
-    // dispatch recording at all - just a way to allow targets to map workgroup
-    // counts from the N-dimensional flow workgroup counts to the 3D hal counts.
-    if (dispatchState.workgroupCount.size() == 3) {
-      return TargetBackend::recordDispatch(loc, dispatchState, switchRewriter);
-    }
-
-    IREE::HAL::ExecutableOp executableOp = dispatchState.executableOp;
-    ModuleOp llvmIRModuleOp;
-    for (auto executableTargetOp :
-         executableOp.getBlock().getOps<IREE::HAL::ExecutableTargetOp>()) {
-      if (matchPattern(executableTargetOp.target_backend_filter(),
-                       filter_pattern())) {
-        ModuleOp innerModuleOp = executableTargetOp.getInnerModule();
-        llvmIRModuleOp = innerModuleOp;
-        break;
-      }
-    }
-    if (!llvmIRModuleOp)
-      return executableOp.emitError("unable to find executable llvmIR module");
-
-    SmallVector<LLVM::LLVMFuncOp, 2> entryPointFns;
-    for (LLVM::LLVMFuncOp funcOp : llvmIRModuleOp.getOps<LLVM::LLVMFuncOp>()) {
-      if (funcOp.isPublic()) {
-        entryPointFns.push_back(funcOp);
-      }
-    }
-
-    auto *region = switchRewriter.addConditionRegion(
-        IREE::HAL::DeviceMatchIDAttr::get(filter_pattern(), loc.getContext()),
-        {
-            dispatchState.workgroupCount[0],
-            dispatchState.commandBuffer,
-        });
-    auto &entryBlock = region->front();
-    ConversionPatternRewriter &rewriter = switchRewriter.getRewriter();
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPointToEnd(&entryBlock);
-
-    auto commandBuffer = entryBlock.getArgument(1);
-    for (auto it : llvm::enumerate(entryPointFns)) {
-      LLVM::LLVMFuncOp funcOp = it.value();
-      FlatSymbolRefAttr numWorkgroupsFnAttr =
-          funcOp->getAttrOfType<FlatSymbolRefAttr>(
-              getNumWorkgroupsFnAttrName());
-      if (!numWorkgroupsFnAttr) {
-        return funcOp.emitError("expected llvm.num_workgroups_fn ");
-      }
-      std::array<Value, 3> workgroupCount = {nullptr, nullptr, nullptr};
-      FuncOp numWorkgroupsFn = dyn_cast<FuncOp>(SymbolTable::lookupSymbolIn(
-          funcOp->getParentOfType<ModuleOp>(), numWorkgroupsFnAttr));
-      if (!numWorkgroupsFn) {
-        return funcOp.emitError("unable to find function ")
-               << numWorkgroupsFnAttr
-               << " that computes the number of workgroups to use";
-      }
-      workgroupCount =
-          iree_compiler::calculateWorkgroupCountFromNumWorkgroupsFn(
-              loc, numWorkgroupsFn,
-              dispatchState.executableOp.getFirstInterfaceOp(),
-              dispatchState.operands, dispatchState.results, rewriter);
-
-      if (llvm::any_of(workgroupCount,
-                       [](Value v) -> bool { return v == nullptr; })) {
-        auto constantOne = rewriter.createOrFold<mlir::ConstantIndexOp>(loc, 1);
-        rewriter.create<IREE::HAL::CommandBufferDispatchSymbolOp>(
-            loc, commandBuffer, dispatchState.entryPointOp, constantOne,
-            constantOne, constantOne);
-      } else {
-        rewriter.create<IREE::HAL::CommandBufferDispatchSymbolOp>(
-            loc, commandBuffer, dispatchState.entryPointOp, workgroupCount[0],
-            workgroupCount[1], workgroupCount[2]);
-      }
-    }
-    rewriter.create<IREE::HAL::ReturnOp>(loc);
-    return success();
+    // Try linking together all executables in moduleOp.
+    return linkExecutablesInto(
+        moduleOp, sourceExecutableOps, linkedExecutableOp, linkedTargetOp,
+        [](mlir::ModuleOp moduleOp) { return moduleOp; }, builder);
   }
 
   LogicalResult serializeExecutable(IREE::HAL::ExecutableTargetOp targetOp,
@@ -309,15 +170,9 @@ class LLVMAOTTargetBackend final : public TargetBackend {
     auto libraryName =
         targetOp->getParentOfType<IREE::HAL::ExecutableOp>().getName().str();
 
-    // TODO(#3737): don't add functions we don't want to serialize to the
-    // module. Right now workgroup count calculation functions end up in here
-    // as std.func ops and not just the llvm.func ops we expect.
-    auto illegalFuncOps =
-        llvm::to_vector<4>(targetOp.getInnerModule().getOps<FuncOp>());
-    for (auto funcOp : illegalFuncOps) {
-      funcOp.erase();
-    }
-
+    // Specialize the module to the target triple.
+    // The executable will have been cloned into other ExecutableTargetOps for
+    // other triples so it's fine to mutate in-place.
     llvm::Triple targetTriple(options_.targetTriple);
     targetOp.getInnerModule()->setAttr(
         LLVM::LLVMDialect::getTargetTripleAttrName(),
@@ -332,6 +187,53 @@ class LLVMAOTTargetBackend final : public TargetBackend {
                                      "dialect to the native llvm::Module";
     }
 
+    // Configure the functions in the module. This may override defaults set
+    // during the MLIR->LLVM conversion.
+    for (auto &func : *llvmModule) {
+      // Enable frame pointers to ensure that stack unwinding works, e.g. in
+      // Tracy. In principle this could also be achieved by enabling unwind
+      // tables, but we tried that and that didn't work in Tracy (which uses
+      // libbacktrace), while enabling frame pointers worked.
+      // https://github.com/google/iree/issues/3957
+      func.addFnAttr("frame-pointer", "all");
+
+      // -ffreestanding-like behavior.
+      func.addFnAttr("no-builtins");
+    }
+
+    // Build the IREE HAL executable library metadata. The runtime uses this to
+    // find the entry point functions and their information.
+    LibraryBuilder libraryBuilder(
+        llvmModule.get(), LibraryBuilder::Mode::INCLUDE_REFLECTION_ATTRS,
+        LibraryBuilder::Version::V_0);
+    switch (options_.sanitizerKind) {
+      case SanitizerKind::kNone: {
+        libraryBuilder.setSanitizerKind(LibraryBuilder::SanitizerKind::NONE);
+        break;
+      }
+      case SanitizerKind::kAddress: {
+        libraryBuilder.setSanitizerKind(LibraryBuilder::SanitizerKind::ADDRESS);
+        for (auto &function : llvmModule->getFunctionList()) {
+          function.addFnAttr(llvm::Attribute::SanitizeAddress);
+        }
+      } break;
+    }
+    for (auto entryPointOp :
+         targetOp.getBlock().getOps<ExecutableEntryPointOp>()) {
+      auto *llvmFunc = llvmModule->getFunction(entryPointOp.getName());
+      llvmFunc->setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
+      llvmFunc->setDSOLocal(true);
+      libraryBuilder.addEntryPoint(entryPointOp.getName(), "", llvmFunc);
+    }
+    auto *queryLibraryFunc =
+        libraryBuilder.build("iree_hal_executable_library_query");
+
+    // The query function must be exported for dynamic libraries.
+    queryLibraryFunc->setVisibility(
+        llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
+    queryLibraryFunc->setLinkage(
+        llvm::GlobalValue::LinkageTypes::ExternalLinkage);
+
     // Try to grab a linker tool based on the options (and target environment).
     auto linkerTool = LinkerTool::getForTarget(targetTriple, options_);
     if (!linkerTool) {
@@ -342,11 +244,8 @@ class LLVMAOTTargetBackend final : public TargetBackend {
 
     // Configure the module with any code generation options required later by
     // linking (such as initializer functions).
-    auto entryPointNames = llvm::to_vector<8>(
-        llvm::map_range(targetOp.getBlock().getOps<ExecutableEntryPointOp>(),
-                        [&](auto op) { return op.getName(); }));
-    if (failed(
-            linkerTool->configureModule(llvmModule.get(), entryPointNames))) {
+    if (failed(linkerTool->configureModule(llvmModule.get(),
+                                           {queryLibraryFunc}))) {
       return targetOp.emitError()
              << "failed to configure LLVM module for target linker";
     }
@@ -429,14 +328,7 @@ class LLVMAOTTargetBackend final : public TargetBackend {
                                   << linkArtifacts.libraryFile.path;
     }
 
-    // Entry point names up from.
-    // TODO(#3580): these won't be needed in the executable_library world.
-    auto entryPointsRef = builder.createStringVec(llvm::map_range(
-        targetOp.getBlock().getOps<ExecutableEntryPointOp>(),
-        [&](ExecutableEntryPointOp op) { return op.getName(); }));
-
     iree_DyLibExecutableDef_start_as_root(builder);
-    iree_DyLibExecutableDef_entry_points_add(builder, entryPointsRef);
     iree_DyLibExecutableDef_library_embedded_add(builder, libraryEmbeddedRef);
     iree_DyLibExecutableDef_debug_database_filename_add(
         builder, debugDatabaseFilenameRef);
@@ -444,10 +336,14 @@ class LLVMAOTTargetBackend final : public TargetBackend {
                                                         debugDatabaseRef);
     iree_DyLibExecutableDef_end_as_root(builder);
 
+    uint32_t executableFormat =
+        targetTriple.isWasm()
+            ? static_cast<uint32_t>(IREE::HAL::ExecutableFormat::WASM)
+            : static_cast<uint32_t>(IREE::HAL::ExecutableFormat::DyLib);
+
     // Add the binary data to the target executable.
     executableBuilder.create<IREE::HAL::ExecutableBinaryOp>(
-        targetOp.getLoc(),
-        static_cast<uint32_t>(IREE::HAL::ExecutableFormat::DyLib),
+        targetOp.getLoc(), targetOp.sym_name(), executableFormat,
         builder.getBufferAttr(executableBuilder.getContext()));
     return success();
   }
@@ -459,19 +355,27 @@ class LLVMAOTTargetBackend final : public TargetBackend {
 void registerLLVMAOTTargetBackends(
     std::function<LLVMTargetOptions()> queryOptions) {
   getLLVMTargetOptionsFromFlags();
-  static TargetBackendRegistration registration("dylib-llvm-aot", [=]() {
+
 #define INIT_LLVM_TARGET(TargetName)        \
   LLVMInitialize##TargetName##Target();     \
   LLVMInitialize##TargetName##TargetMC();   \
   LLVMInitialize##TargetName##TargetInfo(); \
   LLVMInitialize##TargetName##AsmPrinter(); \
   LLVMInitialize##TargetName##AsmParser();
+
+  static TargetBackendRegistration dylibRegistration("dylib-llvm-aot", [=]() {
     INIT_LLVM_TARGET(X86)
     INIT_LLVM_TARGET(ARM)
     INIT_LLVM_TARGET(AArch64)
     INIT_LLVM_TARGET(RISCV)
     return std::make_unique<LLVMAOTTargetBackend>(queryOptions());
   });
+  static TargetBackendRegistration wasmRegistration("wasm-llvm-aot", [=]() {
+    INIT_LLVM_TARGET(WebAssembly)
+    return std::make_unique<LLVMAOTTargetBackend>(queryOptions());
+  });
+
+#undef INIT_LLVM_TARGET
 }
 
 }  // namespace HAL

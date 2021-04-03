@@ -21,6 +21,8 @@ package(
 cc_library(
     name = "Transforms",
     srcs = [
+        "BenchmarkBatchDispatches.cpp",
+        "CSEVariableLoads.cpp",
         "ConvertToHAL.cpp",
         "IdentifyConstantPools.cpp",
         "InlineDeviceSwitches.cpp",
@@ -41,7 +43,7 @@ cc_library(
         "Passes.h",
     ],
     deps = [
-        "//iree/base:signature_mangle",
+        "//iree/compiler/Bindings/SIP/Utils",
         "//iree/compiler/Dialect/Flow/IR",
         "//iree/compiler/Dialect/HAL/Conversion",
         "//iree/compiler/Dialect/HAL/Conversion/FlowToHAL",
@@ -57,12 +59,13 @@ cc_library(
         "//iree/compiler/Dialect/IREE/Transforms",
         "//iree/compiler/Dialect/Shape/IR",
         "//iree/compiler/Dialect/Shape/Transforms",
-        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AffineToStandard",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:StandardOps",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
+        "@mlir-hlo//:hlo",
     ],
 )

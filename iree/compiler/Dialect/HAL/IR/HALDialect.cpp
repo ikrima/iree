@@ -93,15 +93,8 @@ HALDialect::HALDialect(MLIRContext *context)
   context->loadDialect<IREEDialect>();
 
   addInterfaces<HALInlinerInterface, HALToVMConversionInterface>();
-
-  addAttributes<BufferConstraintsAttr, ByteRangeAttr,
-                DescriptorSetLayoutBindingAttr, MatchAlwaysAttr, MatchAnyAttr,
-                MatchAllAttr, DeviceMatchIDAttr, DeviceMatchMemoryModelAttr>();
-
-  addTypes<AllocatorType, BufferType, BufferViewType, CommandBufferType,
-           DescriptorSetType, DescriptorSetLayoutType, DeviceType, EventType,
-           ExecutableType, ExecutableCacheType, ExecutableLayoutType,
-           RingBufferType, SemaphoreType>();
+  registerAttributes();
+  registerTypes();
 
 #define GET_OP_LIST
   addOperations<
@@ -168,7 +161,6 @@ Type HALDialect::parseType(DialectAsmParser &parser) const {
           .Case("device", DeviceType::get(getContext()))
           .Case("event", EventType::get(getContext()))
           .Case("executable", ExecutableType::get(getContext()))
-          .Case("executable_cache", ExecutableCacheType::get(getContext()))
           .Case("executable_layout", ExecutableLayoutType::get(getContext()))
           .Case("ring_buffer", RingBufferType::get(getContext()))
           .Case("semaphore", SemaphoreType::get(getContext()))
@@ -199,8 +191,6 @@ void HALDialect::printType(Type type, DialectAsmPrinter &p) const {
     p << "event";
   } else if (type.isa<ExecutableType>()) {
     p << "executable";
-  } else if (type.isa<ExecutableCacheType>()) {
-    p << "executable_cache";
   } else if (type.isa<ExecutableLayoutType>()) {
     p << "executable_layout";
   } else if (type.isa<RingBufferType>()) {

@@ -39,7 +39,8 @@ namespace iree_compiler {
 namespace IREE {
 namespace HAL {
 
-#include "iree/compiler/Dialect/HAL/IR/HALOpInterface.h.inc"
+#include "iree/compiler/Dialect/HAL/IR/HALOpInterfaces.h.inc"
+#include "iree/compiler/Dialect/HAL/IR/HALTypeInterfaces.h.inc"
 
 //===----------------------------------------------------------------------===//
 // Enum utilities
@@ -54,9 +55,17 @@ IntegerAttr getElementTypeAttr(Type type);
 
 // Returns the total bit count of elements of the given type.
 size_t getElementBitCount(IntegerAttr elementType);
+Value getElementBitCount(Location loc, Value elementType, OpBuilder &builder);
 
 // Returns the rounded-up byte count of elements of the given type.
 size_t getElementByteCount(IntegerAttr elementType);
+Value getElementByteCount(Location loc, Value elementType, OpBuilder &builder);
+
+template <typename T>
+inline bool allEnumBitsSet(T value, T required) {
+  return (static_cast<uint32_t>(value) & static_cast<uint32_t>(required)) ==
+         static_cast<uint32_t>(required);
+}
 
 //===----------------------------------------------------------------------===//
 // Object types
@@ -67,15 +76,20 @@ class AllocatorType : public Type::TypeBase<AllocatorType, Type, TypeStorage> {
   using Base::Base;
 };
 
-class BufferType : public Type::TypeBase<BufferType, Type, TypeStorage> {
+class BufferType : public Type::TypeBase<BufferType, Type, TypeStorage,
+                                         InferTypeSizeInterface::Trait> {
  public:
   using Base::Base;
+
+  Value inferSizeFromValue(Location loc, Value value, OpBuilder &builder) const;
 };
 
-class BufferViewType
-    : public Type::TypeBase<BufferViewType, Type, TypeStorage> {
+class BufferViewType : public Type::TypeBase<BufferViewType, Type, TypeStorage,
+                                             InferTypeSizeInterface::Trait> {
  public:
   using Base::Base;
+
+  Value inferSizeFromValue(Location loc, Value value, OpBuilder &builder) const;
 };
 
 class CommandBufferType
@@ -108,12 +122,6 @@ class EventType : public Type::TypeBase<EventType, Type, TypeStorage> {
 
 class ExecutableType
     : public Type::TypeBase<ExecutableType, Type, TypeStorage> {
- public:
-  using Base::Base;
-};
-
-class ExecutableCacheType
-    : public Type::TypeBase<ExecutableCacheType, Type, TypeStorage> {
  public:
   using Base::Base;
 };
@@ -161,32 +169,9 @@ class BufferConstraintsAdaptor {
   BufferConstraintsAttr bufferConstraints_;
 };
 
-class BufferBarrierType {
- public:
-  static TupleType get(MLIRContext *context) {
-    return TupleType::get(context, {
-                                       IntegerType::get(context, 32),
-                                       IntegerType::get(context, 32),
-                                       BufferType::get(context),
-                                       IndexType::get(context),
-                                       IndexType::get(context),
-                                   });
-  }
-};
-
-class MemoryBarrierType {
- public:
-  static TupleType get(MLIRContext *context) {
-    return TupleType::get(context, {
-                                       IntegerType::get(context, 32),
-                                       IntegerType::get(context, 32),
-                                   });
-  }
-};
-
 // A tuple containing runtime values for a descriptor set binding:
 // <binding ordinal, hal.buffer, buffer byte offset, buffer byte length>
-using DescriptorSetBindingValue = std::tuple<uint32_t, Value, Value, Value>;
+using DescriptorSetBindingValue = std::tuple<Value, Value, Value, Value>;
 
 }  // namespace HAL
 }  // namespace IREE

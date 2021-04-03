@@ -13,15 +13,16 @@
 // limitations under the License.
 
 #include "iree/compiler/Conversion/CodegenUtils/FunctionUtils.h"
-#include "iree/compiler/Conversion/CodegenUtils/GetNumWorkgroups.h"
 #include "iree/compiler/Conversion/CodegenUtils/MarkerUtils.h"
-#include "iree/compiler/Conversion/CodegenUtils/MatmulCodegenStrategy.h"
 #include "iree/compiler/Conversion/Common/Attributes.h"
 #include "iree/compiler/Conversion/Common/Transforms.h"
 #include "iree/compiler/Conversion/LinalgToLLVM/KernelDispatch.h"
+#include "iree/compiler/Conversion/LinalgToLLVM/Passes.h"
 #include "iree/compiler/Dialect/HAL/IR/HALDialect.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
+#include "mlir/Dialect/Linalg/Transforms/CodegenStrategy.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
@@ -34,94 +35,23 @@ namespace mlir {
 namespace iree_compiler {
 
 namespace {
-struct LinalgTileAndDistributePass
-    : public PassWrapper<LinalgTileAndDistributePass, OperationPass<ModuleOp>> {
+class LinalgTileAndDistributePass
+    : public PassWrapper<LinalgTileAndDistributePass,
+                         OperationPass<IREE::HAL::ExecutableTargetOp>> {
+ public:
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<linalg::LinalgDialect, IREE::HAL::HALDialect, AffineDialect,
-                    scf::SCFDialect>();
+                    memref::MemRefDialect, scf::SCFDialect>();
   }
+
   LinalgTileAndDistributePass() = default;
   LinalgTileAndDistributePass(const LinalgTileAndDistributePass &pass) {}
   void runOnOperation() override;
 };
 }  // namespace
 
-namespace {
-template <typename LinalgOpTy>
-struct TileToCPUThreads : public linalg::LinalgBaseTilingPattern {
-  using Base = linalg::LinalgBaseTilingPattern;
-  TileToCPUThreads(MLIRContext *context,
-                   const linalg::LinalgDependenceGraph &dependenceGraph,
-                   const CPUKernelDispatch &cpuKernelDispatch,
-                   linalg::LinalgTilingOptions options,
-                   linalg::LinalgMarker marker, PatternBenefit benefit = 1)
-      : Base(LinalgOpTy::getOperationName(), context, options, marker, benefit),
-        cpuKernelDispatch(cpuKernelDispatch) {}
-
-  LogicalResult matchAndRewrite(Operation *op,
-                                PatternRewriter &rewriter) const override {
-    // Find the parent FuncOp before tiling. If tiling succeeds, the op will be
-    // erased.
-    FuncOp funcOp = op->getParentOfType<FuncOp>();
-    SmallVector<Value, 4> tensorResults;
-    if (!funcOp ||
-        failed(Base::matchAndRewriteBase(op, rewriter, tensorResults)) ||
-        !tensorResults.empty() ||
-        (funcOp->getAttr(getNumWorkgroupsFnAttrName()) &&
-         failed(createNumWorkgroupsFromResultShape(
-             rewriter, cast<linalg::LinalgOp>(op), funcOp,
-             getNumWorkgroupsFnAttrName(),
-             cpuKernelDispatch.getTileSizes<TilingLevel::WorkGroupTiles>(
-                 op))))) {
-      return failure();
-    }
-    rewriter.eraseOp(op);
-    return success();
-  }
-  CPUKernelDispatch cpuKernelDispatch;
-};
-
-template <typename LinalgOpTy>
-struct TileAndFuseToCPUThreads
-    : public linalg::LinalgTileAndFusePattern<LinalgOpTy> {
-  using Base = linalg::LinalgTileAndFusePattern<LinalgOpTy>;
-  TileAndFuseToCPUThreads(MLIRContext *context,
-                          const linalg::LinalgDependenceGraph &dependenceGraph,
-                          const CPUKernelDispatch &cpuKernelDispatch,
-                          linalg::LinalgTilingOptions tilingOptions,
-                          linalg::LinalgMarker marker,
-                          PatternBenefit benefit = 1)
-      : Base(context, dependenceGraph, tilingOptions,
-             linalg::LinalgFusionOptions().setIndicesToFuse({2}), marker,
-             marker,
-             linalg::LinalgMarker(ArrayRef<Identifier>(),
-                                  Identifier::get(getDeleteMarker(), context)),
-             benefit),
-        dependenceGraph(dependenceGraph),
-        cpuKernelDispatch(cpuKernelDispatch) {}
-
-  virtual LogicalResult matchAndRewrite(Operation *op,
-                                        PatternRewriter &rewriter) const {
-    FuncOp funcOp = op->getParentOfType<FuncOp>();
-    linalg::LinalgOp linalgOp = cast<linalg::LinalgOp>(op);
-    if (!funcOp || !dependenceGraph.hasDependentOperations(linalgOp) ||
-        failed(Base::matchAndRewrite(op, rewriter)) ||
-        failed(createNumWorkgroupsFromResultShape(
-            rewriter, cast<linalg::LinalgOp>(op), funcOp,
-            getNumWorkgroupsFnAttrName().str(),
-            cpuKernelDispatch.getTileSizes<TilingLevel::WorkGroupTiles>(op)))) {
-      return failure();
-    }
-    return success();
-  }
-
-  const linalg::LinalgDependenceGraph &dependenceGraph;
-  CPUKernelDispatch cpuKernelDispatch;
-};
-
-}  // namespace
-
-Optional<Value> allocateThreadLocalMemory(OpBuilder &b, SubViewOp subview,
+Optional<Value> allocateThreadLocalMemory(OpBuilder &b,
+                                          memref::SubViewOp subview,
                                           ArrayRef<Value> boundingSubViewSize,
                                           OperationFolder *folder) {
   // Allocate the memory into the entry block of the parent FuncOp. This better
@@ -145,53 +75,27 @@ Optional<Value> allocateThreadLocalMemory(OpBuilder &b, SubViewOp subview,
   if (llvm::any_of(shape, [](int64_t v) { return v == -1; })) return {};
   MemRefType allocType =
       MemRefType::get(shape, subview.getType().getElementType());
-  Value buffer = b.create<AllocaOp>(subview.getLoc(), allocType);
+  Value buffer = b.create<memref::AllocaOp>(subview.getLoc(), allocType);
   return buffer;
 }
 
 void LinalgTileAndDistributePass::runOnOperation() {
   MLIRContext *context = &getContext();
-  ModuleOp module = getOperation();
-
-  static linalg::LinalgLoopDistributionOptions workgroupDistributionOptions = {
-      [](OpBuilder &builder, Location loc, ArrayRef<Range> parallelLoopRanges) {
-        auto numParallelDims = parallelLoopRanges.size();
-        SmallVector<linalg::ProcInfo, 3> procInfo(numParallelDims);
-        for (size_t dim = 0;
-             dim < std::min(numParallelDims, static_cast<size_t>(3)); ++dim) {
-          procInfo[numParallelDims - dim - 1] = {
-              builder.createOrFold<IREE::HAL::InterfaceWorkgroupIDOp>(
-                  loc, builder.getIndexType(), APInt(64, dim)),
-              builder.createOrFold<IREE::HAL::InterfaceWorkgroupCountOp>(
-                  loc, builder.getIndexType(), APInt(64, dim)),
-          };
-        }
-        return procInfo;
-      },
-      {linalg::DistributionMethod::CyclicNumProcsEqNumIters,
-       linalg::DistributionMethod::CyclicNumProcsEqNumIters,
-       linalg::DistributionMethod::CyclicNumProcsEqNumIters}};
+  IREE::HAL::ExecutableTargetOp targetOp = getOperation();
+  ModuleOp module = targetOp.getInnerModule();
 
   for (FuncOp funcOp : module.getOps<FuncOp>()) {
     if (!isEntryPoint(funcOp)) continue;
 
-    Region &body = funcOp.getBody();
-    if (!llvm::hasSingleElement(body.getBlocks())) {
-      funcOp.emitError("unhandled dispatch function with multiple blocks");
+    SmallVector<linalg::LinalgOp, 4> linalgOps;
+    SmallVector<Operation *, 4> tiledLoops;
+    if (failed(getLinalgOps(funcOp, linalgOps, tiledLoops))) {
       return signalPassFailure();
     }
-    Block &block = body.front();
-    auto linalgOps = block.getOps<linalg::LinalgOp>();
-    if (linalgOps.empty()) continue;
-
-    SmallVector<linalg::LinalgOp, 4> linalgOpsVec =
-        llvm::to_vector<4>(llvm::map_range(linalgOps, [](Operation *op) {
-          return cast<linalg::LinalgOp>(op);
-        }));
     linalg::Aliases aliases;
-    linalg::LinalgDependenceGraph dependenceGraph(aliases, linalgOpsVec);
+    linalg::LinalgDependenceGraph dependenceGraph(aliases, linalgOps);
     Optional<LaunchConfig> launchConfigOpt =
-        initCPULaunchConfig(context, dependenceGraph, linalgOpsVec);
+        initCPULaunchConfig(context, dependenceGraph, linalgOps);
     if (!launchConfigOpt) {
       funcOp.emitError("unable to find launch configuration");
       return signalPassFailure();
@@ -215,18 +119,61 @@ void LinalgTileAndDistributePass::runOnOperation() {
       }
     });
 
+    linalg::LinalgLoopDistributionOptions workgroupDistributionOptions = {
+        [](OpBuilder &builder, Location loc,
+           ArrayRef<Range> parallelLoopRanges) {
+          auto numParallelDims = parallelLoopRanges.size();
+          SmallVector<linalg::ProcInfo, 3> procInfo(numParallelDims);
+          for (size_t dim = 0,
+                      e = std::min(numParallelDims, static_cast<size_t>(3));
+               dim < e; ++dim) {
+            procInfo[numParallelDims - dim - 1] = {
+                builder.createOrFold<IREE::HAL::InterfaceWorkgroupIDOp>(
+                    loc, builder.getIndexType(), APInt(64, dim)),
+                builder.createOrFold<IREE::HAL::InterfaceWorkgroupCountOp>(
+                    loc, builder.getIndexType(), APInt(64, dim)),
+            };
+          }
+          return procInfo;
+        },
+        {linalg::DistributionMethod::CyclicNumProcsEqNumIters,
+         linalg::DistributionMethod::CyclicNumProcsEqNumIters,
+         linalg::DistributionMethod::CyclicNumProcsEqNumIters}};
     TileAndFuseOptions tileAndFuseOptions = {workgroupDistributionOptions,
                                              allocateThreadLocalMemory};
-    if (failed(tileAndFuseLinalgBufferOps(funcOp, linalgOpsVec, dependenceGraph,
+    if (failed(tileAndFuseLinalgBufferOps(funcOp, linalgOps, dependenceGraph,
                                           launchConfig, tileAndFuseOptions))) {
       return signalPassFailure();
     }
-
+    // If the entry point op of the function isnt updated, set it to one since
+    // the op is going to be executed sequentially.
+    IREE::HAL::ExecutableEntryPointOp entryPoint = getEntryPoint(funcOp);
+    if (!entryPoint) {
+      funcOp.emitError("unable to find entry point for function");
+      return signalPassFailure();
+    }
+    if (entryPoint.workgroup_count_region().empty()) {
+      // Set the default number of workgroups to {1, 1, 1} since the op will be
+      // executed sequentially.
+      OpBuilder builder(funcOp.getContext());
+      if (failed(defineWorkgroupCountRegion(
+              builder, funcOp,
+              [](OpBuilder &b, Location loc,
+                 std::array<Value, 3> workload) -> std::array<Value, 3> {
+                Value one = b.create<ConstantIndexOp>(loc, 1);
+                return {one, one, one};
+              }))) {
+        funcOp.emitError(
+            "failed to set number of workgroups to {1, 1, 1} as fallback");
+        return signalPassFailure();
+      }
+    }
     launchConfig.finalize(funcOp);
   }
 }
 
-std::unique_ptr<OperationPass<ModuleOp>> createLinalgTileAndDistributePass() {
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createLinalgTileAndDistributePass() {
   return std::make_unique<LinalgTileAndDistributePass>();
 }
 

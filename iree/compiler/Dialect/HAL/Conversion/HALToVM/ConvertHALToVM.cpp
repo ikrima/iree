@@ -123,11 +123,11 @@ class ConvertHALToVMPass
     std::tie(outerModuleOp, innerModuleOp) =
         VMConversionTarget::nestModuleForConversion(getOperation());
 
-    appendImportModule(
+    (void)appendImportModule(
         StringRef(hal_imports_create()->data, hal_imports_create()->size),
         innerModuleOp);
 
-    OwningRewritePatternList conversionPatterns;
+    OwningRewritePatternList conversionPatterns(&getContext());
     populateStandardToVMPatterns(context, typeConverter, conversionPatterns);
 
     SymbolTable importSymbols(innerModuleOp);

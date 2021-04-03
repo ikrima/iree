@@ -111,8 +111,7 @@ class PackConstantPoolStoragePass
         OpBuilder poolBuilder(poolOp.getContext());
         poolBuilder.setInsertionPointAfter(valueOp);
         auto spanOp = poolBuilder.create<ConstantPoolSpanOp>(
-            valueOp.getLoc(), valueOp.getName(),
-            TypeAttr::get(valueOp.value().getType()),
+            valueOp.getLoc(), valueOp.getName(), valueOp.value().getType(),
             poolBuilder.getSymbolRefAttr(storageBufferOp),
             ByteRangeAttr::get(APInt(64, constantSpan.offset),
                                APInt(64, constantSpan.length),
@@ -245,11 +244,11 @@ class PackConstantPoolStoragePass
     // be useful if we wanted to map back a module size through data blobs.
     // With buffer <-> constant it's possible to build a tree map of
     // contributions in the source. TBD ;)
-    storageBuffer.loc = FusedLoc::get(
-        llvm::to_vector<8>(llvm::map_range(
-            storageBuffer.spans,
-            [](ConstantSpan &span) { return span.valueOp.getLoc(); })),
-        context);
+    storageBuffer.loc =
+        FusedLoc::get(context, llvm::to_vector<8>(llvm::map_range(
+                                   storageBuffer.spans, [](ConstantSpan &span) {
+                                     return span.valueOp.getLoc();
+                                   })));
 
     // TODO(#3354): replace this with an #iree.composite_buffer attribute or
     // something so we can reuse the uniqued storage for each constant and just

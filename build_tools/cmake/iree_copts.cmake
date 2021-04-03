@@ -106,7 +106,7 @@ iree_select_compiler_opts(IREE_DEFAULT_COPTS
     # signal/noise ratio.
     "-Wno-ambiguous-member-template"
     "-Wno-char-subscripts"
-    "-Wno-error=deprecated-declarations"
+    "-Wno-deprecated-declarations"
     "-Wno-extern-c-compat" # Matches upstream. Cannot impact due to extern C inclusion method.
     "-Wno-gnu-alignof-expression"
     "-Wno-gnu-variable-sized-type-not-at-end"
@@ -166,7 +166,20 @@ iree_select_compiler_opts(IREE_DEFAULT_COPTS
     "-Wno-unused-variable"
     "-Wno-undef"
     "-fvisibility=hidden"
+    # NOTE: The RTTI setting must match what LLVM was compiled with (defaults
+    # to RTTI disabled).
+    "$<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>"
+    "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
+
   MSVC_OR_CLANG_CL
+    # Default warning level (severe + significant + production quality).
+    # This does not include level 4, "informational", warnings or those that
+    # are off by default.
+    # https://docs.microsoft.com/en-us/cpp/build/reference/compiler-option-warning-level
+    # Note that we set CMake policy CMP0092 (if found), making this explicit:
+    # https://cmake.org/cmake/help/v3.15/policy/CMP0092.html
+    "/W3"
+
     # Exclude a bunch of rarely-used APIs, such as crypto/DDE/shell.
     # https://docs.microsoft.com/en-us/windows/win32/winprog/using-the-windows-headers
     # NOTE: this is not really required anymore for build performance but does
@@ -203,17 +216,11 @@ iree_select_compiler_opts(IREE_DEFAULT_COPTS
     # https://docs.microsoft.com/en-us/cpp/c-runtime-library/secure-template-overloads
     "/D_CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES"
 
-    # Configure exception handling for standard C++ behavior.
-    # - /EHs enables C++ catch-style exceptions
-    # - /EHc breaks unwinding across extern C boundaries, dramatically reducing
-    #   unwind table size and associated exception handling overhead as the
-    #   compiler can assume no exception will ever be thrown within any function
-    #   annotated with extern "C".
-    # https://docs.microsoft.com/en-us/cpp/build/reference/eh-exception-handling-model
-    #
-    # TODO(benvanik): figure out if we need /EHs - we don't use exceptions in
-    # the runtime and I'm pretty sure LLVM doesn't use them either.
-    "/EHsc"
+    # Configure RTTI generation.
+    # - /GR - Enable generation of RTTI (default)
+    # - /GR- - Disables generation of RTTI
+    # https://docs.microsoft.com/en-us/cpp/build/reference/gr-enable-run-time-type-information?view=msvc-160
+    "/GR-"
 
     # Default max section count is 64k, which is woefully inadequate for some of
     # the insanely bloated tablegen outputs LLVM/MLIR produces. This cranks it
@@ -274,6 +281,22 @@ iree_select_compiler_opts(IREE_DEFAULT_COPTS
     "/wd5105"  # allow: macro expansion producing 'defined' has undefined behavior
 )
 
+# On MSVC, CMake sets /GR by default (enabling RTTI), but we set /GR-
+# (disabling it) above. To avoid Command line warning D9025 which warns about
+# overriding the flag value, we remove /GR from global CMake flags.
+#
+# Note: this may have ripple effects on downstream projects using IREE. If this
+# is a problem for your project, please reach out to us and we'll figure out a
+# compatible solution.
+#
+# See also:
+#   https://github.com/google/iree/issues/4665.
+#   https://discourse.cmake.org/t/how-to-fix-build-warning-d9025-overriding-gr-with-gr/878
+#   https://gitlab.kitware.com/cmake/cmake/-/issues/20610
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
+  string(REPLACE "/GR" "" CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
+endif()
+
 if(NOT ANDROID)
   iree_select_compiler_opts(_IREE_PTHREADS_LINKOPTS
     CLANG_OR_GCC
@@ -318,11 +341,14 @@ if(${IREE_SIZE_OPTIMIZED})
       "/Gy"
       "/DNDEBUG"
       "/DIREE_STATUS_MODE=0"
+      "/PDB"
+      "/Os"
+      "/Oy"
   )
   iree_select_compiler_opts(IREE_SIZE_OPTIMIZED_DEFAULT_LINKOPTS
     MSVC_OR_CLANG_CL
-      "/LTCG"
-      "/opt:ref,icf"
+      "-LTCG"
+      "-opt:ref,icf"
   )
   # TODO(#898): make this only impact the runtime (IREE_RUNTIME_DEFAULT_...).
   set(IREE_DEFAULT_COPTS
@@ -369,24 +395,6 @@ set(CPUINFO_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(CPUINFO_BUILD_MOCK_TESTS OFF CACHE BOOL "" FORCE)
 
 #-------------------------------------------------------------------------------
-# Third party: flatbuffers
-#-------------------------------------------------------------------------------
-
-set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(FLATBUFFERS_BUILD_FLATHASH OFF CACHE BOOL "" FORCE)
-set(FLATBUFFERS_BUILD_GRPCTEST OFF CACHE BOOL "" FORCE)
-set(FLATBUFFERS_INSTALL OFF CACHE BOOL "" FORCE)
-set(FLATBUFFERS_INCLUDE_DIRS
-  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include/"
-)
-
-if(CMAKE_CROSSCOMPILING)
-  set(FLATBUFFERS_BUILD_FLATC OFF CACHE BOOL "" FORCE)
-else()
-  set(FLATBUFFERS_BUILD_FLATC ON CACHE BOOL "" FORCE)
-endif()
-
-#-------------------------------------------------------------------------------
 # Third party: flatcc
 #-------------------------------------------------------------------------------
 
@@ -417,10 +425,10 @@ set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "" FORCE)
 set(LLVM_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(LLVM_APPEND_VC_REV OFF CACHE BOOL "" FORCE)
 set(LLVM_ENABLE_IDE ON CACHE BOOL "" FORCE)
-set(LLVM_ENABLE_RTTI ON CACHE BOOL "" FORCE)
 
 # TODO(ataei): Use optional build time targets selection for LLVMAOT.
-set(LLVM_TARGETS_TO_BUILD "WebAssembly;X86;ARM;AArch64;RISCV" CACHE STRING "" FORCE)
+set(LLVM_TARGETS_TO_BUILD "WebAssembly;X86;ARM;AArch64;RISCV;NVPTX"
+    CACHE STRING "" FORCE)
 
 set(LLVM_ENABLE_PROJECTS "mlir" CACHE STRING "" FORCE)
 set(LLVM_ENABLE_BINDINGS OFF CACHE BOOL "" FORCE)

@@ -16,6 +16,7 @@
 
 #include "iree/compiler/Dialect/VM/IR/VMOps.h"
 #include "iree/compiler/Dialect/VM/IR/VMTypes.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/SourceMgr.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -191,13 +192,35 @@ struct VMFolderInterface : public DialectFoldInterface {
 
 VMDialect::VMDialect(MLIRContext *context)
     : Dialect(getDialectNamespace(), context, TypeID::get<VMDialect>()) {
-  addTypes<IREE::VM::ListType, IREE::VM::OpaqueType, IREE::VM::RefType>();
+  registerAttributes();
+  registerTypes();
   addInterfaces<VMInlinerInterface, VMOpAsmInterface, VMFolderInterface>();
 
 #define GET_OP_LIST
   addOperations<
 #include "iree/compiler/Dialect/VM/IR/VMOps.cpp.inc"
       >();
+}
+
+//===----------------------------------------------------------------------===//
+// Attribute printing and parsing
+//===----------------------------------------------------------------------===//
+
+Attribute VMDialect::parseAttribute(DialectAsmParser &parser, Type type) const {
+  StringRef attrKind;
+  if (failed(parser.parseKeyword(&attrKind))) return {};
+  if (attrKind == OrdinalCountsAttr::getKindName()) {
+    return OrdinalCountsAttr::parse(parser);
+  }
+  parser.emitError(parser.getNameLoc()) << "unknown VM attribute: " << attrKind;
+  return {};
+}
+
+void VMDialect::printAttribute(Attribute attr, DialectAsmPrinter &p) const {
+  TypeSwitch<Attribute>(attr)
+      .Case<OrdinalCountsAttr>([&](auto typedAttr) { typedAttr.print(p); })
+      .Default(
+          [](Attribute) { llvm_unreachable("unhandled VM attribute kind"); });
 }
 
 //===----------------------------------------------------------------------===//
@@ -225,7 +248,7 @@ Type VMDialect::parseType(DialectAsmParser &parser) const {
   } else if (spec.consume_front("ref")) {
     if (!spec.consume_front("<") || !spec.consume_back(">")) {
       parser.emitError(parser.getCurrentLocation())
-          << "malformed ref_ptr type '" << parser.getFullSymbolSpec() << "'";
+          << "malformed ref type '" << parser.getFullSymbolSpec() << "'";
       return Type();
     }
     if (spec == "?") {
@@ -236,7 +259,7 @@ Type VMDialect::parseType(DialectAsmParser &parser) const {
     auto objectType = mlir::parseType(spec, getContext());
     if (!objectType) {
       parser.emitError(parser.getCurrentLocation())
-          << "invalid ref_ptr object type specification: '"
+          << "invalid ref object type specification: '"
           << parser.getFullSymbolSpec() << "'";
       return Type();
     }
@@ -286,9 +309,9 @@ Operation *VMDialect::materializeConstant(OpBuilder &builder, Attribute value,
     }
     return builder.create<VM::ConstI64Op>(loc, convertedValue);
   } else if (type.isa<IREE::VM::RefType>()) {
-    // The only constant type we support for ref_ptrs is null so we can just
+    // The only constant type we support for refs is null so we can just
     // emit that here.
-    // TODO(b/144027097): relace unit attr with a proper null ref_ptr attr.
+    // TODO(b/144027097): relace unit attr with a proper null ref attr.
     return builder.create<VM::ConstRefZeroOp>(loc, type);
   }
   // TODO(benvanik): handle other constant value types.

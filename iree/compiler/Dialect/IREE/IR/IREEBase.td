@@ -53,6 +53,11 @@ class IREE_IndexAttrBase<string descr> :
 }
 def IREE_IndexAttr : IREE_IndexAttrBase<"size_t">;
 
+def IREE_TiedOpStorageAttr :
+    TypedArrayAttrBase<IREE_IndexAttr, "64-bit integer array attribute"> {
+  let constBuilderCall = "$_builder.getI64ArrayAttr($0)";
+}
+
 //===----------------------------------------------------------------------===//
 // Status codes
 //===----------------------------------------------------------------------===//
@@ -108,7 +113,7 @@ class NamedTupleOf<list<NamedTupleElement> elements, string descr> :
   // Generate a builder call if all of the elements are buildable.
   let builderCall = !if(!eq(AreTupleElementsBuildable<elements>.ret, 0),
     "", "$_builder.getTupleType({" #
-        StrJoin<!foreach(t, elements, t.type.builderCall)>.result # "})"
+        !interleave(!foreach(t, elements, t.type.builderCall), ", ") # "})"
   );
 }
 
@@ -147,7 +152,7 @@ def AnyPtr : DialectType<
     IREE_Dialect,
     CPred<"$_self.isa<IREE::PtrType>()">,
     "ptr"> {
-  let typeDescription = [{
+  let description = [{
     Pointer to a typed value.
   }];
   let builderCall = "$_builder.getType<IREE::PtrType>()";
@@ -158,7 +163,7 @@ class PtrOf<Type type> :
       CPred<"$_self.isa<IREE::PtrType>()">,
       SubstLeaves<"$_self", "$_self.cast<IREE::PtrType>().getTargetType()",
                   type.predicate>
-    ]>, "ptr<" # type.description # ">"> {
+    ]>, "ptr<" # type.summary # ">"> {
   // Set the builder call if the base type has a builder call.
   string builderCall = !if(!empty(type.builderCall),
                            "", "PtrType::get(" # type.builderCall # ")");
@@ -172,7 +177,7 @@ class AnyPtrOf<list<Type> types> :
               "$_self",
               "$_self.cast<IREE::PtrType>().getTargetType()",
               type.predicate>)>,
-    ]>, StrJoin<!foreach(type, types, type.description), " or ">.result> {
+    ]>, !interleave(!foreach(type, types, type.summary), " or ")> {
   string builderCall = "";
 }
 
@@ -180,7 +185,7 @@ def ByteBufferType : DialectType<
     IREE_Dialect,
     CPred<"$_self.isa<IREE::ByteBufferType>()">,
     "byte_buffer"> {
-  let typeDescription = [{
+  let description = [{
     A constant buffer of mapped host memory.
   }];
 }
@@ -190,9 +195,34 @@ def MutableByteBufferType : DialectType<
     IREE_Dialect,
     CPred<"$_self.isa<IREE::MutableByteBufferType>()">,
     "mutable_byte_buffer"> {
-  let typeDescription = [{
+  let description = [{
     A buffer of read-write host memory.
   }];
+}
+
+//===----------------------------------------------------------------------===//
+// List types
+//===----------------------------------------------------------------------===//
+
+def AnyList : DialectType<
+    IREE_Dialect,
+    CPred<"$_self.isa<IREE::ListType>()">,
+    "list"> {
+  let description = [{
+    A resizable list of some type.
+  }];
+}
+
+class ListOf<Type type> :
+    Type<And<[
+      CPred<"$_self.isa<IREE::ListType>()">,
+      SubstLeaves<"$_self",
+                  "$_self.cast<IREE::ListType>().getElementType()",
+                  type.predicate>
+    ]>, "list<" # type.summary # ">"> {
+  // Set the builder call if the base type has a builder call.
+  string builderCall = !if(!empty(type.builderCall),
+                           "", "IREE::ListType::get(" # type.builderCall # ")");
 }
 
 //===----------------------------------------------------------------------===//

@@ -130,6 +130,26 @@ IREE_API_EXPORT iree_host_size_t IREE_API_CALL iree_string_view_find_first_of(
   return IREE_STRING_VIEW_NPOS;
 }
 
+IREE_API_EXPORT iree_host_size_t IREE_API_CALL iree_string_view_find_last_of(
+    iree_string_view_t value, iree_string_view_t s, iree_host_size_t pos) {
+  if (iree_string_view_is_empty(value) || iree_string_view_is_empty(s)) {
+    return IREE_STRING_VIEW_NPOS;
+  }
+  bool lookup_table[UCHAR_MAX + 1] = {0};
+  for (iree_host_size_t i = 0; i < s.size; ++i) {
+    lookup_table[(uint8_t)s.data[i]] = true;
+  }
+  pos = iree_min(pos, value.size);
+  iree_host_size_t i = pos;
+  while (i != 0) {
+    --i;
+    if (lookup_table[(uint8_t)value.data[i]]) {
+      return i;
+    }
+  }
+  return IREE_STRING_VIEW_NPOS;
+}
+
 IREE_API_EXPORT iree_string_view_t IREE_API_CALL
 iree_string_view_remove_prefix(iree_string_view_t value, iree_host_size_t n) {
   if (n >= value.size) {
@@ -148,11 +168,14 @@ IREE_API_EXPORT iree_string_view_t IREE_API_CALL iree_string_view_substr(
 IREE_API_EXPORT intptr_t IREE_API_CALL iree_string_view_split(
     iree_string_view_t value, char split_char, iree_string_view_t* out_lhs,
     iree_string_view_t* out_rhs) {
+  *out_lhs = iree_string_view_empty();
+  *out_rhs = iree_string_view_empty();
   if (!value.data || !value.size) {
     return -1;
   }
   const void* first_ptr = memchr(value.data, split_char, value.size);
   if (!first_ptr) {
+    *out_lhs = value;
     return -1;
   }
   intptr_t offset = (intptr_t)((const char*)(first_ptr)-value.data);
@@ -213,6 +236,16 @@ static bool iree_string_view_match_pattern_impl(iree_string_view_t value,
 IREE_API_EXPORT bool IREE_API_CALL iree_string_view_match_pattern(
     iree_string_view_t value, iree_string_view_t pattern) {
   return iree_string_view_match_pattern_impl(value, pattern);
+}
+
+IREE_API_EXPORT iree_host_size_t IREE_API_CALL
+iree_string_view_append_to_buffer(iree_string_view_t source_value,
+                                  iree_string_view_t* target_value,
+                                  char* buffer) {
+  memcpy(buffer, source_value.data, source_value.size);
+  target_value->data = buffer;
+  target_value->size = source_value.size;
+  return source_value.size;
 }
 
 //===----------------------------------------------------------------------===//
@@ -562,7 +595,7 @@ iree_status_allocate(iree_status_code_t code, const char* file, uint32_t line,
 #if IREE_STATUS_FEATURES == 0
   // More advanced status code features like source location and messages are
   // disabled. All statuses are just the codes.
-  return (iree_status_t)(code & IREE_STATUS_CODE_MASK);
+  return iree_status_from_code(code);
 #else
   // No-op for OK statuses; we won't get these from the macros but may be called
   // with this from marshaling code.
@@ -730,7 +763,10 @@ iree_status_annotate(iree_status_t base_status, iree_string_view_t message) {
   // Annotations are disabled so we ignore this entirely.
   return base_status;
 #else
-  if (iree_string_view_is_empty(message)) return base_status;
+  if (iree_status_is_ok(base_status) || iree_string_view_is_empty(message)) {
+    return base_status;
+  }
+
   // If there's no storage yet we can just reuse normal allocation. Both that
   // and this do not copy |message|.
   iree_status_storage_t* storage = iree_status_storage(base_status);
@@ -741,13 +777,15 @@ iree_status_annotate(iree_status_t base_status, iree_string_view_t message) {
     storage->message = message;
     return base_status;
   }
-  iree_status_payload_message_t* payload =
-      (iree_status_payload_message_t*)malloc(
-          sizeof(iree_status_payload_message_t));
+
+  iree_allocator_t allocator = iree_allocator_system();
+  iree_status_payload_message_t* payload = NULL;
+  iree_status_ignore(
+      iree_allocator_malloc(allocator, sizeof(*payload), (void**)&payload));
   if (IREE_UNLIKELY(!payload)) return base_status;
   memset(payload, 0, sizeof(*payload));
   payload->header.type = IREE_STATUS_PAYLOAD_TYPE_MESSAGE;
-  payload->header.allocator = iree_allocator_system();
+  payload->header.allocator = allocator;
   payload->header.formatter = iree_status_payload_message_formatter;
   payload->message = message;
   return iree_status_append_payload(base_status, storage,
@@ -774,6 +812,8 @@ iree_status_annotate_vf(iree_status_t base_status, const char* format,
 #if (IREE_STATUS_FEATURES & IREE_STATUS_FEATURE_ANNOTATIONS) == 0
   return base_status;
 #else
+  if (iree_status_is_ok(base_status)) return base_status;
+
   // If there's no storage yet we can just reuse normal allocation. Both that
   // and this do not copy |message|.
   iree_status_storage_t* storage = iree_status_storage(base_status);
@@ -793,13 +833,14 @@ iree_status_annotate_vf(iree_status_t base_status, const char* format,
   // Allocate storage with the additional room to store the formatted message.
   // This avoids additional allocations for the common case of a message coming
   // only from the original status error site.
-  iree_status_payload_message_t* payload =
-      (iree_status_payload_message_t*)malloc(
-          sizeof(iree_status_payload_message_t) + message_size);
+  iree_allocator_t allocator = iree_allocator_system();
+  iree_status_payload_message_t* payload = NULL;
+  iree_status_ignore(iree_allocator_malloc(
+      allocator, sizeof(*payload) + message_size, (void**)&payload));
   if (IREE_UNLIKELY(!payload)) return base_status;
   memset(payload, 0, sizeof(*payload));
   payload->header.type = IREE_STATUS_PAYLOAD_TYPE_MESSAGE;
-  payload->header.allocator = iree_allocator_system();
+  payload->header.allocator = allocator;
   payload->header.formatter = iree_status_payload_message_formatter;
 
   // vsnprintf directly into message buffer.
@@ -1027,6 +1068,15 @@ IREE_API_EXPORT iree_status_t IREE_API_CALL iree_allocator_realloc(
   return allocator.alloc(allocator.self,
                          IREE_ALLOCATION_MODE_TRY_REUSE_EXISTING, byte_length,
                          out_ptr);
+}
+
+IREE_API_EXPORT iree_status_t IREE_API_CALL
+iree_allocator_clone(iree_allocator_t allocator,
+                     iree_const_byte_span_t source_bytes, void** out_ptr) {
+  IREE_RETURN_IF_ERROR(
+      iree_allocator_malloc(allocator, source_bytes.data_length, out_ptr));
+  memcpy(*out_ptr, source_bytes.data, source_bytes.data_length);
+  return iree_ok_status();
 }
 
 IREE_API_EXPORT void IREE_API_CALL

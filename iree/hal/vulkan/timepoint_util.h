@@ -19,15 +19,13 @@
 #include "iree/hal/vulkan/vulkan_headers.h"
 // clang-format on
 
-#include <atomic>
-#include <vector>
+#include <array>
 
-#include "absl/base/thread_annotations.h"
-#include "absl/synchronization/mutex.h"
-#include "iree/base/intrusive_list.h"
-#include "iree/base/ref_ptr.h"
 #include "iree/base/status.h"
+#include "iree/base/synchronization.h"
 #include "iree/hal/vulkan/handle_util.h"
+#include "iree/hal/vulkan/util/intrusive_list.h"
+#include "iree/hal/vulkan/util/ref_ptr.h"
 
 namespace iree {
 namespace hal {
@@ -51,7 +49,11 @@ class TimePointFence final : public RefObject<TimePointFence>,
                              public IntrusiveLinkBase<void> {
  public:
   TimePointFence(TimePointFencePool* pool, VkFence fence)
-      : pool_(pool), fence_(fence) {}
+      : pool_(pool), fence_(fence) {
+    iree_slim_mutex_initialize(&status_mutex_);
+  }
+
+  ~TimePointFence() { iree_slim_mutex_deinitialize(&status_mutex_); }
 
   TimePointFence(TimePointFence&& that) = delete;
   TimePointFence& operator=(TimePointFence&&) = delete;
@@ -85,8 +87,8 @@ class TimePointFence final : public RefObject<TimePointFence>,
   VkFence fence_;
 
   // The fence's status.
-  absl::Mutex status_mutex_;
-  VkResult status_ ABSL_GUARDED_BY(status_mutex_) = VK_NOT_READY;
+  iree_slim_mutex_t status_mutex_;
+  VkResult status_ IREE_GUARDED_BY(status_mutex_) = VK_NOT_READY;
 };
 
 // A semaphore used for emulating a specific time point of timeline semaphores.
@@ -125,8 +127,8 @@ class TimePointFencePool final : public RefObject<TimePointFencePool> {
   static constexpr int kMaxInFlightFenceCount = 64;
 
   // Creates a new pool and pre-allocates `kMaxInFlightFenceCount` fences.
-  static StatusOr<ref_ptr<TimePointFencePool>> Create(
-      ref_ptr<VkDeviceHandle> logical_device);
+  static iree_status_t Create(VkDeviceHandle* logical_device,
+                              TimePointFencePool** out_pool);
 
   ~TimePointFencePool();
 
@@ -137,30 +139,28 @@ class TimePointFencePool final : public RefObject<TimePointFencePool> {
   // Callers are expected to handle this by waiting on previous fences or for
   // complete device idle. Yes, that's as bad as it sounds, and if we start
   // seeing that we should bump up the max count.
-  StatusOr<ref_ptr<TimePointFence>> Acquire();
+  Status Acquire(ref_ptr<TimePointFence>* out_fence);
 
   // Releases one fence back to the pool. The fence must either be signaled or
   // not be in flight on GPU.
   void ReleaseResolved(TimePointFence* fence);
 
-  const ref_ptr<VkDeviceHandle>& logical_device() const {
-    return logical_device_;
-  }
+  VkDeviceHandle* logical_device() const { return logical_device_; }
 
  private:
-  explicit TimePointFencePool(ref_ptr<VkDeviceHandle> logical_device);
+  explicit TimePointFencePool(VkDeviceHandle* logical_device);
 
   const ref_ptr<DynamicSymbols>& syms() const;
 
-  Status PreallocateFences() ABSL_LOCKS_EXCLUDED(mutex_);
+  Status PreallocateFences();
 
-  ref_ptr<VkDeviceHandle> logical_device_;
+  VkDeviceHandle* logical_device_;
 
-  absl::Mutex mutex_;
+  iree_slim_mutex_t mutex_;
 
   // Track via unique_ptr, since IntrusiveList doesn't manage memory itself.
   IntrusiveList<std::unique_ptr<TimePointFence>> free_fences_
-      ABSL_GUARDED_BY(mutex_);
+      IREE_GUARDED_BY(mutex_);
 };
 
 // A pool of `VkSemaphore`s that can be used by `EmulatedTimelineSemaphore` to
@@ -171,8 +171,8 @@ class TimePointSemaphorePool final : public RefObject<TimePointSemaphorePool> {
 
   // Creates a new pool and pre-allocates `kMaxInFlightSemaphoreCount` binary
   // semaphores.
-  static StatusOr<ref_ptr<TimePointSemaphorePool>> Create(
-      ref_ptr<VkDeviceHandle> logical_device);
+  static iree_status_t Create(VkDeviceHandle* logical_device,
+                              TimePointSemaphorePool** out_pool);
 
   ~TimePointSemaphorePool();
 
@@ -183,7 +183,7 @@ class TimePointSemaphorePool final : public RefObject<TimePointSemaphorePool> {
   // Callers are expected to handle this by waiting on previous fences or for
   // complete device idle. Yes, that's as bad as it sounds, and if we start
   // seeing that we should bump up the max count.
-  StatusOr<TimePointSemaphore*> Acquire();
+  Status Acquire(TimePointSemaphore** out_semaphore);
 
   // Releases one or more semaphores back to the pool. The binary semaphore must
   // be unsignaled and not in flight on GPU.
@@ -195,19 +195,19 @@ class TimePointSemaphorePool final : public RefObject<TimePointSemaphorePool> {
   void ReleaseUnresolved(IntrusiveList<TimePointSemaphore>* semaphores);
 
  private:
-  explicit TimePointSemaphorePool(ref_ptr<VkDeviceHandle> logical_device);
+  explicit TimePointSemaphorePool(VkDeviceHandle* logical_device);
 
   const ref_ptr<DynamicSymbols>& syms() const;
 
-  Status PreallocateSemaphores() ABSL_LOCKS_EXCLUDED(mutex_);
+  Status PreallocateSemaphores();
 
-  ref_ptr<VkDeviceHandle> logical_device_;
+  VkDeviceHandle* logical_device_;
 
-  absl::Mutex mutex_;
+  iree_slim_mutex_t mutex_;
 
   std::array<TimePointSemaphore, kMaxInFlightSemaphoreCount> storage_
-      ABSL_GUARDED_BY(mutex_);
-  IntrusiveList<TimePointSemaphore> free_semaphores_ ABSL_GUARDED_BY(mutex_);
+      IREE_GUARDED_BY(mutex_);
+  IntrusiveList<TimePointSemaphore> free_semaphores_ IREE_GUARDED_BY(mutex_);
 };
 
 }  // namespace vulkan

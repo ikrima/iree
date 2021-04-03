@@ -24,6 +24,8 @@
 #include "mlir/Dialect/GPU/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Quant/QuantOps.h"
 #include "mlir/Dialect/SCF/SCF.h"
 #include "mlir/Dialect/SDBM/SDBMDialect.h"
@@ -31,6 +33,7 @@
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Tosa/IR/TosaOps.h"
 #include "mlir/Dialect/Vector/VectorOps.h"
 #include "mlir/IR/Dialect.h"
 
@@ -43,12 +46,15 @@ inline void registerMlirDialects(DialectRegistry &registry) {
                   gpu::GPUDialect,
                   LLVM::LLVMDialect,
                   linalg::LinalgDialect,
+                  math::MathDialect,
+                  memref::MemRefDialect,
                   scf::SCFDialect,
                   quant::QuantizationDialect,
                   spirv::SPIRVDialect,
                   StandardOpsDialect,
                   vector::VectorDialect,
                   tensor::TensorDialect,
+                  tosa::TosaDialect,
                   SDBMDialect,
                   shape::ShapeDialect>();
   // clang-format on

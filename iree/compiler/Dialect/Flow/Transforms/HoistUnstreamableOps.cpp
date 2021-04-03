@@ -29,8 +29,8 @@ namespace IREE {
 namespace Flow {
 
 static bool isStreamableOp(Operation *op) {
-  if (auto streamableOp = dyn_cast<StreamableOpInterface>(op)) {
-    return streamableOp.isUsableInStream();
+  if (isa<StreamableOpInterface>(op)) {
+    return true;
   }
   if (llvm::isa<Shape::TieShapeOp>(op)) {
     return true;
@@ -41,7 +41,7 @@ static bool isStreamableOp(Operation *op) {
 static llvm::SmallVector<Operation *, 16> getOpsToHoist(Block &block) {
   llvm::SmallVector<Operation *, 16> opsToHoist;
   for (Operation &op : block) {
-    if (!isStreamableOp(&op) && !op.isKnownTerminator() &&
+    if (!isStreamableOp(&op) && !op.hasTrait<OpTrait::IsTerminator>() &&
         MemoryEffectOpInterface::hasNoEffect(&op)) {
       opsToHoist.push_back(&op);
     }

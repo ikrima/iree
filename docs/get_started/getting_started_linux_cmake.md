@@ -19,16 +19,16 @@ documented separately, as they require further setup.
 
 ### Install CMake
 
-IREE uses CMake version `>= 3.13`. First try installing via your distribution's
-package manager and verify the version:
+IREE uses CMake version `>= 3.13.4`. First try installing via your
+distribution's package manager and verify the version:
 
 ```shell
 $ sudo apt install cmake
-$ cmake --version # >= 3.13
+$ cmake --version # >= 3.13.4
 ```
 
 Some package managers (like `apt`) distribute old versions of cmake. If your
-package manager installs a version `< 3.13`, then follow the installation
+package manager installs a version `< 3.13.4`, then follow the installation
 instructions [here](https://cmake.org/install/) to install a newer version (e.g.
 the latest).
 
@@ -99,18 +99,18 @@ $ ../iree-build/iree/tools/iree-translate --help
 ```
 
 Translate a
-[MLIR file](https://github.com/google/iree/blob/main/iree/tools/test/simple.mlir)
+[MLIR file](https://github.com/google/iree/blob/main/iree/tools/test/iree-run-module.mlir)
 and execute a function in the compiled module:
 
 ```shell
-$ ../iree-build/iree/tools/iree-run-mlir $PWD/iree/tools/test/simple.mlir \
+$ ../iree-build/iree/tools/iree-run-mlir $PWD/iree/tools/test/iree-run-module.mlir \
   -function-input="i32=-2" -iree-hal-target-backends=vmla -print-mlir
 ```
 
 ### LLVM Ahead-of-Time (AOT) backend
 
-To compile IREE LLVM AOT module we need to set the AOT linker path environment
-variable:
+If you want to manually specify the linker used, set the
+`IREE_LLVMAOT_LINKER_PATH` environment variable to the path of the linker:
 
 ```shell
 $ export IREE_LLVMAOT_LINKER_PATH=ld.lld-10
@@ -120,21 +120,21 @@ Translate a source MLIR into an IREE module:
 
 ```shell
 # Assuming in IREE source root
-$ ./build/iree/tools/iree-translate \
+$ ../iree-build/iree/tools/iree-translate \
     -iree-mlir-to-vm-bytecode-module \
     -iree-llvm-target-triple=x86_64-linux-gnu \
     -iree-hal-target-backends=dylib-llvm-aot \
-    iree/tools/test/simple.mlir \
+    iree/tools/test/iree-run-module.mlir \
     -o /tmp/simple-llvm_aot.vmfb
 ```
 
 Then run the compiled module using the `dylib` HAL driver:
 
 ```shell
-$ ./build/iree/tools/iree-run-module -driver=dylib \
-          -input_file=/tmp/simple-llvm_aot.vmfb \
-          -entry_function=abs \
-          -inputs="i32=-5"
+$ ../iree-build/iree/tools/iree-run-module -driver=dylib \
+    -module_file=/tmp/simple-llvm_aot.vmfb \
+    -entry_function=abs \
+    -function_inputs="i32=-5"
 
 EXEC @abs
 i32=5

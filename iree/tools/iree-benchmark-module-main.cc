@@ -17,8 +17,8 @@
 #include "absl/flags/usage.h"
 #include "absl/strings/string_view.h"
 #include "benchmark/benchmark.h"
-#include "iree/base/file_io.h"
-#include "iree/base/flags.h"
+#include "iree/base/internal/file_io.h"
+#include "iree/base/internal/flags.h"
 #include "iree/base/status.h"
 #include "iree/base/tracing.h"
 #include "iree/hal/drivers/init.h"
@@ -30,6 +30,13 @@
 ABSL_FLAG(std::string, module_file, "-",
           "File containing the module to load that contains the entry "
           "function. Defaults to stdin.");
+
+// TODO(hanchung): Extract the batch size using
+// iree_vm_function_reflection_attr.
+ABSL_FLAG(
+    int, batch_size, 1,
+    "The number of batch size, which is expected to match "
+    "iree-hal-benchmark-dispatch-repeat-count when translating the module");
 
 ABSL_FLAG(std::string, entry_function, "",
           "Name of a function contained in the module specified by module_file "
@@ -58,15 +65,16 @@ namespace iree {
 namespace {
 
 static void BenchmarkFunction(
-    const std::string& benchmark_name, iree_vm_context_t* context,
-    iree_vm_function_t function, iree_vm_list_t* inputs,
+    const std::string& benchmark_name, int batch_size,
+    iree_vm_context_t* context, iree_vm_function_t function,
+    iree_vm_list_t* inputs,
     const std::vector<RawSignatureParser::Description>& output_descs,
     benchmark::State& state) {
   IREE_TRACE_SCOPE_DYNAMIC(benchmark_name.c_str());
   IREE_TRACE_FRAME_MARK();
 
   // Benchmarking loop.
-  for (auto _ : state) {
+  while (state.KeepRunningBatch(batch_size)) {
     IREE_TRACE_SCOPE0("BenchmarkIteration");
     IREE_TRACE_FRAME_MARK_NAMED("Iteration");
     vm::ref<iree_vm_list_t> outputs;
@@ -83,13 +91,14 @@ void RegisterModuleBenchmarks(
     iree_vm_function_t function, iree_vm_list_t* inputs,
     const std::vector<RawSignatureParser::Description>& output_descs) {
   auto benchmark_name = "BM_" + function_name;
-  benchmark::RegisterBenchmark(benchmark_name.c_str(),
-                               [benchmark_name, context, function, inputs,
-                                output_descs](benchmark::State& state) -> void {
-                                 BenchmarkFunction(benchmark_name, context,
-                                                   function, inputs,
-                                                   output_descs, state);
-                               })
+  int batch_size = absl::GetFlag(FLAGS_batch_size);
+  benchmark::RegisterBenchmark(
+      benchmark_name.c_str(),
+      [benchmark_name, batch_size, context, function, inputs,
+       output_descs](benchmark::State& state) -> void {
+        BenchmarkFunction(benchmark_name, batch_size, context, function, inputs,
+                          output_descs, state);
+      })
       // By default only the main thread is included in CPU time. Include all
       // the threads instead.
       ->MeasureProcessCPUTime()
@@ -105,17 +114,17 @@ void RegisterModuleBenchmarks(
       ->Unit(benchmark::kMillisecond);
 }
 
-StatusOr<std::string> GetModuleContentsFromFlags() {
+Status GetModuleContentsFromFlags(std::string* out_contents) {
   IREE_TRACE_SCOPE0("GetModuleContentsFromFlags");
   auto module_file = absl::GetFlag(FLAGS_module_file);
-  std::string contents;
   if (module_file == "-") {
-    contents = std::string{std::istreambuf_iterator<char>(std::cin),
-                           std::istreambuf_iterator<char>()};
+    *out_contents = std::string{std::istreambuf_iterator<char>(std::cin),
+                                std::istreambuf_iterator<char>()};
   } else {
-    IREE_ASSIGN_OR_RETURN(contents, file_io::GetFileContents(module_file));
+    IREE_RETURN_IF_ERROR(
+        file_io::GetFileContents(module_file.c_str(), out_contents));
   }
-  return contents;
+  return OkStatus();
 }
 
 // TODO(hanchung): Consider to refactor this out and reuse in iree-run-module.
@@ -126,21 +135,17 @@ StatusOr<std::string> GetModuleContentsFromFlags() {
 // benchmarking.
 class IREEBenchmark {
  public:
-  IREEBenchmark()
-      : instance_(nullptr),
-        device_(nullptr),
-        hal_module_(nullptr),
-        context_(nullptr),
-        input_module_(nullptr){};
+  IREEBenchmark() = default;
+
   ~IREEBenchmark() {
     IREE_TRACE_SCOPE0("IREEBenchmark::dtor");
 
     // Order matters.
     inputs_.reset();
+    iree_vm_context_release(context_);
     iree_vm_module_release(hal_module_);
     iree_vm_module_release(input_module_);
     iree_hal_device_release(device_);
-    iree_vm_context_release(context_);
     iree_vm_instance_release(instance_);
   };
 
@@ -165,7 +170,7 @@ class IREEBenchmark {
     IREE_TRACE_SCOPE0("IREEBenchmark::Init");
     IREE_TRACE_FRAME_MARK_BEGIN_NAMED("init");
 
-    IREE_ASSIGN_OR_RETURN(module_data_, GetModuleContentsFromFlags());
+    IREE_RETURN_IF_ERROR(GetModuleContentsFromFlags(&module_data_));
 
     IREE_RETURN_IF_ERROR(iree_hal_module_register_types());
     IREE_RETURN_IF_ERROR(
@@ -199,21 +204,21 @@ class IREEBenchmark {
     IREE_RETURN_IF_ERROR(ValidateFunctionAbi(function));
 
     // Construct inputs.
-    IREE_ASSIGN_OR_RETURN(auto input_descs, ParseInputSignature(function));
+    std::vector<RawSignatureParser::Description> input_descs;
+    IREE_RETURN_IF_ERROR(ParseInputSignature(function, &input_descs));
     if (!absl::GetFlag(FLAGS_function_inputs_file).empty()) {
-      IREE_ASSIGN_OR_RETURN(inputs_,
-                            ParseToVariantListFromFile(
-                                input_descs, iree_hal_device_allocator(device_),
-                                absl::GetFlag(FLAGS_function_inputs_file)));
+      IREE_RETURN_IF_ERROR(ParseToVariantListFromFile(
+          input_descs, iree_hal_device_allocator(device_),
+          absl::GetFlag(FLAGS_function_inputs_file), &inputs_));
     } else {
-      IREE_ASSIGN_OR_RETURN(
-          inputs_,
+      IREE_RETURN_IF_ERROR(
           ParseToVariantList(input_descs, iree_hal_device_allocator(device_),
-                             absl::GetFlag(FLAGS_function_inputs)));
+                             absl::GetFlag(FLAGS_function_inputs), &inputs_));
     }
 
-    // Creates output singnature.
-    IREE_ASSIGN_OR_RETURN(auto output_descs, ParseOutputSignature(function));
+    // Creates output signature.
+    std::vector<RawSignatureParser::Description> output_descs;
+    IREE_RETURN_IF_ERROR(ParseOutputSignature(function, &output_descs));
     RegisterModuleBenchmarks(function_name, context_, function, inputs_.get(),
                              output_descs);
     return iree::OkStatus();
@@ -232,13 +237,15 @@ class IREEBenchmark {
       if (!ValidateFunctionAbi(function).ok()) continue;
 
       std::string function_name(name.data, name.size);
-      IREE_ASSIGN_OR_RETURN(auto input_descs, ParseInputSignature(function));
+      std::vector<RawSignatureParser::Description> input_descs;
+      IREE_RETURN_IF_ERROR(ParseInputSignature(function, &input_descs));
       if (!input_descs.empty()) {
-        return InvalidArgumentErrorBuilder(IREE_LOC)
-               << "Expect not to have input arguments for '" << function_name
-               << "'";
+        return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                                "expect not to have input arguments for '%.*s'",
+                                (int)name.size, name.data);
       }
-      IREE_ASSIGN_OR_RETURN(auto output_descs, ParseOutputSignature(function));
+      std::vector<RawSignatureParser::Description> output_descs;
+      IREE_RETURN_IF_ERROR(ParseOutputSignature(function, &output_descs));
       iree::RegisterModuleBenchmarks(function_name, context_, function,
                                      /*inputs=*/nullptr, output_descs);
     }
@@ -246,11 +253,11 @@ class IREEBenchmark {
   }
 
   std::string module_data_;
-  iree_vm_instance_t* instance_;
-  iree_hal_device_t* device_;
-  iree_vm_module_t* hal_module_;
-  iree_vm_context_t* context_;
-  iree_vm_module_t* input_module_;
+  iree_vm_instance_t* instance_ = nullptr;
+  iree_hal_device_t* device_ = nullptr;
+  iree_vm_module_t* hal_module_ = nullptr;
+  iree_vm_context_t* context_ = nullptr;
+  iree_vm_module_t* input_module_ = nullptr;
   iree::vm::ref<iree_vm_list_t> inputs_;
 };
 }  // namespace

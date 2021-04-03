@@ -21,8 +21,10 @@ include(CMakeParseArguments)
 # Parameters:
 # NAME: Name of target (see Note).
 # SRC: Source file to compile into a bytecode module.
-# FLAGS: Flags to pass to the translation tool (list of strings).
-# TRANSLATE_TOOL: Translation tool to invoke (CMake target).
+# FLAGS: Flags to pass to the translation tool (list of strings). The
+#     default flag set is "-iree-mlir-to-vm-bytecode-module".
+# TRANSLATE_TOOL: Translation tool to invoke (CMake target). The default
+#     tool is "iree-translate".
 # CC_NAMESPACE: Wraps everything in a C++ namespace.
 # PUBLIC: Add this so that this library will be exported under ${PACKAGE}::
 #     Also in IDE, target will appear in ${PACKAGE} folder while non PUBLIC
@@ -64,12 +66,12 @@ function(iree_bytecode_module)
   set(_ARGS "${_FLAGS}")
   list(APPEND _ARGS "${CMAKE_CURRENT_SOURCE_DIR}/${_RULE_SRC}")
   list(APPEND _ARGS "-o")
-  list(APPEND _ARGS "${_RULE_NAME}.module")
+  list(APPEND _ARGS "${_RULE_NAME}.vmfb")
 
   # Depending on the binary instead of the target here given we might not have
   # a target in this CMake invocation when cross-compiling.
   add_custom_command(
-    OUTPUT "${_RULE_NAME}.module"
+    OUTPUT "${_RULE_NAME}.vmfb"
     COMMAND ${_TRANSLATE_TOOL_EXECUTABLE} ${_ARGS}
     # Changes to either the translation tool or the input source should
     # trigger rebuilding.
@@ -90,7 +92,7 @@ function(iree_bytecode_module)
       IDENTIFIER
         "${_RULE_NAME}"
       GENERATED_SRCS
-        "${_RULE_NAME}.module"
+        "${_RULE_NAME}.vmfb"
       CC_FILE_OUTPUT
         "${_RULE_NAME}.cc"
       H_FILE_OUTPUT

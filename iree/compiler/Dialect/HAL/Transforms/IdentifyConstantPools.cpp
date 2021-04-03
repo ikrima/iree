@@ -216,7 +216,7 @@ class IdentifyConstantPoolsPass
     }
 
     // Remove the pool if it didn't end up with any constants.
-    if (poolOp.getBody()->front().isKnownTerminator()) {
+    if (poolOp.getBody()->front().hasTrait<OpTrait::IsTerminator>()) {
       poolOp.erase();
       return None;
     }
@@ -245,7 +245,7 @@ class IdentifyConstantPoolsPass
         variableOp.getLoc(), initializerName,
         moduleBuilder.getFunctionType({}, {variableOp.type()}));
     initializerFunc.setPrivate();
-    variableOp.removeAttr("initial_value");
+    variableOp->removeAttr("initial_value");
     variableOp->setAttr("initializer",
                         moduleBuilder.getSymbolRefAttr(initializerFunc));
 

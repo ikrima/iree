@@ -97,7 +97,7 @@ build:generic_clang --copt=-Wall
 # ratio.
 build:generic_clang --copt=-Wno-ambiguous-member-template
 build:generic_clang --copt=-Wno-char-subscripts
-build:generic_clang --copt=-Wno-error=deprecated-declarations
+build:generic_clang --copt=-Wno-deprecated-declarations
 build:generic_clang --copt=-Wno-extern-c-compat # Matches upstream. Cannot impact due to extern C inclusion method.
 build:generic_clang --copt=-Wno-gnu-alignof-expression
 build:generic_clang --copt=-Wno-gnu-variable-sized-type-not-at-end
@@ -142,34 +142,93 @@ build:generic_clang --copt=-Wtautological-overlap-compare
 build:generic_clang --copt=-Wthread-safety
 build:generic_clang --copt=-Wthread-safety-beta
 build:generic_clang --copt=-Wunused-comparison
-build:generic_clang --copt=-Wno-unused-variable
 build:generic_clang --copt=-Wvla
+
+###############################################################################
+# Additional options for MacOS based clang builds.
+# Try to keep these scoped to exclusions for third_party code and prefer
+# fixing issues local to the project.
+###############################################################################
+
+build:macos_clang --config=generic_clang
+build:macos_clang --per_file_copt=tensorflow,iree_tf_compiler@-Wno-unused-variable
+build:macos_clang --per_file_copt=tensorflow,iree_tf_compiler,utils@-Wno-range-loop-analysis
+
+build:macos_clang_release --config=macos_clang
+build:macos_clang_release --per_file_copt=tensorflow,iree_tf_compiler@-Wno-unused-variable
+build:macos_clang_release --per_file_copt=tensorflow,iree_tf_compiler,utils@-Wno-range-loop-analysis
+build:macos_clang_release --compilation_mode=opt
+build:macos_clang_release --copt=-DNDEBUG
+
+###############################################################################
+# Additional options for release builds. These do *not* automatically pull in
+# the corresponding compiler config (e.g. generic_clang) because this is likely
+# to already be set in the user's configured.bazelrc and setting a config twice
+# causes flags to be passed twice.
+###############################################################################
+build:generic_clang_release --compilation_mode=opt
+build:generic_clang_release --copt=-DNDEBUG
+build:generic_clang_release --linkopt=-Wl,--strip-all
+build:generic_gcc_release --compilation_mode=opt
+build:generic_gcc_release --copt=-DNDEBUG
+build:generic_gcc_release --linkopt=-Wl,--strip-all
+# MSVC doesn't store symbols in the binary (they're in separate .pdb files), so
+# nothing needs to be stripped.
+build:msvc_release --compilation_mode=opt
 
 ###############################################################################
 # Options for building with address sanitizer.
 # https://github.com/google/sanitizers/wiki/AddressSanitizer
 ###############################################################################
 
-# Turn on asan. Some toolchains make use of the asan feature and we'll directly
-# set the appropriate opts.
+# ASAN (address sanitizer)
+# https://clang.llvm.org/docs/AddressSanitizer.html
+build:asan --config=sanitizer
 build:asan --features=asan
 build:asan --copt=-fsanitize=address
+build:asan --copt=-fsanitize-address-use-after-scope
 build:asan --linkopt=-fsanitize=address
+build:asan --cc_output_directory_tag=asan
+build:asan --copt=-DADDRESS_SANITIZER
+
+# MSAN (memory sanitizer)
+# https://clang.llvm.org/docs/MemorySanitizer.html
+build:msan --config=sanitizer
+build:msan --features=msan
+build:msan --copt=-fsanitize=memory
+build:msan --copt=-fsanitize-memory-track-origins
+build:msan --linkopt=-fsanitize=memory
+build:msan --cc_output_directory_tag=msan
+build:msan --copt=-DMEMORY_SANITIZER
+
+# TSAN (thread sanitizer)
+# https://clang.llvm.org/docs/ThreadSanitizer.html
+build:tsan --config=sanitizer
+build:tsan --features=tsan
+build:tsan --copt=-fsanitize=thread
+build:tsan --linkopt=-fsanitize=thread
+build:tsan --cc_output_directory_tag=tsan
+build:tsan --copt=-DTHREAD_SANITIZER
+
+# UBSAN (undefined behavior sanitizer)
+# https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html
+build:ubsan --config=sanitizer
+build:ubsan --features=ubsan
+build:ubsan --copt=-fsanitize=undefined
+build:ubsan --linkopt=-fsanitize=undefined
+build:ubsan --linkopt=-lubsan
+build:ubsan --cc_output_directory_tag=ubsan
 
 # Don't strip debug info
-build:asan --strip=never
+build:sanitizer --strip=never
 # Ignore settings of `linkopts = ["-static"]` which can screw up the sanitizer.
 # We don't use this in IREE (that's what linkstatic is for), but it could show
 # up in dependencies.
-build:asan --force_ignore_dash_static
-# asan tests tend to take longer, so increase the timeouts
-build:asan --test_timeout=120,600,1800,-1
-# Make the outputs easy to find
-build:asan --cc_output_directory_tag=asan
+build:sanitizer --force_ignore_dash_static
+# sanitizer tests tend to take longer, so increase the timeouts
+build:sanitizer --test_timeout=120,600,1800,-1
 # Get better stack traces
-build:asan --copt=-fno-omit-frame-pointer
-# This macro define is used by absl
-build:asan --copt=-DADDRESS_SANITIZER
+build:sanitizer --copt=-fno-omit-frame-pointer
 
 ###############################################################################
 # Architecture specific options
@@ -265,6 +324,9 @@ build:rs --project_id=iree-oss
 ###############################################################################
 
 build:_msvc_base --define=iree_is_msvc=true
+
+# Bazel gets confused and sometimes loses track of Bash.
+build:_msvc_base --action_env BAZEL_SH='bash'
 
 # Disable warnings for dependencies. We don't control these.
 # absl forces /W3 in their copts, so we exclude them to avoid D9025

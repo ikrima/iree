@@ -27,7 +27,6 @@ cc_library(
     hdrs = ["native_module.h"],
     deps = [
         "//iree/base:api",
-        "//iree/base:ref_ptr",
         "//iree/base:status",
         "//iree/hal:api",
         "//iree/modules/hal",
@@ -71,7 +70,6 @@ cc_test(
         "//iree/vm",
         "//iree/vm:bytecode_module",
         "//iree/vm:cc",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",

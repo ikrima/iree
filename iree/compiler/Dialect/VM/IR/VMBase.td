@@ -44,7 +44,7 @@ def VM_Dialect : Dialect {
     flow control such as fixed-range loops.
 
     Besides integer values the only other storage type is a variant reference
-    modeling an abstract iree::ref_ptr. This allows automated reference counting
+    modeling an abstract iree_vm_ref_t. This allows automated reference counting
     to be relied upon by other dialects built on top of the VM dialect and
     avoids the need for more verbose manual reference counting logic (that may
     be difficult or impossible to manage given the coroutine-like nature of the
@@ -546,7 +546,7 @@ def VM_AnyRefObject : DialectType<
     IREE_Dialect,
     CPred<"IREE::VM::RefType::isCompatible($_self)">,
     "ref_object"> {
-  let typeDescription = [{
+  let description = [{
     An object that can be referenced by a vm.ref.
   }];
 }
@@ -555,7 +555,7 @@ def VM_AnyRef : DialectType<
     IREE_Dialect,
     CPred<"$_self.isa<IREE::VM::RefType>()">,
     "ref"> {
-  let typeDescription = [{
+  let description = [{
     An iree_vm_ref_t/iree::vm::ref<T> of some type.
   }];
 }
@@ -565,7 +565,7 @@ class VM_RefOf<Type type> :
       CPred<"$_self.isa<IREE::VM::RefType>()">,
       SubstLeaves<"$_self", "$_self.cast<IREE::VM::RefType>().getObjectType()",
                   type.predicate>
-    ]>, "ref<" # type.description # ">"> {
+    ]>, "ref<" # type.summary # ">"> {
   // Set the builder call if the base type has a builder call.
   string builderCall = !if(!empty(type.builderCall),
                            "", "IREE::VM::RefType::get(" # type.builderCall # ")");
@@ -582,7 +582,7 @@ def VM_AnyList : DialectType<
       CPred<"$_self.cast<IREE::VM::RefType>().getObjectType().isa<IREE::VM::ListType>()">,
     ]>,
     "list"> {
-  let typeDescription = [{
+  let description = [{
     An iree_vm_list_t/iree::vm::list<T> of some type.
   }];
 }
@@ -593,7 +593,7 @@ class VM_ListOf<Type type> :
       SubstLeaves<"$_self",
                   "$_self.cast<IREE::VM::RefType>().getObjectType().cast<IREE::VM::ListType>().getElementType()",
                   type.predicate>
-    ]>, "list<" # type.description # ">"> {
+    ]>, "list<" # type.summary # ">"> {
   // Set the builder call if the base type has a builder call.
   string builderCall = !if(!empty(type.builderCall),
                            "", "IREE::VM::ListType::get(" # type.builderCall # ")");
@@ -611,7 +611,7 @@ def VM_Ordinal : SignlessIntegerAttrBase<I32, "ordinal value">;
 def VM_Ptr : I<32>;
 
 def VM_CondValue : I<32> {
-  let typeDescription = [{
+  let description = [{
     Value used to represent boolean conditions where `value == 0` is false and
     `value != 0` is true.
   }];
@@ -641,6 +641,25 @@ class VM_ConstIntValueAttr<I type> : Attr<
   let returnType = "Attribute";
   let convertFromStorage = "$_self";
   let constBuilderCall = "$0";
+}
+
+//===----------------------------------------------------------------------===//
+// VM structs
+//===----------------------------------------------------------------------===//
+
+def VM_OrdinalCountsAttr :
+  IREE_StructAttr<"ordinal_counts",
+                  "OrdinalCountsAttr",
+                  VM_Dialect, [
+    IREE_StructFieldAttr<"import_funcs", I32Attr>,
+    IREE_StructFieldAttr<"export_funcs", I32Attr>,
+    IREE_StructFieldAttr<"internal_funcs", I32Attr>,
+    IREE_StructFieldAttr<"global_bytes", I32Attr>,
+    IREE_StructFieldAttr<"global_refs", I32Attr>,
+    IREE_StructFieldAttr<"rodatas", I32Attr>,
+    IREE_StructFieldAttr<"rwdatas", I32Attr>,
+  ]> {
+  let cppNamespace = "mlir::iree_compiler::IREE::VM";
 }
 
 #endif  // IREE_DIALECT_VM_BASE

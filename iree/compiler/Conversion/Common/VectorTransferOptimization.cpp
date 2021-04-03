@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/Dialect/Vector/VectorOps.h"
 #include "mlir/Dialect/Vector/VectorTransforms.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
 namespace iree_compiler {
@@ -28,8 +30,8 @@ static bool allUsesAreStores(Operation* op, std::vector<Operation*>& uses) {
   std::vector<Operation*> opUses;
   for (OpOperand& use : op->getUses()) {
     Operation* useOp = use.getOwner();
-    if (isa<vector::TransferWriteOp, StoreOp>(useOp) ||
-        (isa<SubViewOp>(useOp) && allUsesAreStores(useOp, opUses))) {
+    if (isa<vector::TransferWriteOp, memref::StoreOp>(useOp) ||
+        (isa<memref::SubViewOp>(useOp) && allUsesAreStores(useOp, opUses))) {
       opUses.push_back(useOp);
       continue;
     }
@@ -43,7 +45,7 @@ static bool allUsesAreStores(Operation* op, std::vector<Operation*>& uses) {
 // it means both the allocations and associated stores can be removed.
 static void eraseDeadAllocAndStores(FuncOp funcOp) {
   std::vector<Operation*> opToErase;
-  funcOp.walk([&](AllocOp op) {
+  funcOp.walk([&](memref::AllocOp op) {
     if (allUsesAreStores(op, opToErase)) {
       opToErase.push_back(op.getOperation());
     }
@@ -58,7 +60,15 @@ namespace {
 struct VectorTransferOptimizationPass
     : public PassWrapper<VectorTransferOptimizationPass, FunctionPass> {
   void runOnFunction() override {
-    vector::transferOpflowOpt(getFunction());
+    FuncOp funcOp = getFunction();
+    // Generate vector.shape_cast for dropping leading one dimensions in vector
+    // ops. This increases the chance that we can forward more transfer writes
+    // to transfer reads.
+    OwningRewritePatternList patterns(&getContext());
+    mlir::vector::populateCastAwayVectorLeadingOneDimPatterns(patterns);
+    (void)applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
+
+    vector::transferOpflowOpt(funcOp);
     // Delete potential dead alloc and associated ops after store to load
     // forwarding.
     eraseDeadAllocAndStores(getFunction());

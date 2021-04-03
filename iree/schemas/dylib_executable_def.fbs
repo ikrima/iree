@@ -21,8 +21,6 @@ file_extension "dlib";
 
 // Dynamic library (.so/.dll/.dylib) executable module.
 table DyLibExecutableDef {
-  // A map of entry points to string names with the same order as in the executable op.
-  entry_points:[string];
   // An embedded (as opposed to external) dynamic library file.
   // TODO(scotttodd): List of embedded files?
   // TODO(scotttodd): Format of files, platform information (x86/arm/etc.)

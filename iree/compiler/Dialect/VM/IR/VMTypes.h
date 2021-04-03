@@ -19,12 +19,14 @@
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/TypeSupport.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
 
 // Order matters.
 #include "iree/compiler/Dialect/VM/IR/VMEnums.h.inc"
+#include "iree/compiler/Dialect/VM/IR/VMStructs.h.inc"
 
 namespace mlir {
 namespace iree_compiler {
@@ -52,13 +54,14 @@ class ListType
   /// This emits an error at the specified location and returns null if the
   /// element type isn't supported.
   static ListType getChecked(Type elementType, Location location);
+  static ListType getChecked(function_ref<InFlightDiagnostic()> emitError,
+                             Type elementType);
 
   /// Verifies construction of a type with the given object.
-  static LogicalResult verifyConstructionInvariants(Location loc,
-                                                    Type elementType) {
+  static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
+                              Type elementType) {
     if (!isCompatible(elementType)) {
-      return emitError(loc)
-             << "invalid element type for a list: " << elementType;
+      return emitError() << "invalid element type for a list: " << elementType;
     }
     return success();
   }
@@ -72,7 +75,8 @@ class OpaqueType : public Type::TypeBase<OpaqueType, Type, TypeStorage> {
   using Base::Base;
 };
 
-/// A ref_ptr containing a reference to a ref-object-compatible type.
+/// A ref<T> containing a reference to a ref-object-compatible type.
+/// This models an iree_vm_ref_t intrusive reference counted object.
 class RefType : public Type::TypeBase<RefType, Type, detail::RefTypeStorage> {
  public:
   using Base::Base;
@@ -87,12 +91,14 @@ class RefType : public Type::TypeBase<RefType, Type, detail::RefTypeStorage> {
   /// This emits an error at the specified location and returns null if the
   /// object type isn't supported.
   static RefType getChecked(Type objectType, Location location);
+  static RefType getChecked(function_ref<InFlightDiagnostic()> emitError,
+                            Type objectType);
 
   /// Verifies construction of a type with the given object.
-  static LogicalResult verifyConstructionInvariants(Location loc,
-                                                    Type objectType) {
+  static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
+                              Type objectType) {
     if (!isCompatible(objectType)) {
-      return emitError(loc) << "invalid object type for a ref: " << objectType;
+      return emitError() << "invalid object type for a ref: " << objectType;
     }
     return success();
   }

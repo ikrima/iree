@@ -14,6 +14,7 @@
 
 load("//iree:build_defs.oss.bzl", "iree_cmake_extra_content")
 load("//iree/tools:compilation.bzl", "iree_bytecode_module")
+load("//build_tools/bazel:run_binary_test.bzl", "run_binary_test")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -47,9 +48,8 @@ cc_library(
     deps = [
         ":vm",
         "//iree/base:api",
-        "//iree/base:ref_ptr",
+        "//iree/base:core_headers",
         "//iree/base:status",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
@@ -91,6 +91,7 @@ cc_library(
         "//iree/base:api",
         "//iree/base:core_headers",
         "//iree/base:tracing",
+        "//iree/base/internal",
     ],
 )
 
@@ -98,9 +99,9 @@ cc_test(
     name = "list_test",
     srcs = ["list_test.cc"],
     deps = [
+        ":cc",
         ":impl",
         "//iree/base:api",
-        "//iree/base:ref_ptr",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
     ],
@@ -148,9 +149,9 @@ cc_test(
     name = "ref_test",
     srcs = ["ref_test.cc"],
     deps = [
+        ":cc",
         ":impl",
         "//iree/base:api",
-        "//iree/base:ref_ptr",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
     ],
@@ -162,7 +163,6 @@ cc_test(
     deps = [
         ":impl",
         "//iree/base:api",
-        "//iree/base:ref_ptr",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
     ],
@@ -185,11 +185,13 @@ cc_library(
         "bytecode_module.h",
     ],
     deps = [
+        ":ops",
         ":vm",
         "//iree/base:api",
         "//iree/base:core_headers",
         "//iree/base:flatcc",
         "//iree/base:tracing",
+        "//iree/base/internal",
         "//iree/schemas:bytecode_module_def_c_fbs",
     ],
 )
@@ -238,8 +240,9 @@ cc_test(
     ],
 )
 
-cc_test(
+cc_binary(
     name = "bytecode_module_benchmark",
+    testonly = True,
     srcs = ["bytecode_module_benchmark.cc"],
     deps = [
         ":bytecode_module",
@@ -252,6 +255,12 @@ cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_benchmark//:benchmark",
     ],
+)
+
+run_binary_test(
+    name = "bytecode_module_benchmark_test",
+    args = ["--benchmark_min_time=0"],
+    test_binary = ":bytecode_module_benchmark",
 )
 
 iree_bytecode_module(
@@ -289,12 +298,22 @@ endif()
 )
 
 #===------------------------------------------------------------------------===#
-# Emit-C modules
+# Common VM op implementations
 #===------------------------------------------------------------------------===#
 
 cc_library(
-    name = "c_funcs",
+    name = "ops",
     hdrs = [
-        "c_funcs.h",
+        "ops.h",
+    ],
+    deps = [
+        "//iree/base:api",
+    ],
+)
+
+cc_library(
+    name = "shims",
+    hdrs = [
+        "shims.h",
     ],
 )

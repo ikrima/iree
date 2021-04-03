@@ -16,6 +16,7 @@
 #define IREE_DIALECT_SHAPE_OPS
 
 include "iree/compiler/Dialect/Shape/IR/ShapeBase.td"
+include "iree/compiler/Dialect/Shape/IR/ShapeInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -39,8 +40,9 @@ class Shape_PureOp<string mnemonic, list<OpTrait> traits = []> :
 //===----------------------------------------------------------------------===//
 
 def Shape_TieShapeOp : Shape_PureOp<"tie_shape", [
+    Shape_ShapeCarryingOpInterface,
     AllTypesMatch<["operand", "result"]>,
-    DeclareOpInterfaceMethods<ViewLikeOpInterface>
+    DeclareOpInterfaceMethods<ViewLikeOpInterface>,
   ]> {
   let summary = "Ties a tensor and a shape together.";
   let description = [{
@@ -56,6 +58,12 @@ def Shape_TieShapeOp : Shape_PureOp<"tie_shape", [
   let results = (outs AnyType:$result);
 
   let assemblyFormat = "operands attr-dict `:` type($operand) `,` type($shape)";
+
+  let extraClassDeclaration = [{
+    // ShapeCarryingInterface:
+    Value buildOperandRankedShape(unsigned, OpBuilder) { return shape(); }
+    Value buildResultRankedShape(unsigned, OpBuilder) { return shape(); }
+  }];
 
   let verifier = [{ return verify$cppClass(*this); }];
 
@@ -130,7 +138,7 @@ def Shape_GetRankedShapeOp : Shape_PureOp<"get_ranked_shape"> {
   let builders = [
     // Short-hand for building with a shape equivalent to the tensor operand
     // and 'index' dim type.
-    OpBuilderDAG<(ins "Value":$operand)>,
+    OpBuilder<(ins "Value":$operand)>,
   ];
 
   let extraClassDeclaration = [{
@@ -179,7 +187,7 @@ def Shape_FromExtentTensorOp : Shape_PureOp<"from_extent_tensor",
   let hasCanonicalizer = 1;
   let extraClassDeclaration = [{
     // Declaration for overridden method from InferTypeOpInterface.
-    static bool isCompatibleReturnTypes(ArrayRef<Type> lhs, ArrayRef<Type> rhs);
+    static bool isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs);
   }];
 
   // TODO: Custom parser/printer
@@ -206,7 +214,7 @@ def Shape_ConstRankedShapeOp : Shape_PureOp<"const_ranked_shape",
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilderDAG<(ins "Type":$type)>,
+    OpBuilder<(ins "Type":$type)>,
   ];
   let verifier = [{ return verify$cppClass(*this); }];
 }
@@ -254,9 +262,9 @@ def Shape_RankedDimOp : Shape_PureOp<"ranked_dim"> {
   let verifier = [{ return verify$cppClass(*this); }];
 
   let builders = [
-    OpBuilderDAG<(ins "Type":$dimType, "Value":$shape, "int":$index)>,
+    OpBuilder<(ins "Type":$dimType, "Value":$shape, "int":$index)>,
     // dimType is defaulted to IndexType.
-    OpBuilderDAG<(ins "Value":$shape, "int":$index)>,
+    OpBuilder<(ins "Value":$shape, "int":$index)>,
   ];
 
   let extraClassDeclaration = [{
@@ -288,8 +296,8 @@ def Shape_RankedDimsOp : Shape_PureOp<"ranked_dims"> {
   let assemblyFormat = "$shape `:` type($shape) `->` type($result) attr-dict";
 
   let builders = [
-    OpBuilderDAG<(ins "Type":$dimType, "Value":$shape)>,
-    OpBuilderDAG<(ins "Value":$shape)>,
+    OpBuilder<(ins "Type":$dimType, "Value":$shape)>,
+    OpBuilder<(ins "Value":$shape)>,
   ];
 
   let extraClassDeclaration = [{

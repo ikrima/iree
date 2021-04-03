@@ -33,23 +33,31 @@ EXPLICIT_TARGET_MAPPING = {
     "@llvm-project//mlir:ExecutionEngineUtils": ["MLIRExecutionEngine"],
     "@llvm-project//mlir:GPUDialect": ["MLIRGPU"],
     "@llvm-project//mlir:GPUTransforms": ["MLIRGPU"],
+    "@llvm-project//mlir:LinalgInterfaces": ["MLIRLinalg"],
     "@llvm-project//mlir:LinalgOps": ["MLIRLinalg"],
     "@llvm-project//mlir:LLVMDialect": ["MLIRLLVMIR"],
     "@llvm-project//mlir:LLVMTransforms": ["MLIRStandardToLLVM"],
+    "@llvm-project//mlir:MathDialect": ["MLIRMath"],
+    "@llvm-project//mlir:MemRefDialect": ["MLIRMemRef"],
     "@llvm-project//mlir:SCFToGPUPass": ["MLIRSCFToGPU"],
     "@llvm-project//mlir:SCFDialect": ["MLIRSCF"],
     "@llvm-project//mlir:StandardOps": ["MLIRStandard"],
     "@llvm-project//mlir:ShapeTransforms": ["MLIRShapeOpsTransforms"],
     "@llvm-project//mlir:SideEffects": ["MLIRSideEffectInterfaces"],
     "@llvm-project//mlir:SPIRVDialect": ["MLIRSPIRV"],
+    "@llvm-project//mlir:TosaDialect": ["MLIRTosa"],
+    "@llvm-project//mlir:ToLLVMIRTranslation": ["MLIRTargetLLVMIRExport"],
     "@llvm-project//mlir:mlir_c_runner_utils": ["MLIRExecutionEngine"],
     "@llvm-project//mlir:mlir-translate": ["mlir-translate"],
     "@llvm-project//mlir:MlirTableGenMain": ["MLIRTableGen"],
     "@llvm-project//mlir:MlirOptLib": ["MLIROptLib"],
     "@llvm-project//mlir:VectorOps": ["MLIRVector"],
     "@llvm-project//mlir:TensorDialect": ["MLIRTensor"],
+    "@llvm-project//mlir:NVVMDialect": ["MLIRNVVMIR"],
     # Vulkan
     "@iree_vulkan_headers//:vulkan_headers": ["Vulkan::Headers"],
+    # Cuda
+    "@cuda_headers": ["cuda_headers"],
     # The Bazel target maps to the IMPORTED target defined by FindVulkan().
     "@vulkan_sdk//:sdk": ["Vulkan::Vulkan"],
     # Misc single targets
@@ -59,8 +67,9 @@ EXPLICIT_TARGET_MAPPING = {
     "@com_google_googletest//:gtest": ["gmock", "gtest"],
     "@renderdoc_api//:renderdoc_app": ["renderdoc_api::renderdoc_app"],
     "@pffft": ["pffft"],
-    "@com_github_pytorch_cpuinfo//:cpuinfo": ["cpuinfo"],
-    "@half//:half": ["half"],
+    "@spirv_cross//:spirv_cross_lib": ["spirv-cross-msl"],
+    "@cpuinfo": ["cpuinfo"],
+    "@half//:includes": ["half::includes"],
     "@vulkan_memory_allocator//:impl_header_only": ["vulkan_memory_allocator"],
 }
 
@@ -68,7 +77,6 @@ EXPLICIT_TARGET_MAPPING = {
 def _convert_absl_target(target):
   # Default to a pattern substitution approach.
   # Take "absl::" and append the name part of the full target identifier, e.g.
-  #   "@com_google_absl//absl/memory"         -> "absl::memory"
   #   "@com_google_absl//absl/types:optional" -> "absl::optional"
   #   "@com_google_absl//absl/types:span"     -> "absl::span"
   if ":" in target:
@@ -118,7 +126,7 @@ def convert_external_target(target):
     return _convert_llvm_target(target)
   if target.startswith("@llvm-project//mlir"):
     return _convert_mlir_target(target)
-  if target.startswith("@org_tensorflow//tensorflow/compiler/mlir"):
+  if target.startswith("@mlir-hlo//"):
     # All Bazel targets map to a single CMake target.
     return ["tensorflow::mlir_hlo"]
   if target.startswith("@com_google_ruy//ruy"):

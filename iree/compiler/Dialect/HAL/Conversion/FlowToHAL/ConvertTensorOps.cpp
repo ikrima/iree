@@ -32,55 +32,6 @@ namespace mlir {
 namespace iree_compiler {
 namespace {
 
-class ConstantTensorOpConversion
-    : public OpConversionPattern<mlir::ConstantOp> {
- public:
-  ConstantTensorOpConversion(MLIRContext *ctx, TypeConverter &converter)
-      : OpConversionPattern(ctx) {}
-
-  LogicalResult matchAndRewrite(
-      mlir::ConstantOp constantOp, llvm::ArrayRef<Value> newOperands,
-      ConversionPatternRewriter &rewriter) const override {
-    if (!constantOp.getType().isa<TensorType>()) return failure();
-
-    auto device =
-        rewriter.createOrFold<IREE::HAL::ExSharedDeviceOp>(constantOp.getLoc());
-    auto allocator = rewriter.createOrFold<IREE::HAL::DeviceAllocatorOp>(
-        constantOp.getLoc(), device);
-
-    // TODO(benvanik): compute from SSA use-def chain uses.
-    IREE::HAL::MemoryTypeBitfield memoryTypes =
-        IREE::HAL::MemoryTypeBitfield::DeviceLocal |
-        IREE::HAL::MemoryTypeBitfield::HostVisible;
-    IREE::HAL::BufferUsageBitfield bufferUsage =
-        IREE::HAL::BufferUsageBitfield::All |
-        IREE::HAL::BufferUsageBitfield::Constant;
-
-    auto elementsAttr = constantOp.getValue().cast<ElementsAttr>();
-    auto elementsTy = elementsAttr.getType().cast<ShapedType>();
-
-    // Expand boolean elements to the minimum bit widht supported by the HAL
-    // (8-bits).
-    // To improve memory bandwidth and increase computae we should prefer to
-    // pack 1-bit tensors into wider storage before this lossy conversion. For
-    // example bitwise ops on 8x32xi1 can be converted to ops on tensor<8xi32>.
-    if (elementsTy.getElementType().isInteger(1)) {
-      elementsAttr =
-          elementsAttr.mapValues(rewriter.getIntegerType(8),
-                                 llvm::function_ref<APInt(const APInt &val)>(
-                                     [](const APInt &val) -> APInt {
-                                       return APInt(8, val.getBoolValue());
-                                     }));
-    }
-
-    auto buffer = rewriter.createOrFold<IREE::HAL::AllocatorAllocateConstOp>(
-        constantOp.getLoc(), allocator, memoryTypes, bufferUsage, elementsAttr);
-
-    rewriter.replaceOp(constantOp, {buffer});
-    return success();
-  }
-};
-
 class TensorLoadOpConversion
     : public OpConversionPattern<IREE::Flow::TensorLoadOp> {
  public:
@@ -90,7 +41,8 @@ class TensorLoadOpConversion
   LogicalResult matchAndRewrite(
       IREE::Flow::TensorLoadOp loadOp, llvm::ArrayRef<Value> newOperands,
       ConversionPatternRewriter &rewriter) const override {
-    IREE::Flow::TensorLoadOp::Adaptor operands(newOperands);
+    IREE::Flow::TensorLoadOp::Adaptor operands(newOperands,
+                                               loadOp->getAttrDictionary());
     auto source = IREE::HAL::TensorRewriteAdaptor::getChecked(
         loadOp.getLoc(), loadOp.source(), operands.source(), rewriter);
     if (!source.hasValue()) {
@@ -117,7 +69,8 @@ class TensorStoreOpConversion
   LogicalResult matchAndRewrite(
       IREE::Flow::TensorStoreOp storeOp, llvm::ArrayRef<Value> newOperands,
       ConversionPatternRewriter &rewriter) const override {
-    IREE::Flow::TensorStoreOp::Adaptor operands(newOperands);
+    IREE::Flow::TensorStoreOp::Adaptor operands(newOperands,
+                                                storeOp->getAttrDictionary());
     auto target = IREE::HAL::TensorRewriteAdaptor::getChecked(
         storeOp.getLoc(), storeOp.target(), operands.target(), rewriter);
 
@@ -150,7 +103,7 @@ class TensorTraceOpConversion
       bufferViews.emplace_back(adaptor.getBufferView());
     }
     rewriter.replaceOpWithNewOp<IREE::HAL::BufferViewTraceOp>(
-        traceOp, bufferViews, traceOp.trace_infoAttr());
+        traceOp, traceOp.keyAttr(), bufferViews);
     return success();
   }
 };
@@ -160,9 +113,8 @@ class TensorTraceOpConversion
 void populateFlowTensorToHALPatterns(MLIRContext *context,
                                      OwningRewritePatternList &patterns,
                                      TypeConverter &converter) {
-  patterns.insert<ConstantTensorOpConversion, TensorLoadOpConversion,
-                  TensorStoreOpConversion, TensorTraceOpConversion>(context,
-                                                                    converter);
+  patterns.insert<TensorLoadOpConversion, TensorStoreOpConversion,
+                  TensorTraceOpConversion>(context, converter);
 }
 
 }  // namespace iree_compiler

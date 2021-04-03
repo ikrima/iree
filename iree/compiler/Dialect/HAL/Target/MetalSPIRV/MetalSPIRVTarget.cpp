@@ -79,7 +79,7 @@ class MetalSPIRVTargetBackend : public SPIRVTargetBackend {
     // names for constructing pipeline states. Get an ordered list of the entry
     // point names.
     SmallVector<StringRef, 8> entryPointNames;
-    if (auto scheduleAttr = innerModuleOp.getAttrOfType<ArrayAttr>(
+    if (auto scheduleAttr = innerModuleOp->getAttrOfType<ArrayAttr>(
             iree_compiler::getEntryPointScheduleAttrName())) {
       // We have multiple entry points in this module. Make sure the order
       // specified in the schedule attribute is respected.
@@ -143,7 +143,7 @@ class MetalSPIRVTargetBackend : public SPIRVTargetBackend {
 
     // 5. Add the binary data to the target executable.
     executableBuilder.create<IREE::HAL::ExecutableBinaryOp>(
-        targetOp.getLoc(),
+        targetOp.getLoc(), targetOp.sym_name(),
         static_cast<uint32_t>(IREE::HAL::ExecutableFormat::Metal),
         builder.getBufferAttr(executableBuilder.getContext()));
 

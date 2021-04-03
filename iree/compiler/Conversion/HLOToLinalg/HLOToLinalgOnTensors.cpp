@@ -22,11 +22,14 @@
 #include <memory>
 
 #include "iree/compiler/Conversion/HLOToLinalg/HLOToLinalgOnTensorPasses.h"
+#include "iree/compiler/Dialect/Flow/IR/FlowOps.h"
 #include "iree/compiler/Dialect/Shape/IR/ShapeDialect.h"
 #include "iree/compiler/Dialect/Shape/IR/ShapeOps.h"
 #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "mlir-hlo/Dialect/mhlo/transforms/rewriters.h"
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
@@ -35,6 +38,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -46,103 +50,133 @@ namespace iree_compiler {
 namespace {
 
 //===----------------------------------------------------------------------===//
-// mhlo.torch_index_select conversion patterns.
+// linalg.pad_tensor conversion patterns.
 //===----------------------------------------------------------------------===//
 
-static Value getOutputTensor(OpBuilder &builder, Location loc, Value opResult) {
-  ShapedType outputType = opResult.getType().cast<ShapedType>();
-  if (outputType.hasStaticShape()) {
-    return builder.create<linalg::InitTensorOp>(loc, outputType.getShape(),
-                                                outputType.getElementType());
-  }
-  // Check for tie-shape operations for the result to get the shape of the
-  // output.
-  SmallVector<Value, 4> dynamicSizes;
-  for (Operation *user : opResult.getUsers()) {
-    auto tieShapeOp = dyn_cast<Shape::TieShapeOp>(user);
-    if (!tieShapeOp) continue;
-    auto makeShapeOp =
-        tieShapeOp.shape().getDefiningOp<Shape::MakeRankedShapeOp>();
-    if (!makeShapeOp) continue;
-    dynamicSizes = llvm::to_vector<4>(makeShapeOp.dynamic_dimensions());
-    break;
-  }
-  if (outputType.getNumDynamicDims() != dynamicSizes.size()) return nullptr;
-  return builder.create<linalg::InitTensorOp>(
-      loc, dynamicSizes, outputType.getShape(), outputType.getElementType());
-}
-
 namespace {
-
-/// Converts xla-hlo.torch_index_select op to a linalg.indexed_generic op.
-struct TorchIndexSelectOpConversion
-    : public OpConversionPattern<mhlo::TorchIndexSelectOp> {
-  using OpConversionPattern<mhlo::TorchIndexSelectOp>::OpConversionPattern;
+/// Pattern to convert a linalg.pad_tensor operation into a fill + subtensor
+/// insert. This is needed till pad_tensor op can be fused with its consumers.
+struct PadTensorOpConversion : public OpConversionPattern<linalg::PadTensorOp> {
+  using OpConversionPattern<linalg::PadTensorOp>::OpConversionPattern;
 
   LogicalResult matchAndRewrite(
-      mhlo::TorchIndexSelectOp op, ArrayRef<Value> args,
-      ConversionPatternRewriter &rewriter) const final {
-    mhlo::TorchIndexSelectOp::Adaptor adaptor(args);
-    int axis = op.dim();
-    int batch = op.batch_dims();
-    auto indexShapeType = adaptor.index().getType().dyn_cast<ShapedType>();
-    int nIndices = indexShapeType.getRank();
-    auto inputShapeType = adaptor.input().getType().dyn_cast<ShapedType>();
-    if (axis < 0) axis += inputShapeType.getRank();
-    if (batch < 0) batch += nIndices;
+      linalg::PadTensorOp padTensorOp, ArrayRef<Value> args,
+      ConversionPatternRewriter &rewriter) const override {
+    linalg::PadTensorOpAdaptor padOpAdaptor(args,
+                                            padTensorOp->getAttrDictionary());
+    // Check that the region is just a yield operation which is returning a
+    // scalar that is not one of the arguments of the linalg operation.
+    Region &region = padTensorOp.region();
+    Block &block = region.front();
+    if (!llvm::hasSingleElement(block)) return failure();
+    auto yieldOp = cast<linalg::YieldOp>(block.getTerminator());
+    if (!llvm::hasSingleElement(yieldOp.values())) return failure();
+    Value yieldVal = yieldOp.values().front();
+    if (llvm::any_of(block.getArguments(),
+                     [&](Value v) { return v == yieldVal; })) {
+      return failure();
+    }
+
+    OpBuilder::InsertionGuard g(rewriter);
+    Location loc = padTensorOp.getLoc();
+    auto lowPad = padTensorOp.getMixedLowPad();
+    auto highPad = padTensorOp.getMixedHighPad();
+    Value source = padOpAdaptor.source();
+    RankedTensorType sourceType = padTensorOp.getSourceType();
+    int64_t rank = sourceType.getRank();
+
+    // TODO(ravishankarm): Use shape inference interface to get this.
+    SmallVector<OpFoldResult> sourceShape;
+    SmallVector<Value> outputShape;
+    for (int64_t dim : llvm::seq<int64_t>(0, rank)) {
+      SmallVector<Value> mapValues;
+      Value sourceDim = rewriter.createOrFold<memref::DimOp>(loc, source, dim);
+      mapValues.push_back(sourceDim);
+      sourceShape.push_back(sourceDim);
+      AffineExpr expr = rewriter.getAffineDimExpr(0);
+      unsigned numSymbols = 0;
+      auto addValueOrAttr = [&](AffineExpr e, OpFoldResult valueOrAttr) {
+        if (auto attr = valueOrAttr.dyn_cast<Attribute>()) {
+          e = e + attr.cast<IntegerAttr>().getInt();
+          return e;
+        }
+        e = e + rewriter.getAffineSymbolExpr(numSymbols++);
+        mapValues.push_back(valueOrAttr.get<Value>());
+        return e;
+      };
+      expr = addValueOrAttr(expr, lowPad[dim]);
+      expr = addValueOrAttr(expr, highPad[dim]);
+      outputShape.push_back(linalg::applyMapToValues(
+          rewriter, loc, AffineMap::get(1, numSymbols, expr), mapValues)[0]);
+    }
+    Value initTensor = rewriter.create<linalg::InitTensorOp>(
+        loc, outputShape, sourceType.getElementType());
+    Value fill =
+        rewriter.create<linalg::FillOp>(loc, initTensor, yieldVal).getResult(0);
+    SmallVector<OpFoldResult> strides(rank, rewriter.getI64IntegerAttr(1));
+    Value replacement = rewriter.create<SubTensorInsertOp>(
+        loc, source, fill, lowPad, sourceShape, strides);
+    if (padTensorOp.getResultType() != replacement.getType()) {
+      replacement = rewriter.create<tensor::CastOp>(
+          loc, padTensorOp.getResultType(), replacement);
+    }
+    rewriter.replaceOp(padTensorOp, replacement);
+    return success();
+  }
+};
+
+}  // namespace
+
+//===----------------------------------------------------------------------===//
+// mhlo.concatenate conversion patterns.
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// Converts mhlo.concatenate operation to subtensor ops + subtensor_insert ops.
+struct ConcatenateOpConversion
+    : public OpConversionPattern<mhlo::ConcatenateOp> {
+  using OpConversionPattern<mhlo::ConcatenateOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      mhlo::ConcatenateOp op, ArrayRef<Value> args,
+      ConversionPatternRewriter &rewriter) const override {
+    auto resultType = op.getResult().getType().dyn_cast<RankedTensorType>();
+    if (!resultType || !resultType.hasStaticShape()) {
+      return rewriter.notifyMatchFailure(op,
+                                         "expected static shape for output");
+    }
 
     Location loc = op.getLoc();
-    Value output = op.getResult();
-    int rank = output.getType().cast<ShapedType>().getRank();
-    SmallVector<AffineMap, 2> indexingMaps;
-    SmallVector<AffineExpr, 4> exprs;
-    for (int i = 0; i < batch; ++i)
-      exprs.push_back(rewriter.getAffineDimExpr(i));
-    for (int i = 0, e = nIndices - batch; i < e; ++i)
-      exprs.push_back(rewriter.getAffineDimExpr(axis + i));
-    indexingMaps.emplace_back(
-        AffineMap::get(rank, /*symbolCount=*/0, exprs, rewriter.getContext()));
-    indexingMaps.emplace_back(rewriter.getMultiDimIdentityMap(rank));
-    SmallVector<StringRef, 3> loopTypes(rank, getParallelIteratorTypeName());
-    ShapedType outputType = op.getResult().getType().cast<ShapedType>();
-    Value initOp = getOutputTensor(rewriter, loc, op.getResult());
-    if (!initOp) return failure();
-    auto linalgOp = rewriter.create<linalg::IndexedGenericOp>(
-        loc, /*resultTensors=*/ArrayRef<Type>{op.getResult().getType()},
-        /*inputs=*/adaptor.index(),
-        /*outputBuffers=*/initOp, indexingMaps, loopTypes);
-
-    SmallVector<Type, 4> bodyArgTypes, opResultTypes;
-    SmallVector<Value, 2> linalgOpArgs = {adaptor.index()};
-    // Add a block to the region.
-    auto *region = &linalgOp.region();
-    auto *block = rewriter.createBlock(region, region->end());
-    bodyArgTypes.append(rank, rewriter.getIndexType());
-    for (auto blockArgs : linalgOpArgs) {
-      bodyArgTypes.push_back(
-          blockArgs.getType().cast<ShapedType>().getElementType());
+    int dim = op.dimension();
+    int rank = resultType.getRank();
+    SmallVector<Value, 3> offsets, sizes, strides;
+    for (int i = 0; i < rank; ++i) {
+      offsets.push_back(rewriter.create<ConstantIndexOp>(loc, 0));
+      sizes.push_back(rewriter.create<memref::DimOp>(loc, args[0], i));
+      strides.push_back(rewriter.create<ConstantIndexOp>(loc, 1));
     }
-    block->addArguments(bodyArgTypes);
-    block->addArguments(outputType.getElementType());
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPointToEnd(block);
-
-    SmallVector<Value, 4> indices;
-    Value castedValue = rewriter.create<IndexCastOp>(
-        loc, block->getArgument(rank), rewriter.getIndexType());
-    for (int i = 0; i < axis; ++i) {
-      indices.push_back(block->getArgument(i));
+    Value resultDimSize = rewriter.create<ConstantIndexOp>(loc, 0);
+    for (auto arg : args) {
+      auto size = rewriter.create<memref::DimOp>(loc, arg, dim);
+      resultDimSize = rewriter.create<AddIOp>(loc, resultDimSize, size);
     }
-    indices.push_back(castedValue);
-    for (int i = axis + nIndices - batch; i < rank; ++i) {
-      indices.push_back(block->getArgument(i));
+    sizes[dim] = resultDimSize;
+    auto initTensor = rewriter.create<linalg::InitTensorOp>(
+        loc, resultType.getShape(), resultType.getElementType());
+    auto zeroAttr = rewriter.getZeroAttr(resultType.getElementType());
+    Value zero = rewriter.create<ConstantOp>(loc, zeroAttr);
+    Value result =
+        rewriter.create<linalg::FillOp>(loc, initTensor, zero).getResult(0);
+
+    Value accBound = rewriter.create<ConstantIndexOp>(loc, 0);
+    for (auto arg : args) {
+      offsets[dim] = accBound;
+      sizes[dim] = rewriter.create<memref::DimOp>(loc, arg, dim);
+      result = rewriter.create<SubTensorInsertOp>(loc, arg, result, offsets,
+                                                  sizes, strides);
+      accBound = rewriter.create<AddIOp>(loc, accBound, sizes[dim]);
     }
-
-    Value res =
-        rewriter.create<tensor::ExtractOp>(loc, adaptor.input(), indices);
-    rewriter.create<linalg::YieldOp>(loc, res);
-
-    rewriter.replaceOp(op, linalgOp.getResults());
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -150,30 +184,57 @@ struct TorchIndexSelectOpConversion
 
 struct ConvertHLOToLinalgOnTensorsPass
     : public PassWrapper<ConvertHLOToLinalgOnTensorsPass, FunctionPass> {
+  ConvertHLOToLinalgOnTensorsPass(bool useLinalgOnTensorsPath = false)
+      : useLinalgOnTensorsPath(useLinalgOnTensorsPath){};
+
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<linalg::LinalgDialect, mhlo::MhloDialect, ShapeDialect>();
+    registry.insert<IREE::Flow::FlowDialect, linalg::LinalgDialect,
+                    mhlo::MhloDialect, ShapeDialect, math::MathDialect,
+                    memref::MemRefDialect>();
   }
 
   void runOnFunction() override {
-    OwningRewritePatternList patterns;
-    populateHLOToLinalgOnTensorsConversionPatterns(&getContext(), patterns);
+    OwningRewritePatternList patterns(&getContext());
+    MLIRContext *context = &getContext();
+    populateHLOToLinalgOnTensorsConversionPatterns(context, patterns);
+    if (useLinalgOnTensorsPath) {
+      patterns.insert<PadTensorOpConversion>(context);
+    }
 
     ConversionTarget target(getContext());
-    // Don't convert the body of reduction ops.
-    target.addDynamicallyLegalDialect<mhlo::MhloDialect>(
-        Optional<ConversionTarget::DynamicLegalityCallbackFn>(
-            [](Operation *op) {
-              auto parentOp = op->getParentRegion()->getParentOp();
-              return isa<mhlo::ReduceOp>(parentOp) ||
-                     isa<mhlo::ReduceWindowOp>(parentOp);
-            }));
+    target.addIllegalDialect<mhlo::MhloDialect>();
     // Let the rest fall through.
     target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
+    if (useLinalgOnTensorsPath) {
+      // Set linalg.pad_tensor illegal for now.
+      target.addIllegalOp<linalg::PadTensorOp>();
+    }
 
     if (failed(applyPartialConversion(getFunction(), target,
                                       std::move(patterns)))) {
       signalPassFailure();
     }
+  }
+
+ private:
+  bool useLinalgOnTensorsPath;
+};
+
+/// This pass is just added for lit-testing when using the linalg on tensors
+/// path. Remove when the linalg on tensors path becomes default.
+struct ConvertHLOToLinalgOnTensorsPassExperimental
+    : public ConvertHLOToLinalgOnTensorsPass {
+  ConvertHLOToLinalgOnTensorsPassExperimental()
+      : ConvertHLOToLinalgOnTensorsPass(true){};
+};
+
+/// Convert mhlo.constant op into std.const.
+struct ConstOpConversion : public OpRewritePattern<mhlo::ConstOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(mhlo::ConstOp op,
+                                PatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<ConstantOp>(op, op.value());
+    return success();
   }
 };
 
@@ -182,16 +243,27 @@ struct ConvertHLOToLinalgOnTensorsPass
 void populateHLOToLinalgOnTensorsConversionPatterns(
     MLIRContext *context, OwningRewritePatternList &patterns) {
   mhlo::populateHLOToLinalgConversionPattern(context, &patterns);
-  patterns.insert<TorchIndexSelectOpConversion>(context);
+  patterns.insert<ConstOpConversion, ConcatenateOpConversion>(context);
 }
 
-std::unique_ptr<OperationPass<FuncOp>> createHLOToLinalgOnTensorsPass() {
-  return std::make_unique<ConvertHLOToLinalgOnTensorsPass>();
+static llvm::cl::opt<bool> clUseLinalgOnTensorsPath(
+    "iree-linalg-on-tensors-path",
+    llvm::cl::desc("Convert from MHLO to Linalg on tensors for linalg on "
+                   "tensor codegen path"),
+    llvm::cl::init(false));
+
+std::unique_ptr<OperationPass<FuncOp>> createHLOToLinalgOnTensorsPass(
+    bool useLinalgOnTensorsPath) {
+  return std::make_unique<ConvertHLOToLinalgOnTensorsPass>(
+      useLinalgOnTensorsPath);
 }
 
 static PassRegistration<ConvertHLOToLinalgOnTensorsPass> legalize_pass(
     "iree-codegen-hlo-to-linalg-on-tensors",
-    "Convert from XLA-HLO ops to Linalg ops on tensors");
+    "Convert from XLA-HLO ops to Linalg ops on tensors", []() {
+      return std::make_unique<ConvertHLOToLinalgOnTensorsPass>(
+          clUseLinalgOnTensorsPath);
+    });
 
 }  // namespace iree_compiler
 }  // namespace mlir

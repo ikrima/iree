@@ -12,10 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("//build_tools/bazel:tblgen.bzl", "gentbl")
+
 package(
     default_visibility = ["//visibility:public"],
     features = ["layering_check"],
     licenses = ["notice"],  # Apache 2.0
+)
+
+gentbl(
+    name = "FoldTensorExtractOpIncGen",
+    tbl_outs = [
+        (
+            "-gen-rewriters",
+            "FoldTensorExtractOp.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "FoldTensorExtractOp.td",
+    td_srcs = [
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:MemRefOpsTdFiles",
+        "@llvm-project//mlir:TensorOpsTdFiles",
+    ],
 )
 
 cc_library(
@@ -23,17 +42,20 @@ cc_library(
     srcs = [
         "ConvImg2ColMatmulConversion.cpp",
         "ConvertToLLVM.cpp",
+        "FoldTensorExtractOpPass.cpp",
         "KernelDispatch.cpp",
-        "LinalgBufferizePass.cpp",
-        "LinalgRewriteDestructiveUpdatesPass.cpp",
-        "LinalgTileAndDistributeOnTensorsPass.cpp",
+        "LLVMCodeGenOptions.cpp",
         "LinalgTileAndDistributePass.cpp",
         "LinalgTileAndVectorizePass.cpp",
+        "LinalgVectorizePass.cpp",
+        "MaterializeCPULaunchConfigurationPass.cpp",
         "Passes.cpp",
         "PlanConvLoopOrder.cpp",
+        "UnfuseFMAOps.cpp",
     ],
     hdrs = [
         "KernelDispatch.h",
+        "LLVMCodeGenOptions.h",
         "Passes.h",
     ],
     deps = [
@@ -41,7 +63,7 @@ cc_library(
         "//iree/compiler/Conversion/Common",
         "//iree/compiler/Conversion/HLOToHLO",
         "//iree/compiler/Conversion/HLOToLinalg",
-        "//iree/compiler/Conversion/LLVMToLLVM",
+        "//iree/compiler/Conversion/LinalgToLLVM:FoldTensorExtractOpIncGen",
         "//iree/compiler/Dialect/HAL/IR",
         "//iree/compiler/Dialect/HAL/IR:HALDialect",
         "//iree/compiler/Dialect/IREE/IR",
@@ -50,18 +72,23 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineToStandardTransforms",
         "@llvm-project//mlir:CFGTransforms",
+        "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LLVMTransforms",
+        "@llvm-project//mlir:LinalgInterfaces",
         "@llvm-project//mlir:LinalgOps",
         "@llvm-project//mlir:LinalgToLLVM",
         "@llvm-project//mlir:LinalgTransforms",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MathTransforms",
+        "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:StandardOps",
         "@llvm-project//mlir:StandardOpsTransforms",
         "@llvm-project//mlir:StandardToSPIRV",
-        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:VectorOps",
         "@llvm-project//mlir:VectorToLLVM",

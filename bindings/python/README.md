@@ -2,34 +2,27 @@
 
 Top-level packages:
 
-* `pyiree.compiler2` : Main compiler API (soon to be renamed to 'compiler').
-* `pyiree.rt` : Runtime components for executing binaries.
-* `pyiree.tools.core` : Core tools for executing the compiler.
-* `pyiree.tools.tf` : TensorFlow compiler tools (if enabled).
-
-Deprecated packages:
-
-* `pyiree.compiler`
-* `pyiree.common`
-* `pyiree.tf.compiler`
+* `iree.compiler` : Main compiler API.
+* `iree.runtime` : Runtime components for executing binaries.
+* `iree.tools.core` : Core tools for executing the compiler.
+* `iree.tools.tf` : TensorFlow compiler tools (if enabled).
 
 ## Installing
 
-First perform a normal CMake build with the following options:
+First perform a normal CMake build/install with the following options:
 
+* `-DCMAKE_INSTALL_PREFIX=...path to install to...` : Sets up installation
+  prefix.
 * `-DIREE_BUILD_PYTHON_BINDINGS=ON` : Enables Python Bindings
-* `-DIREE_BUILD_TENSORFLOW_COMPILER=ON` (optional) : Enables building the
-  TensorFlow compilers (note: requires additional dependencies. see overall
-  build docs).
 
-Then from the build directory, run:
+Then from the install directory, run:
 
 ```shell
+# Multiple packages will exist under python_packages. Choose the one you want.
+cd python_packages/iree_compiler
 # Install into a local installation or virtualenv.
-python bindings/python/setup.py install
-
-# Build wheels.
-python bindings/python/setup.py bdist_wheel
+python setup.py install
+python -m pip wheel .
 ```
 
 ## Development mode

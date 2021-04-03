@@ -20,6 +20,7 @@
 #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "mlir/Dialect/Linalg/IR/LinalgTypes.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
+#include "mlir/Dialect/Tosa/IR/TosaOps.h"
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
 
@@ -37,7 +38,8 @@ bool isOpOfKnownDialect(Operation *op) {
          dialectNamespace == linalg::LinalgDialect::getDialectNamespace() ||
          dialectNamespace == mhlo::MhloDialect::getDialectNamespace() ||
          dialectNamespace == mlir::StandardOpsDialect::getDialectNamespace() ||
-         dialectNamespace == ShapeDialect::getDialectNamespace();
+         dialectNamespace == ShapeDialect::getDialectNamespace() ||
+         dialectNamespace == tosa::TosaDialect::getDialectNamespace();
 }
 
 namespace {
@@ -79,7 +81,7 @@ LogicalResult buildDispatchRegion(Block *parentBlock, Value workload,
   for (auto *op : ops) {
     opLocs.push_back(op->getLoc());
   }
-  auto regionLoc = FusedLoc::get(opLocs, workload.getContext());
+  auto regionLoc = FusedLoc::get(workload.getContext(), opLocs);
 
   // Get a list of values that we need to capture and values that escape the
   // region and need to be returned.
@@ -169,7 +171,7 @@ ExecutableOp createExecutable(Location loc, StringRef executableName,
   // Gather all reachable functions.
   llvm::SetVector<FuncOp> reachableFuncs;
   for (auto funcOp : funcOps) {
-    findReachableFunctions(funcOp, reachableFuncs, dispatchableFuncOps);
+    (void)findReachableFunctions(funcOp, reachableFuncs, dispatchableFuncOps);
   }
 
   // Create the executable that will contain the outlined region.

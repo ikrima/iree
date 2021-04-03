@@ -118,8 +118,7 @@ void convertCapabilities(Vulkan::TargetEnvAttr vkTargetEnv,
   MAP_8_16_BIT_STORAGE(storagePushConstant8, StoragePushConstant8);
 #undef MAP_8_16_BIT_STORAGE
 
-  auto subgroupFeatures = *symbolizeSubgroupFeature(
-      vkCapabilities.subgroupFeatures().getValue().getZExtValue());
+  auto subgroupFeatures = vkCapabilities.subgroupFeatures().getValue();
 
 #define MAP_SUBGROUP_FEATURE(featureBit)                  \
   if ((subgroupFeatures & SubgroupFeature::featureBit) == \
@@ -170,14 +169,15 @@ spirv::ResourceLimitsAttr convertResourceLimits(
           cooperativeMatrixPropertiesNV.bType(),
           cooperativeMatrixPropertiesNV.cType(),
           cooperativeMatrixPropertiesNV.resultType(),
-          cooperativeMatrixPropertiesNV.scope(), context));
+          cooperativeMatrixPropertiesNV.scope().cast<spirv::ScopeAttr>(),
+          context));
     }
   }
   return spirv::ResourceLimitsAttr::get(
       vkCapabilities.maxComputeSharedMemorySize(),
       vkCapabilities.maxComputeWorkGroupInvocations(),
       vkCapabilities.maxComputeWorkGroupSize(), vkCapabilities.subgroupSize(),
-      ArrayAttr::get(spvAttrs, context), context);
+      ArrayAttr::get(context, spvAttrs), context);
 }
 }  // anonymous namespace
 

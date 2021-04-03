@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if(NOT ${IREE_HAL_DRIVER_VULKAN} OR NOT ${IREE_BUILD_SAMPLES})
+if(NOT "${IREE_HAL_DRIVER_VULKAN}" OR NOT "${IREE_BUILD_SAMPLES}")
   return()
 endif()
 
@@ -51,7 +51,7 @@ iree_cc_library(
     imgui::imgui
     iree::base::api
     iree::base::logging
-    iree::hal::vulkan::api
+    iree::hal::vulkan
     SDL2::SDL2
     Vulkan::Vulkan
 )
@@ -64,9 +64,9 @@ iree_cc_binary(
   DEPS
     ::vulkan_gui_util
     absl::flags
-    iree::base::file_io
-    iree::base::flags
-    iree::base::main
+    iree::base::internal::file_io
+    iree::base::internal::flags
+    iree::base::internal::main
     iree::base::status
     iree::base::tracing
     iree::hal::vulkan::registration

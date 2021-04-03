@@ -21,6 +21,7 @@ package(
 cc_library(
     name = "HLOToHLO",
     srcs = [
+        "Convert1x1ConvToDot.cpp",
         "DecomposeHLOClamp.cpp",
         "DemoteF32ToF16.cpp",
     ],
@@ -35,6 +36,6 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo",
+        "@mlir-hlo//:hlo",
     ],
 )

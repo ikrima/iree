@@ -50,13 +50,15 @@ cc_library(
     ],
     deps = [
         "//iree/base:api",
-        "//iree/base:atomic_slist",
         "//iree/base:core_headers",
         "//iree/base:synchronization",
         "//iree/base:threading",
         "//iree/base:tracing",
-        "//iree/base:wait_handle",
-        "@com_github_pytorch_cpuinfo//:cpuinfo",
+        "//iree/base/internal",
+        "//iree/base/internal:atomic_slist",
+        "//iree/base/internal:prng",
+        "//iree/base/internal:wait_handle",
+        "@cpuinfo",
     ],
 )
 
@@ -67,6 +69,7 @@ cc_test(
         ":task",
         "//iree/base:api",
         "//iree/base:core_headers",
+        "//iree/base/internal:prng",
         "//iree/task/testing:test_util",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
@@ -111,7 +114,10 @@ cc_test(
 
 cc_test(
     name = "scope_test",
-    srcs = ["scope_test.cc"],
+    srcs = [
+        "scope_test.cc",
+        "task_impl.h",
+    ],
     deps = [
         ":task",
         "//iree/base:api",
@@ -122,12 +128,35 @@ cc_test(
 )
 
 cc_test(
+    name = "task_tests",
+    srcs = [
+        "task_test_barrier.cc",
+        "task_test_call.cc",
+        "task_test_dispatch.cc",
+        "task_test_fence.cc",
+        "task_test_nop.cc",
+        "task_test_wait.cc",
+    ],
+    deps = [
+        ":task",
+        "//iree/base:api",
+        "//iree/task/testing:task_test",
+        "//iree/testing:gtest",
+        "//iree/testing:gtest_main",
+    ],
+)
+
+cc_test(
     name = "topology_test",
     srcs = ["topology_test.cc"],
+    tags = [
+        "noasan",  # TODO(benvanik): Does not work on machines with large numbers of cores.
+    ],
     deps = [
         ":task",
         "//iree/base:api",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
+        "@cpuinfo",
     ],
 )

@@ -122,8 +122,8 @@ TEST_P(VMBytecodeDispatchTest, Check) {
   const auto& test_params = GetParam();
   bool expect_failure = absl::StartsWith(test_params.function_name, "fail_");
 
-  iree::Status result = RunFunction(test_params.function_name);
-  if (result.ok()) {
+  iree_status_t status = RunFunction(test_params.function_name);
+  if (iree_status_is_ok(status)) {
     if (expect_failure) {
       GTEST_FAIL() << "Function expected failure but succeeded";
     } else {
@@ -131,10 +131,11 @@ TEST_P(VMBytecodeDispatchTest, Check) {
     }
   } else {
     if (expect_failure) {
+      iree_status_ignore(status);
       GTEST_SUCCEED();
     } else {
       GTEST_FAIL() << "Function expected success but failed with error: "
-                   << result.ToString();
+                   << iree::Status(std::move(status));
     }
   }
 }

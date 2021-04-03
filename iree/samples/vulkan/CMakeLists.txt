@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if(NOT ${IREE_TARGET_BACKEND_VULKAN-SPIRV} OR NOT ${IREE_HAL_DRIVER_VULKAN})
+if(NOT "${IREE_TARGET_BACKEND_VULKAN-SPIRV}" OR
+   NOT "${IREE_HAL_DRIVER_VULKAN}")
   return()
 endif()
 
@@ -44,7 +45,7 @@ iree_cc_binary(
     "vulkan_inference_gui.cc"
   DEPS
     absl::base
-    iree::base::main
+    iree::base::internal::main
     iree::hal::vulkan::registration
     iree::modules::hal
     iree::samples::vulkan::simple_mul_bytecode_module_cc

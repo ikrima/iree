@@ -24,16 +24,15 @@ namespace mlir {
 namespace iree_compiler {
 
 void addHLOToLinalgOnBuffersPasses(OpPassManager &pm) {
-  addHLOToLinalgOnTensorsPasses(pm);
-  pm.addNestedPass<FuncOp>(createHLOToLinalgOnBuffersPass());
-}
-
-void addHLOToLinalgOnTensorsPasses(OpPassManager &pm) {
-  pm.addNestedPass<FuncOp>(createHLOToLinalgOnTensorsPass());
+  // HACK: this is only for the old linalg-on-buffers path. It should be
+  // deleted.
+  pm.addNestedPass<FuncOp>(createHLOToLinalgOnTensorsPass(false));
+  pm.addNestedPass<FuncOp>(createConvertElementwiseToLinalgPass());
   pm.addNestedPass<FuncOp>(createLinalgFoldUnitExtentDimsPass());
   pm.addNestedPass<FuncOp>(createCanonicalizerPass());
   pm.addNestedPass<FuncOp>(createFusionOfTensorOpsPass());
   pm.addNestedPass<FuncOp>(createCSEPass());
+  pm.addNestedPass<FuncOp>(createHLOToLinalgOnBuffersPass());
 }
 
 static PassPipelineRegistration<> hloToLinalgOnBuffersPipeline(

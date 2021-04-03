@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "iree/compiler/Dialect/VM/Target/C/CModuleTarget.h"
+#include "iree/compiler/Dialect/VM/Target/C/TranslationFlags.h"
 #include "mlir/Translation.h"
 
 namespace mlir {
@@ -24,7 +25,8 @@ void registerToCTranslation() {
   TranslateFromMLIRRegistration toCModule(
       "iree-vm-ir-to-c-module",
       [](mlir::ModuleOp moduleOp, llvm::raw_ostream &output) {
-        return translateModuleToC(moduleOp, output);
+        return translateModuleToC(moduleOp, getCTargetOptionsFromFlags(),
+                                  output);
       });
 }
 

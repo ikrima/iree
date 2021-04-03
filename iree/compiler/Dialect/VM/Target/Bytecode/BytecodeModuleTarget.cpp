@@ -25,8 +25,10 @@
 #include "iree/compiler/Dialect/VM/IR/VMOps.h"
 #include "iree/compiler/Dialect/VM/Target/Bytecode/BytecodeEncoder.h"
 #include "iree/compiler/Dialect/VM/Target/Bytecode/ConstantEncoder.h"
+#include "iree/compiler/Dialect/VM/Target/CallingConventionUtils.h"
 #include "iree/compiler/Dialect/VM/Transforms/Passes.h"
 #include "iree/compiler/Utils/FlatbufferUtils.h"
+#include "iree/compiler/Utils/TracingUtils.h"
 #include "iree/schemas/bytecode_module_def_builder.h"
 #include "iree/schemas/bytecode_module_def_json_printer.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -48,51 +50,12 @@ namespace VM {
 
 namespace {
 
-struct ModuleCounts {
-  int importFuncs = 0;
-  int exportFuncs = 0;
-  int internalFuncs = 0;
-  size_t globalBytes = 0;
-  int globalRefs = 0;
-  int rodatas = 0;
-  int rwdatas = 0;
-};
-
 struct TypeDef {
   Type type;
   std::string full_name;
 };
 
 }  // namespace
-
-// Computes symbol counts within the given |moduleOp|.
-// These counts, including the global byte reservation count, are expected to
-// match the actual values during serialization.
-//
-// Preconditions:
-//  - OrdinalAllocationPass has run on the module
-//  - All ordinals start from 0 and are contiguous
-static ModuleCounts computeModuleSymbolCounts(IREE::VM::ModuleOp moduleOp) {
-  ModuleCounts counts;
-  for (auto &op : moduleOp.getBlock().getOperations()) {
-    if (auto funcOp = dyn_cast<IREE::VM::FuncOp>(op)) {
-      ++counts.internalFuncs;
-    } else if (isa<IREE::VM::ExportOp>(op)) {
-      ++counts.exportFuncs;
-    } else if (isa<IREE::VM::ImportOp>(op)) {
-      ++counts.importFuncs;
-    } else if (isa<IREE::VM::RodataOp>(op)) {
-      ++counts.rodatas;
-    } else if (isa<IREE::VM::GlobalRefOp>(op)) {
-      ++counts.globalRefs;
-    } else if (auto globalOp = dyn_cast<VMGlobalOp>(op)) {
-      counts.globalBytes =
-          std::max(counts.globalBytes,
-                   globalOp.getOrdinal() + globalOp.getStorageSize());
-    }
-  }
-  return counts;
-}
 
 // Finds all types in the module and builds a type table mapping the index in
 // the vector to the type represented by the type ordinal.
@@ -145,7 +108,7 @@ static std::vector<TypeDef> buildTypeTable(IREE::VM::ModuleOp moduleOp) {
 // required transformations (such as debug op stripping).
 static LogicalResult canonicalizeModule(BytecodeTargetOptions targetOptions,
                                         IREE::VM::ModuleOp moduleOp) {
-  OwningRewritePatternList patterns;
+  OwningRewritePatternList patterns(moduleOp.getContext());
   ConversionTarget target(*moduleOp.getContext());
   target.addLegalDialect<IREE::VM::VMDialect>();
   target.addLegalOp<IREE::DoNotOptimizeOp>();
@@ -175,6 +138,7 @@ static LogicalResult canonicalizeModule(BytecodeTargetOptions targetOptions,
 
   PassManager passManager(context);
   mlir::applyPassManagerCLOptions(passManager);
+  passManager.addInstrumentation(std::make_unique<PassTracing>());
   auto &modulePasses = passManager.nest<IREE::VM::ModuleOp>();
 
   if (targetOptions.optimize) {
@@ -198,119 +162,6 @@ static LogicalResult canonicalizeModule(BytecodeTargetOptions targetOptions,
   }
 
   return success();
-}
-
-// Encodes a type (or a tuple of nested types) to a calling convention string.
-//
-// Examples:
-//  i32              -> i
-//  !vm.ref<...>     -> r
-//  tuple<i32, i64>  -> iI
-static LogicalResult encodeCallingConventionType(Operation *op, Type type,
-                                                 SmallVectorImpl<char> &s) {
-  if (auto refPtrType = type.dyn_cast<IREE::VM::RefType>()) {
-    s.push_back('r');
-    return success();
-  } else if (auto intType = type.dyn_cast<IntegerType>()) {
-    switch (intType.getIntOrFloatBitWidth()) {
-      default:
-      case 32:
-        s.push_back('i');
-        return success();
-      case 64:
-        s.push_back('I');
-        return success();
-    }
-  } else if (auto tupleType = type.dyn_cast<TupleType>()) {
-    // Flatten tuple (so tuple<i32, i64> -> `...iI...`).
-    SmallVector<Type, 4> flattenedTypes;
-    tupleType.getFlattenedTypes(flattenedTypes);
-    for (auto elementType : flattenedTypes) {
-      if (failed(encodeCallingConventionType(op, elementType, s))) {
-        return op->emitError()
-               << "unsupported external calling convention tuple element type "
-               << elementType;
-      }
-    }
-    return success();
-  }
-  return op->emitError() << "unsupported external calling convention type "
-                         << type;
-}
-
-static LogicalResult encodeVariadicCallingConventionType(
-    Operation *op, Type type, SmallVectorImpl<char> &s) {
-  s.push_back('[');
-  auto result = encodeCallingConventionType(op, type, s);
-  s.push_back(']');
-  return result;
-}
-
-// Generates a string encoding the function type for defining the
-// FunctionSignatureDef::calling_convention field for import functions.
-//
-// This differs from makeCallingConventionString in that it supports variadic
-// arguments. Ideally we'd combine the two, but we only have this additional
-// metadata on IREE::VM::ImportOp.
-static Optional<std::string> makeImportCallingConventionString(
-    IREE::VM::ImportOp importOp) {
-  auto functionType = importOp.getType();
-  if (functionType.getNumInputs() == 0 && functionType.getNumResults() == 0) {
-    return std::string{};  // Valid but empty.
-  }
-
-  SmallVector<char, 8> s = {'0'};
-  for (int i = 0; i < functionType.getNumInputs(); ++i) {
-    if (importOp.isFuncArgumentVariadic(i)) {
-      if (failed(encodeVariadicCallingConventionType(
-              importOp, functionType.getInput(i), s))) {
-        return None;
-      }
-    } else {
-      if (failed(encodeCallingConventionType(importOp, functionType.getInput(i),
-                                             s))) {
-        return None;
-      }
-    }
-  }
-  if (functionType.getNumResults() > 0) {
-    s.push_back('.');
-    for (int i = 0; i < functionType.getNumResults(); ++i) {
-      if (failed(encodeCallingConventionType(importOp,
-                                             functionType.getResult(i), s))) {
-        return None;
-      }
-    }
-  }
-  return std::string(s.data(), s.size());
-}
-
-// Generates a string encoding the function type for defining the
-// FunctionSignatureDef::calling_convention field for internal/export functions.
-static Optional<std::string> makeCallingConventionString(
-    IREE::VM::FuncOp funcOp) {
-  auto functionType = funcOp.getType();
-  if (functionType.getNumInputs() == 0 && functionType.getNumResults() == 0) {
-    return std::string{};  // Valid but empty.
-  }
-
-  SmallVector<char, 8> s = {'0'};
-  for (int i = 0; i < functionType.getNumInputs(); ++i) {
-    if (failed(
-            encodeCallingConventionType(funcOp, functionType.getInput(i), s))) {
-      return None;
-    }
-  }
-  if (functionType.getNumResults() > 0) {
-    s.push_back('.');
-    for (int i = 0; i < functionType.getNumResults(); ++i) {
-      if (failed(encodeCallingConventionType(funcOp, functionType.getResult(i),
-                                             s))) {
-        return None;
-      }
-    }
-  }
-  return std::string(s.data(), s.size());
 }
 
 // Creates a FunctionSignatureDef based on the given function metadata.
@@ -426,17 +277,22 @@ static LogicalResult buildFlatBufferModule(BytecodeTargetOptions targetOptions,
                                            IREE::VM::ModuleOp moduleOp,
                                            FlatbufferBuilder &fbb) {
   SymbolTable symbolTable(moduleOp);
-  auto symbolCounts = computeModuleSymbolCounts(moduleOp);
+  if (!moduleOp.ordinal_counts().hasValue()) {
+    return moduleOp.emitError() << "ordinal_counts attribute not found. The "
+                                   "OrdinalAllocationPass must be run before.";
+  }
+  OrdinalCountsAttr ordinalCounts = moduleOp.ordinal_counts().getValue();
 
   // Find all structural ops in the module.
   std::vector<IREE::VM::ImportOp> importFuncOps;
   std::vector<IREE::VM::ExportOp> exportFuncOps;
   std::vector<IREE::VM::FuncOp> internalFuncOps;
   std::vector<IREE::VM::RodataOp> rodataOps;
-  importFuncOps.resize(symbolCounts.importFuncs);
-  exportFuncOps.resize(symbolCounts.exportFuncs);
-  internalFuncOps.resize(symbolCounts.internalFuncs);
-  rodataOps.resize(symbolCounts.rodatas);
+  importFuncOps.resize(ordinalCounts.import_funcs());
+  exportFuncOps.resize(ordinalCounts.export_funcs());
+  internalFuncOps.resize(ordinalCounts.internal_funcs());
+  rodataOps.resize(ordinalCounts.rodatas());
+
   for (auto &op : moduleOp.getBlock().getOperations()) {
     if (auto funcOp = dyn_cast<IREE::VM::FuncOp>(op)) {
       internalFuncOps[funcOp.ordinal().getValue().getLimitedValue()] = funcOp;
@@ -592,12 +448,14 @@ static LogicalResult buildFlatBufferModule(BytecodeTargetOptions targetOptions,
   auto importFuncsRef = fbb.createOffsetVecDestructive(importFuncRefs);
   auto typesRef = fbb.createOffsetVecDestructive(typeRefs);
 
+  int32_t globalRefs = ordinalCounts.global_refs();
+  int32_t globalBytes = ordinalCounts.global_bytes();
+
   iree_vm_ModuleStateDef_ref_t moduleStateDef = 0;
-  if (symbolCounts.globalBytes || symbolCounts.globalRefs) {
+  if (globalBytes || globalRefs) {
     iree_vm_ModuleStateDef_start(fbb);
-    iree_vm_ModuleStateDef_global_bytes_capacity_add(fbb,
-                                                     symbolCounts.globalBytes);
-    iree_vm_ModuleStateDef_global_ref_count_add(fbb, symbolCounts.globalRefs);
+    iree_vm_ModuleStateDef_global_bytes_capacity_add(fbb, globalBytes);
+    iree_vm_ModuleStateDef_global_ref_count_add(fbb, globalRefs);
     moduleStateDef = iree_vm_ModuleStateDef_end(fbb);
   }
 

@@ -66,6 +66,20 @@ static bool isNoOp(Operation *op) { return isa<Shape::MakeRankedShapeOp>(op); }
 // identity.
 static bool isIdentityOp(Operation *op) { return isa<Shape::TieShapeOp>(op); }
 
+// HACK: until we are doing buffer allocation we need to pin tied buffers all
+// the way up the stream from the outputs.
+static void propagateTiedBuffer(BufferSet &bufferSet, Value streamValue,
+                                BufferRange bufferRange) {
+  Value baseValue = streamValue;
+  while (auto definingOp = dyn_cast_or_null<IREE::TiedOpInterface>(
+             baseValue.getDefiningOp())) {
+    auto tiedValue = definingOp.getTiedResultOperand(baseValue);
+    if (!tiedValue) break;
+    baseValue = tiedValue;
+    bufferSet.rangeMap[baseValue] = bufferRange;
+  }
+}
+
 // Allocates a buffer for the given stream output value.
 // |streamValue| is the Value used within the stream region and
 // |externalValue| is the returned value from the stream region in the parent
@@ -96,11 +110,11 @@ static Value allocateOutputBuffer(Value streamValue, Value externalValue,
                                 loc, allocator, *shape, elementType.getValue())
                             .getResult();
 
-  auto buffer =
-      rewriter
-          .create<IREE::HAL::AllocatorAllocateOp>(loc, allocator, memoryTypes,
-                                                  bufferUsage, allocationSize)
-          .getResult();
+  auto buffer = rewriter
+                    .create<IREE::HAL::AllocatorAllocateOp>(
+                        loc, IREE::HAL::BufferType::get(rewriter.getContext()),
+                        allocator, memoryTypes, bufferUsage, allocationSize)
+                    .getResult();
 
   return buffer;
 }
@@ -110,17 +124,36 @@ static Value allocateOutputBuffer(Value streamValue, Value externalValue,
 static void allocateOutputBuffers(IREE::Flow::ExStreamFragmentOp streamOp,
                                   BufferSet &bufferSet,
                                   ConversionPatternRewriter &rewriter) {
+  auto tiedStreamOp = cast<IREE::TiedOpInterface>(streamOp.getOperation());
+  auto &entryBlock = streamOp.body().front();
+
   // Allocate output buffers and replace the original uses with the buffers.
   auto returnOp = cast<IREE::Flow::ReturnOp>(streamOp.body().front().back());
   for (auto result : llvm::enumerate(streamOp.getResults())) {
     auto streamValue = returnOp.getOperand(result.index());
     auto externalValue = result.value();
-    auto buffer = allocateOutputBuffer(streamValue, externalValue,
-                                       bufferSet.allocator, rewriter);
-    auto bufferRange = BufferRange{buffer};
+
+    // Tied results reuse their operand buffer.
+    BufferRange bufferRange;
+    auto tiedOperandIndex =
+        tiedStreamOp.getTiedResultOperandIndex(result.index());
+    if (tiedOperandIndex.hasValue()) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "    -- REUSING TIED OPERAND("
+                 << tiedOperandIndex.getValue() << ") BUFFER FOR STREAM RESULT("
+                 << result.index() << "): " << streamOp << "\n");
+      auto operand = entryBlock.getArgument(tiedOperandIndex.getValue());
+      bufferRange = bufferSet.rangeMap[operand];
+    } else {
+      auto buffer = allocateOutputBuffer(streamValue, externalValue,
+                                         bufferSet.allocator, rewriter);
+      bufferRange = BufferRange{buffer};
+    }
+    assert(bufferRange.buffer);
+    bufferSet.outputBuffers.push_back(bufferRange.buffer);
     bufferSet.rangeMap[externalValue] = bufferRange;
     bufferSet.rangeMap[streamValue] = bufferRange;
-    bufferSet.outputBuffers.push_back(buffer);
+    propagateTiedBuffer(bufferSet, streamValue, bufferRange);
   }
 }
 
@@ -150,11 +183,11 @@ static Value allocateTransientBuffer(Value streamValue, Value allocator,
                                 loc, allocator, *shape, elementType.getValue())
                             .getResult();
 
-  auto buffer =
-      rewriter
-          .create<IREE::HAL::AllocatorAllocateOp>(loc, allocator, memoryTypes,
-                                                  bufferUsage, allocationSize)
-          .getResult();
+  auto buffer = rewriter
+                    .create<IREE::HAL::AllocatorAllocateOp>(
+                        loc, IREE::HAL::BufferType::get(rewriter.getContext()),
+                        allocator, memoryTypes, bufferUsage, allocationSize)
+                    .getResult();
 
   return buffer;
 }
@@ -172,8 +205,10 @@ static void allocateTransientBuffers(IREE::Flow::ExStreamFragmentOp streamOp,
     // Pull outputs that terminate on identities to operands.
     for (auto &op : llvm::reverse(streamOp.body().front())) {
       if (isIdentityOp(&op)) {
-        auto result = op.getResult(0);
         auto operand = op.getOperand(0);
+        auto result = op.getResult(0);
+        if (!operand.getType().isa<ShapedType>()) continue;
+        if (!result.getType().isa<ShapedType>()) continue;
         if (bufferSet.rangeMap[result].buffer &&
             !bufferSet.rangeMap[operand].buffer) {
           LLVM_DEBUG(llvm::dbgs() << "  + PROPAGATE IDENTITY RESULT->OPERAND: "
@@ -190,6 +225,8 @@ static void allocateTransientBuffers(IREE::Flow::ExStreamFragmentOp streamOp,
       if (isIdentityOp(&op)) {
         auto operand = op.getOperand(0);
         auto result = op.getResult(0);
+        if (!operand.getType().isa<ShapedType>()) continue;
+        if (!result.getType().isa<ShapedType>()) continue;
         if (bufferSet.rangeMap[operand].buffer &&
             !bufferSet.rangeMap[result].buffer) {
           LLVM_DEBUG(llvm::dbgs() << "  + PROPAGATE IDENTITY OPERAND->RESULT: "
@@ -217,19 +254,41 @@ static void allocateTransientBuffers(IREE::Flow::ExStreamFragmentOp streamOp,
   }
   for (auto &op : streamOp.body().front()) {
     if (isNoOp(&op) || isIdentityOp(&op)) continue;
+    auto tiedOp = dyn_cast<IREE::TiedOpInterface>(op);
     for (auto it : llvm::enumerate(op.getResults())) {
       auto result = it.value();
+      if (!result.getType().isa<ShapedType>()) continue;
+
       // If the result is an output buffer we can just use that directly.
       if (bufferSet.rangeMap[result].buffer) {
         LLVM_DEBUG(llvm::dbgs() << "    -- SKIP ALREADY SET BUFFER RESULT("
                                 << it.index() << "): " << op << "\n");
         continue;
       }
+
+      // Tied results reuse their operand buffer.
+      if (tiedOp) {
+        auto tiedOperandIndex = tiedOp.getTiedResultOperandIndex(it.index());
+        if (tiedOperandIndex.hasValue()) {
+          LLVM_DEBUG(llvm::dbgs()
+                     << "    -- REUSING TIED OPERAND("
+                     << tiedOperandIndex.getValue() << ") BUFFER FOR RESULT("
+                     << it.index() << "): " << op << "\n");
+          auto operand = op.getOperand(tiedOperandIndex.getValue());
+          auto operandBufferRange = bufferSet.rangeMap[operand];
+          assert(operandBufferRange.buffer);
+          bufferSet.rangeMap[result] = operandBufferRange;
+          continue;
+        }
+      }
+
       LLVM_DEBUG(llvm::dbgs() << "    -- ALLOCATE BUFFER FOR RESULT("
                               << it.index() << "): " << op << "\n");
       auto buffer =
           allocateTransientBuffer(result, bufferSet.allocator, rewriter);
-      bufferSet.rangeMap[result] = BufferRange{buffer};
+      auto bufferRange = BufferRange{buffer};
+      bufferSet.rangeMap[result] = bufferRange;
+      propagateTiedBuffer(bufferSet, result, bufferRange);
     }
   }
   while (propagateIdentityBuffers()) {
@@ -239,19 +298,13 @@ static void allocateTransientBuffers(IREE::Flow::ExStreamFragmentOp streamOp,
 // Records a full execution barrier that forces visibility of all buffers.
 static void recordFullExecutionBarrier(Value commandBuffer, Location loc,
                                        ConversionPatternRewriter &rewriter) {
-  auto memoryBarrier =
-      rewriter
-          .create<IREE::HAL::MakeMemoryBarrierOp>(
-              loc, IREE::HAL::AccessScopeBitfield::DispatchWrite,
-              IREE::HAL::AccessScopeBitfield::DispatchRead)
-          .getResult();
   rewriter.create<IREE::HAL::CommandBufferExecutionBarrierOp>(
       loc, commandBuffer,
       IREE::HAL::ExecutionStageBitfield::CommandRetire |
           IREE::HAL::ExecutionStageBitfield::Dispatch,
       IREE::HAL::ExecutionStageBitfield::CommandIssue |
           IREE::HAL::ExecutionStageBitfield::Dispatch,
-      ArrayRef<Value>{memoryBarrier}, ArrayRef<Value>{});
+      IREE::HAL::ExecutionBarrierFlagBitfield::None);
 }
 
 static void recordPushConstants(Value device, Value commandBuffer,
@@ -278,14 +331,17 @@ static void recordPushConstants(Value device, Value commandBuffer,
     return;
   }
 
-  uint64_t maxPushConstants = interfaceOp.push_constants().getValueOr(0);
+  uint64_t maxPushConstants =
+      interfaceOp.push_constants().hasValue()
+          ? interfaceOp.push_constants().getValue().getZExtValue()
+          : 0;
   (void)maxPushConstants;
   assert(pushConstantValues.size() <= maxPushConstants &&
          "uniform buffer spilling not yet implemented");
 
   rewriter.create<IREE::HAL::CommandBufferPushConstantsOp>(
       dispatchOp.getLoc(), commandBuffer, executableLayout,
-      rewriter.getI32IntegerAttr(0), pushConstantValues);
+      rewriter.getIndexAttr(0), pushConstantValues);
 }
 
 static LogicalResult recordPushBindings(Value device, Value commandBuffer,
@@ -300,7 +356,9 @@ static LogicalResult recordPushBindings(Value device, Value commandBuffer,
   SmallVector<IREE::HAL::DescriptorSetBindingValue, 4> bindings;
   auto zeroOffset =
       rewriter.createOrFold<mlir::ConstantIndexOp>(dispatchOp.getLoc(), 0);
-  auto pushBinding = [&](Value tensorValue) -> LogicalResult {
+  auto pushBinding =
+      [&](Value tensorValue,
+          IREE::HAL::MemoryAccessBitfield accessType) -> LogicalResult {
     auto &bufferRange = bufferSet.rangeMap[tensorValue];
     assert(bufferRange.buffer && "buffer not preallocated");
     auto value = IREE::HAL::TensorRewriteAdaptor::getChecked(
@@ -311,15 +369,18 @@ static LogicalResult recordPushBindings(Value device, Value commandBuffer,
     auto byteLength = value->getByteLength();
     if (!byteLength) return failure();
 
-    bindings.push_back(std::make_tuple(bindingOrdinal++, value->getBuffer(),
-                                       zeroOffset, byteLength));
+    bindings.push_back(
+        std::make_tuple(rewriter.createOrFold<mlir::ConstantIndexOp>(
+                            dispatchOp.getLoc(), bindingOrdinal++),
+                        value->getBuffer(), zeroOffset, byteLength));
     return success();
   };
   for (auto it : llvm::enumerate(dispatchOp.operands())) {
     LLVM_DEBUG(llvm::dbgs()
                << "  + OPERAND(" << it.index() << "): " << it.value() << "\n");
     if (it.value().getType().isa<TensorType>()) {
-      if (failed(pushBinding(it.value()))) {
+      if (failed(
+              pushBinding(it.value(), IREE::HAL::MemoryAccessBitfield::Read))) {
         return failure();
       }
     }
@@ -327,8 +388,13 @@ static LogicalResult recordPushBindings(Value device, Value commandBuffer,
   for (auto it : llvm::enumerate(dispatchOp.results())) {
     LLVM_DEBUG(llvm::dbgs()
                << "  + RESULT(" << it.index() << "): " << it.value() << "\n");
-    if (failed(pushBinding(it.value()))) {
-      return failure();
+    if (dispatchOp.getTiedResultOperandIndex(it.index())) {
+      LLVM_DEBUG(llvm::dbgs() << "    TIED TO OPERAND; SKIP\n");
+    } else {
+      if (failed(pushBinding(it.value(),
+                             IREE::HAL::MemoryAccessBitfield::DiscardWrite))) {
+        return failure();
+      }
     }
   }
   rewriter.create<IREE::HAL::CommandBufferPushDescriptorSetOp>(
@@ -347,28 +413,6 @@ static LogicalResult recordDispatch(Value device, Value commandBuffer,
       cast<IREE::HAL::ExecutableOp>(SymbolTable::lookupNearestSymbolFrom(
           dispatchOp, dispatchOp.executable()));
 
-  // TODO(benvanik): support multiple interfaces. We'd probably want to
-  // store each executable+interface as a variable, or follow interface
-  // references stored on entry points.
-  auto interfaceOp = executableOp.getFirstInterfaceOp();
-  auto executableLayout =
-      rewriter.createOrFold<IREE::HAL::ExecutableLayoutLookupOp>(
-          dispatchOp.getLoc(),
-          IREE::HAL::ExecutableLayoutType::get(device.getContext()), device,
-          interfaceOp.getExecutableSetLayoutsAttr(),
-          interfaceOp.push_constantsAttr());
-
-  // Setup push constants for any dynamic values we need to pass across at
-  // runtime.
-  recordPushConstants(device, commandBuffer, dispatchOp, interfaceOp,
-                      executableLayout, rewriter);
-
-  // Setup bindings, right now pushed immediately but soon to be replaced
-  // with descriptor sets (or something better, anyway).
-  if (failed(recordPushBindings(device, commandBuffer, dispatchOp,
-                                executableLayout, bufferSet, rewriter))) {
-    return failure();
-  }
   // Marshal tensor operands/results in to the state so that backends can
   // read/write them as they need.
   SmallVector<Optional<IREE::HAL::TensorRewriteAdaptor>, 4> operandAdaptors;
@@ -407,14 +451,11 @@ static LogicalResult recordDispatch(Value device, Value commandBuffer,
   dispatchState.executableOp = executableOp;
   dispatchState.device = device;
   dispatchState.commandBuffer = commandBuffer;
-  dispatchState.executableLayout = executableLayout;
   for (auto dim : dispatchOp.workgroup_count()) {
     dispatchState.workgroupCount.push_back(rewriter.getRemappedValue(dim));
   }
   // TODO(benvanik): support extended push constants.
   dispatchState.basePushConstantOffset = 0;
-  dispatchState.operands = operandAdaptors;
-  dispatchState.results = resultAdaptors;
 
   // Ask each target backend to record their dispatch logic.
   IREE::HAL::DeviceSwitchRewriter switchRewriter(dispatchOp.getLoc(),
@@ -429,11 +470,32 @@ static LogicalResult recordDispatch(Value device, Value commandBuffer,
       if (entryPointOps.empty()) {
         return dispatchOp.emitOpError() << "need at least one entry point";
       }
-      // Use the first (possibly only) entry point op. If the target split the
-      // original entry point into multiple entry points then it should
-      // sequence them together during the call to |recordDispatch| below.
-      dispatchState.entryPointOp = *entryPointOps.begin();
+      auto entryPointOp = *entryPointOps.begin();
+      auto interfaceOp =
+          dyn_cast<IREE::HAL::InterfaceOp>(SymbolTable::lookupSymbolIn(
+              executableOp, entryPointOp.interfaceAttr()));
+      auto executableLayout =
+          rewriter.createOrFold<IREE::HAL::ExecutableLayoutLookupOp>(
+              dispatchOp.getLoc(),
+              IREE::HAL::ExecutableLayoutType::get(device.getContext()), device,
+              interfaceOp.push_constantsAttr(),
+              interfaceOp.getExecutableSetLayoutsAttr());
 
+      // Setup push constants for any dynamic values we need to pass across at
+      // runtime.
+      recordPushConstants(device, commandBuffer, dispatchOp, interfaceOp,
+                          executableLayout, rewriter);
+
+      // Setup bindings, right now pushed immediately but soon to be replaced
+      // with descriptor sets (or something better, anyway).
+      if (failed(recordPushBindings(device, commandBuffer, dispatchOp,
+                                    executableLayout, bufferSet, rewriter))) {
+        return failure();
+      }
+
+      dispatchState.entryPointOp = entryPointOp;
+      dispatchState.interfaceOp = interfaceOp;
+      dispatchState.executableLayout = executableLayout;
       if (failed(targetBackend->recordDispatch(
               dispatchOp.getLoc(), dispatchState, switchRewriter))) {
         return dispatchOp.emitError()
@@ -451,13 +513,92 @@ static LogicalResult recordDispatch(Value device, Value commandBuffer,
   return success();
 }
 
+static LogicalResult recordTensorClone(Value device, Value commandBuffer,
+                                       IREE::Flow::TensorCloneOp &cloneOp,
+                                       BufferSet &bufferSet,
+                                       ConversionPatternRewriter &rewriter) {
+  auto &operandBuffer = bufferSet.rangeMap[cloneOp.operand()];
+  auto &resultBuffer = bufferSet.rangeMap[cloneOp.result()];
+
+  auto operand = IREE::HAL::TensorRewriteAdaptor::getChecked(
+      cloneOp.getLoc(), cloneOp.operand(), operandBuffer.buffer, rewriter);
+  auto result = IREE::HAL::TensorRewriteAdaptor::getChecked(
+      cloneOp.getLoc(), cloneOp.result(), resultBuffer.buffer, rewriter);
+  if (!operand.hasValue() || !result.hasValue()) {
+    return cloneOp.emitOpError()
+           << "cannot create adaptors for tensor clone operands/results";
+  }
+
+  auto zeroOffset =
+      rewriter.createOrFold<mlir::ConstantIndexOp>(cloneOp.getLoc(), 0);
+  auto byteLength = operand->getByteLength();
+  if (!byteLength) return failure();
+
+  rewriter.create<IREE::HAL::CommandBufferCopyBufferOp>(
+      cloneOp.getLoc(), commandBuffer, operand->getBuffer(), zeroOffset,
+      result->getBuffer(), zeroOffset, byteLength);
+
+  // Full barriers for now as we aren't scheduling things.
+  // TODO(benvanik): don't add at the end of the command buffer (we could
+  // also do a canonicalization step that removed trailing barriers).
+  recordFullExecutionBarrier(commandBuffer, cloneOp.getLoc(), rewriter);
+  return success();
+}
+
+/// Convert a flow.tensor.slice to a copy.
+// TODO(benvanik, ravishankarm): The copy is not necessary. If there are no
+// other uses of this buffer you could just return the original buffer with an
+// offset. This should either be handled here, or the `flow.tensor.slice` (or
+// its equivalent `subtensor` op) must be pushed into dispatch regions (see
+// Github issue #5131)
+static LogicalResult recordTensorSlice(Value device, Value commandBuffer,
+                                       IREE::Flow::TensorSliceOp &sliceOp,
+                                       BufferSet &bufferSet,
+                                       ConversionPatternRewriter &rewriter) {
+  auto &sourceBuffer = bufferSet.rangeMap[sliceOp.source()];
+  auto &resultBuffer = bufferSet.rangeMap[sliceOp.result()];
+
+  // TODO(benvanik): use something other than the BufferRange::buffer?
+  // This may require us to subview the buffer first.
+  auto source = IREE::HAL::TensorRewriteAdaptor::getChecked(
+      sliceOp.getLoc(), sliceOp.source(), sourceBuffer.buffer, rewriter);
+  auto result = IREE::HAL::TensorRewriteAdaptor::getChecked(
+      sliceOp.getLoc(), sliceOp.result(), resultBuffer.buffer, rewriter);
+  if (!source.hasValue() || !result.hasValue()) {
+    return sliceOp.emitOpError()
+           << "cannot create adaptors for tensor slice operands/results";
+  }
+
+  auto zeroOffset =
+      rewriter.createOrFold<mlir::ConstantIndexOp>(sliceOp.getLoc(), 0);
+
+  // Compute the size of the update range.
+  auto startIndices = llvm::to_vector<4>(llvm::map_range(
+      sliceOp.start_indices(),
+      [&](Value value) { return rewriter.getRemappedValue(value); }));
+  auto shapeDims = result->getShapeDims();
+  if (!shapeDims) return failure();
+  auto sourceRange = source->computeRange(startIndices, *shapeDims);
+  if (!sourceRange) return failure();
+
+  // TODO(benvanik): slice left/mid/right, but really just don't do this.
+  rewriter.create<IREE::HAL::CommandBufferCopyBufferOp>(
+      sliceOp.getLoc(), commandBuffer, source->getBuffer(), sourceRange->offset,
+      result->getBuffer(), zeroOffset, sourceRange->length);
+
+  // Full barriers for now as we aren't scheduling things.
+  // TODO(benvanik): don't add at the end of the command buffer (we could
+  // also do a canonicalization step that removed trailing barriers).
+  recordFullExecutionBarrier(commandBuffer, sliceOp.getLoc(), rewriter);
+  return success();
+}
+
 static LogicalResult recordTensorUpdate(Value device, Value commandBuffer,
                                         IREE::Flow::TensorUpdateOp &updateOp,
                                         BufferSet &bufferSet,
                                         ConversionPatternRewriter &rewriter) {
   auto &updateBuffer = bufferSet.rangeMap[updateOp.update()];
   auto &targetBuffer = bufferSet.rangeMap[updateOp.target()];
-  auto &resultBuffer = bufferSet.rangeMap[updateOp.result()];
 
   // TODO(benvanik): use something other than the BufferRange::buffer?
   // This may require us to subview the buffer first.
@@ -465,9 +606,7 @@ static LogicalResult recordTensorUpdate(Value device, Value commandBuffer,
       updateOp.getLoc(), updateOp.update(), updateBuffer.buffer, rewriter);
   auto target = IREE::HAL::TensorRewriteAdaptor::getChecked(
       updateOp.getLoc(), updateOp.target(), targetBuffer.buffer, rewriter);
-  auto result = IREE::HAL::TensorRewriteAdaptor::getChecked(
-      updateOp.getLoc(), updateOp.result(), resultBuffer.buffer, rewriter);
-  if (!update.hasValue() || !target.hasValue() || !result.hasValue()) {
+  if (!update.hasValue() || !target.hasValue()) {
     return updateOp.emitOpError()
            << "cannot create adaptors for tensor update operands/results";
   }
@@ -485,18 +624,10 @@ static LogicalResult recordTensorUpdate(Value device, Value commandBuffer,
       target->computeRange(startIndices, *update->getShapeDims());
   if (!targetRange) return failure();
 
-  // TODO(benvanik): actual buffer allocation so we aren't doing this copy.
-  auto targetByteLength = target->getByteLength();
-  if (!targetByteLength) return failure();
-
-  rewriter.create<IREE::HAL::CommandBufferCopyBufferOp>(
-      updateOp.getLoc(), commandBuffer, target->getBuffer(), zeroOffset,
-      result->getBuffer(), zeroOffset, targetByteLength);
   // TODO(benvanik): slice left/mid/right, but really just don't do this.
-  recordFullExecutionBarrier(commandBuffer, updateOp.getLoc(), rewriter);
   rewriter.create<IREE::HAL::CommandBufferCopyBufferOp>(
       updateOp.getLoc(), commandBuffer, update->getBuffer(), zeroOffset,
-      result->getBuffer(), targetRange->offset, targetRange->length);
+      target->getBuffer(), targetRange->offset, targetRange->length);
 
   // Full barriers for now as we aren't scheduling things.
   // TODO(benvanik): don't add at the end of the command buffer (we could
@@ -515,6 +646,16 @@ static LogicalResult recordStreamCommands(Value device, Value commandBuffer,
                                 rewriter))) {
         return failure();
       }
+    } else if (auto cloneOp = dyn_cast<IREE::Flow::TensorCloneOp>(op)) {
+      if (failed(recordTensorClone(device, commandBuffer, cloneOp, bufferSet,
+                                   rewriter))) {
+        return failure();
+      }
+    } else if (auto sliceOp = dyn_cast<IREE::Flow::TensorSliceOp>(op)) {
+      if (failed(recordTensorSlice(device, commandBuffer, sliceOp, bufferSet,
+                                   rewriter))) {
+        return failure();
+      }
     } else if (auto updateOp = dyn_cast<IREE::Flow::TensorUpdateOp>(op)) {
       if (failed(recordTensorUpdate(device, commandBuffer, updateOp, bufferSet,
                                     rewriter))) {
@@ -525,6 +666,10 @@ static LogicalResult recordStreamCommands(Value device, Value commandBuffer,
     } else if (isNoOp(&op) || isIdentityOp(&op)) {
       // No work to perform. For identity ops, all buffers have been pushed
       // to "real" ops.
+    } else if (isa<ConstantOp>(op)) {
+      // HACK: all this code is going away soon.
+      auto newOp = rewriter.clone(op);
+      op.replaceAllUsesWith(newOp);
     } else {
       return op.emitOpError() << "unexpected in stream";
     }
@@ -538,8 +683,11 @@ class ExStreamFragmentOpConversion
   using OpConversionPattern<
       IREE::Flow::ExStreamFragmentOp>::OpConversionPattern;
   LogicalResult matchAndRewrite(
-      IREE::Flow::ExStreamFragmentOp streamOp, llvm::ArrayRef<Value> operands,
+      IREE::Flow::ExStreamFragmentOp streamOp, ArrayRef<Value> newOperands,
       ConversionPatternRewriter &rewriter) const override {
+    IREE::Flow::ExStreamFragmentOp::Adaptor adaptor(
+        newOperands, streamOp->getAttrDictionary());
+
     // TODO(benvanik): choose buffer mode/category based on stream commands.
     auto mode = IREE::HAL::CommandBufferModeBitfield::OneShot;
     auto category = IREE::HAL::CommandCategoryBitfield::Dispatch |
@@ -557,13 +705,13 @@ class ExStreamFragmentOpConversion
 
     // Remap non-tensor operands (such as workloads).
     auto &entryBlock = streamOp.body().front();
-    for (int i = 0; i < operands.size(); ++i) {
+    for (int i = 0; i < adaptor.operands().size(); ++i) {
       if (streamOp.getOperand(i).getType().isa<TensorType>()) {
         bufferSet.rangeMap[entryBlock.getArgument(i)] =
-            BufferRange{operands[i]};
+            BufferRange{adaptor.operands()[i]};
       } else {
         rewriter.replaceUsesOfBlockArgument(entryBlock.getArgument(i),
-                                            operands[i]);
+                                            adaptor.operands()[i]);
       }
     }
 
@@ -576,7 +724,9 @@ class ExStreamFragmentOpConversion
     // information attached to the stream.
     auto commandBuffer =
         rewriter.createOrFold<IREE::HAL::CommandBufferCreateOp>(
-            streamOp.getLoc(), device, mode, category);
+            streamOp.getLoc(),
+            IREE::HAL::CommandBufferType::get(rewriter.getContext()), device,
+            mode, category);
     rewriter.create<IREE::HAL::CommandBufferBeginOp>(streamOp.getLoc(),
                                                      commandBuffer);
 
@@ -597,10 +747,10 @@ class ExStreamFragmentOpConversion
     // It's annoying, but we need to do this replacement at the very end as
     // otherwise we lose access to the original values (which we need for
     // shape information).
-    for (int i = 0; i < operands.size(); ++i) {
-      if (operands[i].getType().isa<IREE::HAL::BufferType>()) {
+    for (int i = 0; i < adaptor.operands().size(); ++i) {
+      if (adaptor.operands()[i].getType().isa<IREE::HAL::BufferType>()) {
         rewriter.replaceUsesOfBlockArgument(entryBlock.getArgument(i),
-                                            operands[i]);
+                                            adaptor.operands()[i]);
       }
     }
 

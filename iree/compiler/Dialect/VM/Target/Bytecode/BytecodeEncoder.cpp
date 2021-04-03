@@ -155,7 +155,7 @@ class V0BytecodeEncoder : public BytecodeEncoder {
     // this list is small :)
     auto srcDstRegs = registerAllocation_->remapSuccessorRegisters(
         currentOp_, successorIndex);
-    writeUint16(srcDstRegs.size());
+    (void)writeUint16(srcDstRegs.size());
     for (auto srcDstReg : srcDstRegs) {
       if (failed(writeUint16(srcDstReg.first.encode())) ||
           failed(writeUint16(srcDstReg.second.encode()))) {
@@ -174,7 +174,7 @@ class V0BytecodeEncoder : public BytecodeEncoder {
   }
 
   LogicalResult encodeOperands(Operation::operand_range values) override {
-    writeUint16(std::distance(values.begin(), values.end()));
+    (void)writeUint16(std::distance(values.begin(), values.end()));
     for (auto it : llvm::enumerate(values)) {
       uint16_t reg = registerAllocation_
                          ->mapUseToRegister(it.value(), currentOp_, it.index())
@@ -193,7 +193,7 @@ class V0BytecodeEncoder : public BytecodeEncoder {
   }
 
   LogicalResult encodeResults(Operation::result_range values) override {
-    writeUint16(std::distance(values.begin(), values.end()));
+    (void)writeUint16(std::distance(values.begin(), values.end()));
     for (auto value : values) {
       uint16_t reg = registerAllocation_->mapToRegister(value).encode();
       if (failed(writeUint16(reg))) {
@@ -298,14 +298,13 @@ Optional<EncodedBytecodeFunction> BytecodeEncoder::encodeFunction(
     }
 
     for (auto &op : block.getOperations()) {
-      auto *serializableOp =
-          op.getAbstractOperation()->getInterface<IREE::VM::VMSerializableOp>();
+      auto serializableOp = dyn_cast<IREE::VM::VMSerializableOp>(op);
       if (!serializableOp) {
         op.emitOpError() << "is not serializable";
         return llvm::None;
       }
       if (failed(encoder.beginOp(&op)) ||
-          failed(serializableOp->encode(&op, symbolTable, encoder)) ||
+          failed(serializableOp.encode(symbolTable, encoder)) ||
           failed(encoder.endOp(&op))) {
         op.emitOpError() << "failed to encode";
         return llvm::None;

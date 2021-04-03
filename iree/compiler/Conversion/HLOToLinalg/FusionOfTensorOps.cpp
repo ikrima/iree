@@ -43,7 +43,7 @@ struct FuseWithHALInterfaceLoadTensor
     if (!loadOp) return failure();
     rewriter.replaceOpWithNewOp<IREE::HAL::InterfaceLoadTensorOp>(
         reshapeOp, reshapeOp.getResultType(), loadOp.offset(),
-        loadOp.getAttrs());
+        loadOp->getAttrs());
     return success();
   }
 };
@@ -58,7 +58,7 @@ struct FuseWithHALInterfaceStoreTensor
     if (!reshapeOp) return failure();
     SmallVector<Value, 2> operands = {reshapeOp.src(), storeOp.offset()};
     rewriter.replaceOpWithNewOp<IREE::HAL::InterfaceStoreTensorOp>(
-        storeOp, ArrayRef<Type>(), operands, storeOp.getAttrs());
+        storeOp, ArrayRef<Type>(), operands, storeOp->getAttrs());
     return success();
   }
 };
@@ -73,20 +73,24 @@ struct FusionOfTensorOpsPass
   }
 
   void runOnOperation() override {
-    OwningRewritePatternList fusionPatterns, interfacePatterns;
+    OwningRewritePatternList fusionPatterns(&getContext());
+    OwningRewritePatternList interfacePatterns(&getContext());
     Operation *op = getOperation();
     MLIRContext *context = op->getContext();
     interfacePatterns.insert<FuseWithHALInterfaceLoadTensor,
                              FuseWithHALInterfaceStoreTensor>(context);
-    FrozenRewritePatternList frozenInterfacePatterns(
+    FrozenRewritePatternSet frozenInterfacePatterns(
         std::move(interfacePatterns));
 
-    applyPatternsAndFoldGreedily(op->getRegions(), frozenInterfacePatterns);
+    (void)applyPatternsAndFoldGreedily(op->getRegions(),
+                                       frozenInterfacePatterns);
 
-    populateLinalgTensorOpsFusionPatterns(context, fusionPatterns);
-    applyPatternsAndFoldGreedily(op->getRegions(), std::move(fusionPatterns));
+    populateLinalgTensorOpsFusionPatterns(fusionPatterns);
+    (void)applyPatternsAndFoldGreedily(op->getRegions(),
+                                       std::move(fusionPatterns));
 
-    applyPatternsAndFoldGreedily(op->getRegions(), frozenInterfacePatterns);
+    (void)applyPatternsAndFoldGreedily(op->getRegions(),
+                                       frozenInterfacePatterns);
   }
 };
 }  // namespace

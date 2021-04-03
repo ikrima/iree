@@ -19,6 +19,7 @@
 #include "mlir/Dialect/GPU/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/Dialect/SCF/SCF.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
@@ -30,6 +31,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 
 using namespace mlir;
 using namespace mlir::edsc;
@@ -54,11 +56,13 @@ mlir::ModelBuilder::ModelBuilder()
   ctx.getOrLoadDialect<gpu::GPUDialect>();
   ctx.getOrLoadDialect<LLVM::LLVMDialect>();
   ctx.getOrLoadDialect<linalg::LinalgDialect>();
+  ctx.getOrLoadDialect<memref::MemRefDialect>();
   ctx.getOrLoadDialect<scf::SCFDialect>();
   ctx.getOrLoadDialect<omp::OpenMPDialect>();
   ctx.getOrLoadDialect<spirv::SPIRVDialect>();
   ctx.getOrLoadDialect<StandardOpsDialect>();
   ctx.getOrLoadDialect<vector::VectorDialect>();
+  registerLLVMDialectTranslation(ctx);
 }
 
 Value mlir::ModelBuilder::constant_f32(float v) {
@@ -229,7 +233,7 @@ void ModelBuilder::call_print_memref_f32(Value v) {
                  .getLoc();
   auto elementType = v.getType().cast<MemRefType>().getElementType();
   auto unrankedType = UnrankedMemRefType::get(elementType, 0);
-  auto castMemRef = builder.create<MemRefCastOp>(loc, v, unrankedType);
+  auto castMemRef = builder.create<memref::CastOp>(loc, v, unrankedType);
   if (elementType.isF32())
     emitCallToRegisteredSymbol("print_memref_f32", {}, {castMemRef});
   else
@@ -281,16 +285,15 @@ MLIRFuncOpConfig &MLIRFuncOpConfig::setEmitCInterface(bool v) {
 void MLIRFuncOpConfig::apply(FuncOp &f) {
   MLIRContext *ctx = f.getContext();
   SmallVector<Attribute, 8> attrs;
-  if (noInline) attrs.push_back(StringAttr::get("noinline", ctx));
+  if (noInline) attrs.push_back(StringAttr::get(ctx, "noinline"));
   if (preferAvx512)
-    attrs.push_back(ArrayAttr::get({StringAttr::get("prefer-vector-width", ctx),
-                                    StringAttr::get("512", ctx)},
-                                   ctx));
+    attrs.push_back(
+        ArrayAttr::get(ctx, {StringAttr::get(ctx, "prefer-vector-width"),
+                             StringAttr::get(ctx, "512")}));
   if (!targetCpu.empty())
-    attrs.push_back(ArrayAttr::get(
-        {StringAttr::get("target-cpu", ctx), StringAttr::get(targetCpu, ctx)},
-        ctx));
-  if (!attrs.empty()) f->setAttr("passthrough", ArrayAttr::get(attrs, ctx));
+    attrs.push_back(ArrayAttr::get(ctx, {StringAttr::get(ctx, "target-cpu"),
+                                         StringAttr::get(ctx, targetCpu)}));
+  if (!attrs.empty()) f->setAttr("passthrough", ArrayAttr::get(ctx, attrs));
 
   if (emitCInterface)
     f->setAttr("llvm.emit_c_interface", mlir::UnitAttr::get(ctx));

@@ -22,20 +22,23 @@
 
 #include "iree/compiler/Conversion/CodegenUtils/FunctionUtils.h"
 #include "iree/compiler/Conversion/CodegenUtils/MarkerUtils.h"
-#include "iree/compiler/Conversion/CodegenUtils/MatmulCodegenStrategy.h"
+#include "iree/compiler/Conversion/CodegenUtils/TransformUtils.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/CooperativeMatrixAnalysis.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/Passes.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/GPU/GPUDialect.h"
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
+#include "mlir/Dialect/Linalg/Transforms/CodegenStrategy.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/SCF.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/Dialect/Vector/VectorOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
@@ -46,14 +49,12 @@
 namespace mlir {
 namespace iree_compiler {
 namespace {
-// TODO(thomasraoux): Fetch this value from device properties.
-static const int subgroupSize = 32;
 
 struct ConvertVectorToGPUPass
     : public PassWrapper<ConvertVectorToGPUPass, OperationPass<FuncOp>> {
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<AffineDialect, gpu::GPUDialect, scf::SCFDialect,
-                    vector::VectorDialect>();
+    registry.insert<AffineDialect, gpu::GPUDialect, memref::MemRefDialect,
+                    scf::SCFDialect, vector::VectorDialect>();
   }
 
   void runOnOperation() override;
@@ -61,94 +62,6 @@ struct ConvertVectorToGPUPass
  private:
   void tileAndVectorizeLinalgCopy(FuncOp funcOp, MLIRContext *context);
   void lowerVectorOps(FuncOp funcOp, MLIRContext *context);
-};
-
-// Common class for all vector to GPU patterns.
-template <typename OpTy>
-class VectorToGPUPattern : public OpConversionPattern<OpTy> {
- public:
-  VectorToGPUPattern<OpTy>(
-      MLIRContext *context,
-      const CooperativeMatrixAnalysis &cooperativeMatrixAnalysis)
-      : OpConversionPattern<OpTy>::OpConversionPattern(context),
-        cooperativeMatrixAnalysis(cooperativeMatrixAnalysis) {}
-
- protected:
-  const CooperativeMatrixAnalysis &cooperativeMatrixAnalysis;
-};
-
-/// Converts unary and binary standard operations using new type.
-template <typename StdOp>
-class UnaryAndBinaryOpPattern final : public VectorToGPUPattern<StdOp> {
- public:
-  using VectorToGPUPattern<StdOp>::VectorToGPUPattern;
-
-  LogicalResult matchAndRewrite(
-      StdOp operation, ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const override {
-    if (VectorToGPUPattern<StdOp>::cooperativeMatrixAnalysis
-            .usesCooperativeMatrixType(operation))
-      return failure();
-    Value newOp =
-        rewriter.create<StdOp>(operation.getLoc(), ValueRange(operands));
-    rewriter.replaceOp(operation, ValueRange(newOp));
-    return success();
-  }
-};
-
-class VectorTransferReadConversion
-    : public VectorToGPUPattern<vector::TransferReadOp> {
- public:
-  using VectorToGPUPattern<vector::TransferReadOp>::VectorToGPUPattern;
-
-  LogicalResult matchAndRewrite(
-      vector::TransferReadOp op, ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const override {
-    if (cooperativeMatrixAnalysis.usesCooperativeMatrixType(op))
-      return failure();
-    // Only support identity map for now.
-    if (!op.permutation_map().isIdentity()) return failure();
-    if (op.getVectorType().getNumElements() != subgroupSize) return failure();
-    // Only works for the case where one workgroups has only one subgroup.
-    auto wgSize = spirv::lookupLocalWorkGroupSize(op);
-    if (wgSize.getValue<int32_t>(0) != subgroupSize ||
-        wgSize.getValue<int32_t>(1) != 1 || wgSize.getValue<int32_t>(2) != 1)
-      return failure();
-    auto loc = op.getLoc();
-    SmallVector<Value, 4> indices(op.indices());
-    // Use threadId.x as the subgroupInvocationId.
-    // TODO(thomasraoux): Replace it once subgroup Ids are working.
-    auto threadIndex = rewriter.create<gpu::ThreadIdOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr("x"));
-    Value index = rewriter.create<AddIOp>(loc, threadIndex, indices.back());
-    indices.back() = index;
-    Value newOp = rewriter.create<LoadOp>(loc, op.source(), indices);
-    rewriter.replaceOp(op, ValueRange(newOp));
-    return success();
-  }
-};
-
-class VectorTransferWriteConversion
-    : public VectorToGPUPattern<vector::TransferWriteOp> {
- public:
-  using VectorToGPUPattern<vector::TransferWriteOp>::VectorToGPUPattern;
-
-  LogicalResult matchAndRewrite(
-      vector::TransferWriteOp op, ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const override {
-    if (cooperativeMatrixAnalysis.usesCooperativeMatrixType(op))
-      return failure();
-    if (!op.permutation_map().isIdentity()) return failure();
-    if (op.getVectorType().getNumElements() != subgroupSize) return failure();
-    auto loc = op.getLoc();
-    SmallVector<Value, 4> indices(op.indices());
-    auto ThreadIndex = rewriter.create<gpu::ThreadIdOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr("x"));
-    Value index = rewriter.create<AddIOp>(loc, ThreadIndex, indices.back());
-    indices.back() = index;
-    rewriter.replaceOpWithNewOp<StoreOp>(op, operands[0], operands[1], indices);
-    return success();
-  }
 };
 
 class VectorToGPUConversionTarget : public ConversionTarget {
@@ -176,7 +89,7 @@ void ConvertVectorToGPUPass::tileAndVectorizeLinalgCopy(FuncOp funcOp,
     return !(hasMarker(copy, getCopyToWorkgroupMemoryMarker()));
   });
   target->markUnknownOpDynamicallyLegal([](Operation *) { return true; });
-  OwningRewritePatternList tileAndDistributePattern;
+  OwningRewritePatternList tileAndDistributePattern(&getContext());
   populateLinalgTileAndDistributePatterns(context, tileAndDistributePattern);
   if (failed(applyPartialConversion(funcOp, *target,
                                     std::move(tileAndDistributePattern)))) {
@@ -189,63 +102,16 @@ void ConvertVectorToGPUPass::tileAndVectorizeLinalgCopy(FuncOp funcOp,
   canonicalizePatterns.insert<AffineMinCanonicalizationPattern,
                               linalg::AffineMinSCFCanonicalizationPattern>(
       context);
-  applyPatternsAndFoldGreedily(funcOp, std::move(canonicalizePatterns));
+  (void)applyPatternsAndFoldGreedily(funcOp, std::move(canonicalizePatterns));
 
   // 3. Vectorize the tiled linalg to be able to map it to load/store vector.
-  OwningRewritePatternList vectorizationPatterns;
-  vectorizationPatterns
-      .insert<linalg::LinalgVectorizationPattern<linalg::CopyOp>>(
-          context, linalg::LinalgMarker(
-                       Identifier::get(getVectorizeMarker(), context), {}));
-  applyPatternsAndFoldGreedily(funcOp, std::move(vectorizationPatterns));
+  OwningRewritePatternList vectorizationPatterns(&getContext());
+  linalg::insertVectorizationPatterns<linalg::CopyOp>(
+      vectorizationPatterns, linalg::LinalgVectorizationOptions(),
+      linalg::LinalgTransformationFilter(
+          Identifier::get(getVectorizeMarker(), context), {}));
+  (void)applyPatternsAndFoldGreedily(funcOp, std::move(vectorizationPatterns));
 }
-
-// Convert vector transfer_read to a load if possible. This is the case only if
-// the element type of the memref matches the element type we want to load.
-class VectorTransferReadToLoad
-    : public OpRewritePattern<vector::TransferReadOp> {
- public:
-  using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(vector::TransferReadOp op,
-                                PatternRewriter &rewriter) const override {
-    if (op.getVectorType().getNumElements() != 1 ||
-        op.getShapedType().getElementType() !=
-            op.getVectorType().getElementType()) {
-      return failure();
-    }
-    auto loc = op.getLoc();
-    Value newOp = rewriter.create<LoadOp>(loc, op.source(), op.indices());
-    newOp =
-        rewriter.create<vector::BroadcastOp>(loc, op.getVectorType(), newOp);
-    rewriter.replaceOp(op, newOp);
-    return success();
-  }
-};
-
-// Convert vector transfer_write to a store if possible. This is the case only
-// if the element type of the memref matches the element type we want to store.
-class VectorTransferWriteToStore
-    : public OpRewritePattern<vector::TransferWriteOp> {
- public:
-  using OpRewritePattern<vector::TransferWriteOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(vector::TransferWriteOp op,
-                                PatternRewriter &rewriter) const override {
-    if (op.getVectorType().getNumElements() != 1 ||
-        op.getShapedType().getElementType() !=
-            op.getVectorType().getElementType()) {
-      return failure();
-    }
-    auto loc = op.getLoc();
-    SmallVector<int64_t, 2> zero(op.getVectorType().getRank(), 0);
-    Value scalarValue =
-        rewriter.create<vector::ExtractOp>(loc, op.vector(), zero);
-    rewriter.create<StoreOp>(loc, scalarValue, op.source(), op.indices());
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
 
 // Lower vector contract to a single scalar or vector mulf+addf. Insert casts to
 // convert from N-D vector to 1D vector or scalar.
@@ -295,15 +161,15 @@ class VectorContractLowering : public OpRewritePattern<vector::ContractionOp> {
 
 // Lower elementwise operation from N-D vector to 1-D vectors that can be
 // natively supported.
+// TODO(thomasraoux):  Move this to MLIR core vector transformations.
 class ElementwiseLowering : public RewritePattern {
  public:
   ElementwiseLowering(MLIRContext *context)
-      : RewritePattern(0, MatchAnyOpTypeTag()) {}
+      : RewritePattern(MatchAnyOpTypeTag(), 0, context) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    if (!op->hasTrait<OpTrait::ElementwiseMappable>() ||
-        op->getNumResults() != 1)
+    if (!OpTrait::hasElementwiseMappableTraits(op) || op->getNumResults() != 1)
       return failure();
     auto vecType = op->getResultTypes()[0].dyn_cast<VectorType>();
     if (!vecType || vecType.getRank() == 1) return failure();
@@ -361,11 +227,10 @@ class ExtractStridedLowering
 // Lower vector ops to instructions that can be later converted to SPIR-V.
 void ConvertVectorToGPUPass::lowerVectorOps(FuncOp funcOp,
                                             MLIRContext *context) {
-  OwningRewritePatternList patterns;
-  patterns.insert<VectorContractLowering, VectorTransferReadToLoad,
-                  VectorTransferWriteToStore, ExtractStridedLowering,
+  OwningRewritePatternList patterns(&getContext());
+  patterns.insert<VectorContractLowering, ExtractStridedLowering,
                   ElementwiseLowering>(context);
-  applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
+  (void)applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
 }
 
 void ConvertVectorToGPUPass::runOnOperation() {
@@ -374,21 +239,6 @@ void ConvertVectorToGPUPass::runOnOperation() {
   tileAndVectorizeLinalgCopy(funcOp, context);
 
   lowerVectorOps(funcOp, context);
-
-  auto &cooperativeMatrixAnalysis = getAnalysis<CooperativeMatrixAnalysis>();
-  OwningRewritePatternList patterns;
-  patterns.insert<UnaryAndBinaryOpPattern<AddFOp>, VectorTransferReadConversion,
-                  VectorTransferWriteConversion>(context,
-                                                 cooperativeMatrixAnalysis);
-  std::unique_ptr<VectorToGPUConversionTarget> target =
-      std::make_unique<VectorToGPUConversionTarget>(*context);
-  target->addDynamicallyLegalDialect<StandardOpsDialect>();
-  target->addIllegalOp<scf::ParallelOp>();
-  target->addLegalOp<scf::YieldOp>();
-  target->addLegalOp<scf::ForOp>();
-  target->addLegalDialect<gpu::GPUDialect>();
-  if (failed(applyPartialConversion(funcOp, *target, std::move(patterns))))
-    return signalPassFailure();
 }
 }  // namespace
 

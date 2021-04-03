@@ -15,9 +15,11 @@
 #include "experimental/ModelBuilder/ModelRunner.h"
 
 #include "llvm/Support/TargetSelect.h"
+#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
 #include "mlir/Conversion/GPUToVulkan/ConvertGPUToVulkanPass.h"
 #include "mlir/Conversion/LinalgToLLVM/LinalgToLLVM.h"
+#include "mlir/Conversion/SCFToStandard/SCFToStandard.h"
 #include "mlir/Conversion/StandardToLLVM/ConvertStandardToLLVMPass.h"
 #include "mlir/Conversion/StandardToSPIRV/StandardToSPIRVPass.h"
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
@@ -31,7 +33,6 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Target/LLVMIR.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
@@ -58,13 +59,11 @@ void mlir::ModelRunner::compile(
   if (target == Target::CPUTarget) {
     // Lower vector operations progressively into more elementary
     // vector operations before running the regular compiler passes.
-    mlir::OwningRewritePatternList patterns;
-    mlir::vector::populateVectorSlicesLoweringPatterns(patterns,
-                                                       module->getContext());
+    mlir::OwningRewritePatternList patterns(module->getContext());
+    mlir::vector::populateVectorSlicesLoweringPatterns(patterns);
     mlir::vector::populateVectorContractLoweringPatterns(
-        patterns, module->getContext(),
-        compilationOptions.vectorTransformsOptions);
-    mlir::applyPatternsAndFoldGreedily(*module, std::move(patterns));
+        patterns, compilationOptions.vectorTransformsOptions);
+    (void)mlir::applyPatternsAndFoldGreedily(*module, std::move(patterns));
   }
   runLoweringPass(compilationOptions.loweringPasses
                       ? compilationOptions.loweringPasses
@@ -138,10 +137,8 @@ static void addVulkanLoweringPass(mlir::PassManager& manager) {
   modulePM.addPass(mlir::spirv::createLowerABIAttributesPass());
   modulePM.addPass(mlir::spirv::createUpdateVersionCapabilityExtensionPass());
   manager.addPass(mlir::createConvertGpuLaunchFuncToVulkanLaunchFuncPass());
-  mlir::LowerToLLVMOptions llvmOptions = {
-      /*useBarePtrCallConv =*/false,
-      /*emitCWrappers = */ true,
-      /*indexBitwidth =*/mlir::kDeriveIndexBitwidthFromDataLayout};
+  mlir::LowerToLLVMOptions llvmOptions(manager.getContext());
+  llvmOptions.emitCWrappers = true;
   manager.addPass(createLowerToLLVMPass(llvmOptions));
   manager.addPass(mlir::createConvertVulkanLaunchFuncToVulkanCallsPass());
 }
@@ -151,6 +148,9 @@ static void addCPULoweringPass(mlir::PassManager& manager) {
   manager.addNestedPass<mlir::FuncOp>(mlir::createConvertVectorToSCFPass());
   manager.addNestedPass<mlir::FuncOp>(mlir::createConvertLinalgToLoopsPass());
   manager.addPass(mlir::createConvertLinalgToLLVMPass());
+  manager.addPass(mlir::createConvertLinalgToLoopsPass());
+  manager.addPass(mlir::createLowerAffinePass());
+  manager.addPass(mlir::createLowerToCFGPass());
   manager.addPass(mlir::createConvertVectorToLLVMPass());
   manager.addPass(mlir::createLowerToLLVMPass());
 }

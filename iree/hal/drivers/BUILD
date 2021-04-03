@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("//iree:build_defs.oss.bzl", "IREE_CUDA_DEPS")
+
 package(
     default_visibility = ["//visibility:public"],
     features = ["layering_check"],
@@ -30,8 +32,5 @@ cc_library(
         "//iree/hal/dylib/registration",
         "//iree/hal/vmla/registration",
         "//iree/hal/vulkan/registration",
-    ] + select({
-        "@bazel_tools//src/conditions:darwin": ["//iree/hal/metal/registration"],
-        "//conditions:default": [],
-    }),
+    ] + IREE_CUDA_DEPS,
 )

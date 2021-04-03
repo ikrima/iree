@@ -36,8 +36,22 @@ function(iree_check_test)
     return()
   endif()
 
-  # When *not* cross compiling, respect the IREE_BUILD_COMPILER option.
-  # Cross compilation uses its own "IREE_HOST_BUILD_COMPILER" option.
+  # Check tests require (by way of iree_bytecode_module) some tools.
+  #
+  # On the host, we can either build the tools directly, if IREE_BUILD_COMPILER
+  # is enabled, or reuse the tools from an existing build (or binary release).
+  #
+  # In some configurations (e.g. when cross compiling for Android), we can't
+  # always build the tools and may depend on them from a host build.
+  #
+  # For now we enable check tests:
+  #   On the host if IREE_BUILD_COMPILER is set
+  #   Always when cross compiling (assuming host tools exist)
+  #
+  # In the future, we should probably add some orthogonal options that give
+  # more control (such as using tools from a binary release in a runtime-only
+  # host build, or skipping check tests in an Android build).
+  # TODO(#4662): add flexible configurable options that cover more uses
   if(NOT IREE_BUILD_COMPILER AND NOT CMAKE_CROSSCOMPILING)
     return()
   endif()
@@ -56,6 +70,17 @@ function(iree_check_test)
   set(_MODULE_NAME "${_RULE_NAME}_module")
 
   if(ANDROID)
+    # Android's CMake toolchain defines some variables that we can use to infer
+    # the appropriate target triple from the configured settings:
+    # https://developer.android.com/ndk/guides/cmake#android_platform
+    #
+    # In typical CMake fashion, the various strings are pretty fuzzy and can
+    # have multiple values like "latest", "android-25"/"25"/"android-N-MR1".
+    #
+    # From looking at the toolchain file, ANDROID_PLATFORM_LEVEL seems like it
+    # should pretty consistently be just a number we can use for target triple.
+    set(_TARGET_TRIPLE "aarch64-none-linux-android${ANDROID_PLATFORM_LEVEL}")
+
     iree_bytecode_module(
       NAME
         "${_MODULE_NAME}"
@@ -64,8 +89,7 @@ function(iree_check_test)
       FLAGS
         "-iree-mlir-to-vm-bytecode-module"
         "--iree-hal-target-backends=${_RULE_TARGET_BACKEND}"
-        # TODO(ataei): Get target from arguments passed to build
-        "--iree-llvm-target-triple=aarch64-none-linux-android30"
+        "--iree-llvm-target-triple=${_TARGET_TRIPLE}"
         ${_RULE_COMPILER_FLAGS}
       TESTONLY
     )
@@ -85,7 +109,7 @@ function(iree_check_test)
 
   # TODO(b/146898896): It would be nice if this were something we could query
   # rather than having to know the conventions used by iree_bytecode_module.
-  set(_MODULE_FILE_NAME "${_MODULE_NAME}.module")
+  set(_MODULE_FILE_NAME "${_MODULE_NAME}.vmfb")
 
   # iree_bytecode_module does not define a target, only a custom command.
   # We need to create a target that depends on the command to ensure the
@@ -105,7 +129,7 @@ function(iree_check_test)
   add_dependencies(
     "${_NAME}"
     "${_MODULE_TARGET_NAME}"
-    iree_modules_check_iree-check-module
+    iree_tools_iree-check-module
   )
 
   iree_package_ns(_PACKAGE_NS)
@@ -125,7 +149,7 @@ function(iree_check_test)
         ${_TEST_NAME}
       COMMAND
         "${CMAKE_SOURCE_DIR}/build_tools/cmake/run_android_test.${IREE_HOST_SCRIPT_EXT}"
-        "${_ANDROID_REL_DIR}/$<TARGET_FILE_NAME:iree_modules_check_iree-check-module>"
+        "${_ANDROID_REL_DIR}/$<TARGET_FILE_NAME:iree_tools_iree-check-module>"
         "--driver=${_RULE_DRIVER}"
         "${_ANDROID_REL_DIR}/${_MODULE_FILE_NAME}"
         ${_RULE_RUNNER_ARGS}
@@ -137,7 +161,7 @@ function(iree_check_test)
       _ENVIRONMENT_VARS
         TEST_ANDROID_ABS_DIR=${_ANDROID_ABS_DIR}
         TEST_DATA=${CMAKE_CURRENT_BINARY_DIR}/${_MODULE_FILE_NAME}
-        TEST_EXECUTABLE=$<TARGET_FILE:iree_modules_check_iree-check-module>
+        TEST_EXECUTABLE=$<TARGET_FILE:iree_tools_iree-check-module>
     )
     set_property(TEST ${_TEST_NAME} PROPERTY ENVIRONMENT ${_ENVIRONMENT_VARS})
     iree_add_test_environment_properties(${_TEST_NAME})
@@ -147,7 +171,7 @@ function(iree_check_test)
         "${_TEST_NAME}"
       COMMAND
         "${CMAKE_SOURCE_DIR}/build_tools/cmake/run_test.${IREE_HOST_SCRIPT_EXT}"
-        "$<TARGET_FILE:iree_modules_check_iree-check-module>"
+        "$<TARGET_FILE:iree_tools_iree-check-module>"
         "--driver=${_RULE_DRIVER}"
         "${CMAKE_CURRENT_BINARY_DIR}/${_MODULE_FILE_NAME}"
         ${_RULE_RUNNER_ARGS}
@@ -201,10 +225,16 @@ function(iree_check_single_backend_test_suite)
   # Omit tests for which the specified driver or target backend is not enabled.
   # This overlaps with directory exclusions and other filtering mechanisms.
   string(TOUPPER ${_RULE_DRIVER} _UPPERCASE_DRIVER)
+  if(NOT DEFINED IREE_HAL_DRIVER_${_UPPERCASE_DRIVER})
+    message(SEND_ERROR "Unknown driver '${_RULE_DRIVER}'. Check IREE_ALL_HAL_DRIVERS.")
+  endif()
   if(NOT IREE_HAL_DRIVER_${_UPPERCASE_DRIVER})
     return()
   endif()
   string(TOUPPER ${_RULE_TARGET_BACKEND} _UPPERCASE_TARGET_BACKEND)
+  if(NOT DEFINED IREE_TARGET_BACKEND_${_UPPERCASE_TARGET_BACKEND})
+    message(SEND_ERROR "Unknown backend '${_RULE_TARGET_BACKEND}'. Check IREE_ALL_TARGET_BACKENDS.")
+  endif()
   if(NOT IREE_TARGET_BACKEND_${_UPPERCASE_TARGET_BACKEND})
     return()
   endif()

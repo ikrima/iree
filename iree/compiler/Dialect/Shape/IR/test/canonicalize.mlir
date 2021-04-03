@@ -45,8 +45,8 @@ func @foldStaticRankedDim(%arg0: !shapex.ranked_shape<[1,?,2,?]>) -> (i32, i32) 
 func @foldFullyStaticRankedShape(%arg0: tensor<1x2xf32>) -> (i32, i32) {
   // CHECK-NOT: shapex.get_ranked_shape
   // CHECK-NOT: shapex.ranked_dim
-  // CHECK: constant 1
-  // CHECK: constant 2
+  // CHECK-DAG: constant 1
+  // CHECK-DAG: constant 2
   %0 = shapex.get_ranked_shape %arg0 : tensor<1x2xf32> -> !shapex.ranked_shape<[1,2]>
   %1 = shapex.ranked_dim %0[0] : !shapex.ranked_shape<[1,2]> -> i32
   %2 = shapex.ranked_dim %0[1] : !shapex.ranked_shape<[1,2]> -> i32
@@ -74,8 +74,8 @@ func @foldFullyStaticRankedShapeDims(%arg0: tensor<1x2xf32>) -> (i32, i32) {
   // CHECK-NOT: shapex.get_ranked_shape
   // CHECK-NOT: shapex.ranked_dims
   // CHECK-NOT: shapex.ranked_dim
-  // CHECK: constant 1
-  // CHECK: constant 2
+  // CHECK-DAG: constant 1
+  // CHECK-DAG: constant 2
   %0 = shapex.get_ranked_shape %arg0 : tensor<1x2xf32> -> !shapex.ranked_shape<[1,2]>
   %1:2 = shapex.ranked_dims %0 : !shapex.ranked_shape<[1,2]> -> i32, i32
   return %1#0, %1#1 : i32, i32
@@ -123,8 +123,8 @@ func @elideDuplicateTieShapePattern_match(%arg0 : tensor<?xf32>, %arg1 : !shapex
 func @elideDuplicateTieShapePattern_different_shapes(%arg0 : tensor<?xf32>, %arg1 : !shapex.ranked_shape<[?]>, %arg2 : !shapex.ranked_shape<[?]>) -> (tensor<?xf32>) {
   %0 = shapex.tie_shape %arg0, %arg1 : tensor<?xf32>, !shapex.ranked_shape<[?]>
   %1 = shapex.tie_shape %0, %arg2 : tensor<?xf32>, !shapex.ranked_shape<[?]>
-  // CHECK: %[[T:.+]] = shapex.tie_shape %[[ARGT]], %[[ARGRS1]]
-  // CHECK: shapex.tie_shape %[[T]], %[[ARGRS2]]
+  // CHECK: %[[T:.+]] = shapex.tie_shape %[[ARGT]], %[[ARGRS2]]
+  // CHECK: return %[[T]]
   return %1 : tensor<?xf32>
 }
 

@@ -17,123 +17,111 @@
 #include "iree/compiler/Conversion/Common/Attributes.h"
 #include "iree/compiler/Conversion/Common/Passes.h"
 #include "iree/compiler/Conversion/HLOToHLO/Passes.h"
-#include "iree/compiler/Conversion/LLVMToLLVM/Passes.h"
 #include "iree/compiler/Conversion/LinalgToLLVM/Passes.h"
 #include "iree/compiler/Dialect/Shape/Transforms/Passes.h"
 #include "mlir/Conversion/SCFToStandard/SCFToStandard.h"
 #include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/StandardOps/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
 
 namespace mlir {
 namespace iree_compiler {
 
-static llvm::cl::opt<bool> clEnableLinalgOnTensors(
-    "iree-llvm-experimental-linalg-on-tensors",
-    llvm::cl::desc("Enable the linalg on tensors experimental LLVM path"),
-    llvm::cl::init(false));
+void addLinalgToLLVMPasses(OpPassManager &passManager,
+                           LLVMCodegenOptions options) {
+  // Distribute linalg op among a 3d grid of parallel threads. Tile each
+  // workgroup thread memory then vectorize the linalg op.
 
-static llvm::cl::opt<bool> convImg2ColConversion(
-    "iree-codegen-linalg-to-llvm-conv-img2col-conversion",
-    llvm::cl::desc("Enable rewriting linalg.conv linalg.generic that does "
-                   "img2col buffer packing + "
-                   "linag.matmul"),
-    llvm::cl::init(false));
-
-static llvm::cl::opt<bool> fastExpConversion(
-    "iree-codegen-linalg-to-llvm-fast-exp",
-    llvm::cl::desc("If true convert llvm.intr.exp into its range reduced "
-                   "polynomial approximation."),
-    llvm::cl::init(false));
-
-void addLinalgToLLVMPasses(OpPassManager &passManager) {
-  // Linalg on tensors directly lowers to loops for now.
-  if (!clEnableLinalgOnTensors) {
-    // Distribute linalg op among a 3d grid of parallel threads. Tile each
-    // workgroup thread memory then vectorize the linalg op.
-
+  if (options.usingLinalgOnTensors) {
+    passManager.addPass(createMaterializeCPULaunchConfigurationPass());
+  } else {
     passManager.addPass(createLinalgTileAndDistributePass());
-    passManager.addPass(createLegalizeNumWorkgroupsFnPass());
+  }
 
-    // Linalg.ConvOp -> (Img2Col packing + matmul).
+  OpPassManager &nestedModulePM = passManager.nest<ModuleOp>();
+  nestedModulePM.addNestedPass<FuncOp>(createCanonicalizerPass());
+
+  if (options.useConvImg2Col) {
+    // linalg::ConvInputNHWCFilterHWCFOp -> (Img2Col packing + matmul).
     // After convolution is tiled and distributed among workgroups its converted
     // before vectorize workgroup workload.
-    if (convImg2ColConversion) {
-      passManager.addNestedPass<FuncOp>(
-          createConvImg2ColMatmulConversionPass());
-    }
-
-    passManager.addNestedPass<FuncOp>(
-        createLinalgTileAndVectorizeWorkgroupsPass());
+    nestedModulePM.addNestedPass<FuncOp>(
+        createConvImg2ColMatmulConversionPass());
   }
-  passManager.addNestedPass<FuncOp>(createPlanConvLoopOrderPass());
+
+  nestedModulePM.addNestedPass<FuncOp>(
+      createLinalgTileAndVectorizeWorkgroupsPass());
+  nestedModulePM.addNestedPass<FuncOp>(createPlanConvLoopOrderPass());
 
   // Linalg -> SCF
-  passManager.addNestedPass<FuncOp>(createConvertLinalgToLoopsPass());
-  passManager.addNestedPass<FuncOp>(createCanonicalizerPass());
-  passManager.addNestedPass<FuncOp>(createCSEPass());
+  nestedModulePM.addNestedPass<FuncOp>(createConvertLinalgToLoopsPass());
+  nestedModulePM.addNestedPass<FuncOp>(createCanonicalizerPass());
+  nestedModulePM.addNestedPass<FuncOp>(createCSEPass());
 
   // SCF -> STD
-  passManager.addNestedPass<FuncOp>(createLowerToCFGPass());
-  passManager.addNestedPass<FuncOp>(createCanonicalizerPass());
-  passManager.addNestedPass<FuncOp>(createCSEPass());
+  nestedModulePM.addNestedPass<FuncOp>(createLowerToCFGPass());
+  nestedModulePM.addNestedPass<FuncOp>(createCanonicalizerPass());
+  nestedModulePM.addNestedPass<FuncOp>(createCSEPass());
+
+  // Handled tensor-type constants.
+  nestedModulePM.addPass(createTensorConstantBufferizePass());
+  nestedModulePM.addPass(createFoldTensorExtractOpPass());
 
   // (HAL, IREE, Linalg, STD) -> LLVM
-  // OpPassManager& llvmPassManager = passManager.nest<ModuleOp>();
-  passManager.addPass(createConvertToLLVMPass());
-  passManager.addPass(createCanonicalizerPass());
-  passManager.addPass(createCSEPass());
+  nestedModulePM.addPass(createConvertToLLVMPass(options));
 
-  // Approximate llvm.intr.exp with a 4-th order ploynmial in range[0, ln2].
-  if (fastExpConversion) {
-    passManager.addPass(createFastExpApproximationConversionPass());
-  }
+  nestedModulePM.addPass(createCanonicalizerPass());
+  nestedModulePM.addPass(createCSEPass());
 }
 
-void buildLLVMTransformPassPipeline(OpPassManager &passManager) {
-  passManager.addPass(createDeclareNumWorkgroupsFnPass());
+void buildLLVMTransformPassPipeline(OpPassManager &passManager,
+                                    LLVMCodegenOptions options) {
+  OpPassManager &nestedModulePM = passManager.nest<ModuleOp>();
 
-  passManager.addPass(createInlinerPass());
-
-  // Propagates dynamic shapes computation on tensors.
-  passManager.addNestedPass<FuncOp>(Shape::createTieDynamicShapesPass());
-  passManager.addNestedPass<FuncOp>(
-      Shape::createMaterializeShapeCalculationsPass());
-  passManager.addNestedPass<FuncOp>(Shape::createHoistShapeCalculationsPass());
+  nestedModulePM.addPass(createInlinerPass());
 
   // HLO -> Linalg on buffers.
-  if (clEnableLinalgOnTensors) {
-    // TODO: implement and connect these.
-    passManager.addPass(createLinalgTileAndDistributeOnTensorsPass());
-    passManager.addPass(createLinalgRewriteDestructiveUpdatesPass());
-    passManager.addPass(createLinalgLLVMBufferizePass());
-    passManager.addNestedPass<FuncOp>(createCanonicalizerPass());
-    passManager.addNestedPass<FuncOp>(createCSEPass());
-    passManager.addPass(createLegalizeNumWorkgroupsFnPass());
-    passManager.addPass(createCopyRemovalPass());
-    passManager.addPass(createBufferHoistingPass());
-    passManager.addPass(createBufferLoopHoistingPass());
-    passManager.addPass(createPromoteBuffersToStackPass(1 << 10, 64, 10));
+  if (options.usingLinalgOnTensors) {
+    nestedModulePM.addNestedPass<FuncOp>(createLinalgVectorizePass());
+    // Use stack allocation on CPU side.
+    WorkgroupMemoryAllocationFn allocationFn =
+        [](OpBuilder &builder, Location loc, ArrayRef<int64_t> staticShape,
+           Type elementType, ArrayRef<Value> dynamicSizes) {
+          MemRefType allocType = MemRefType::get(staticShape, elementType);
+          return builder.create<memref::AllocaOp>(loc, allocType, dynamicSizes);
+        };
+    addLinalgBufferizePasses(nestedModulePM, allocationFn);
+    nestedModulePM.addPass(createPromoteBuffersToStackPass(1 << 10, 64, 10));
   } else {
-    passManager.addNestedPass<FuncOp>(createDecomposeHLOClampPass());
-    addHLOToLinalgOnBuffersPasses(passManager);
+    // Propagates dynamic shapes computation on tensors.
+    nestedModulePM.addNestedPass<FuncOp>(Shape::createTieDynamicShapesPass());
+    nestedModulePM.addNestedPass<FuncOp>(
+        Shape::createMaterializeShapeCalculationsPass());
+    nestedModulePM.addNestedPass<FuncOp>(
+        Shape::createHoistShapeCalculationsPass());
+    nestedModulePM.addNestedPass<FuncOp>(createConvert1x1ConvToDotPass());
+    nestedModulePM.addNestedPass<FuncOp>(createDecomposeHLOClampPass());
+    addHLOToLinalgOnBuffersPasses(nestedModulePM);
   }
   // Linalg -> LLVM passes.
-  addLinalgToLLVMPasses(passManager);
+  addLinalgToLLVMPasses(passManager, options);
 }
 
 static PassPipelineRegistration<> linalgLLVMVPipeline(
     "iree-codegen-linalg-to-llvm-pipeline",
     "Runs the progressive lowering pipeline from Linalg to LLVM",
     [](OpPassManager &passManager) {
-      buildLLVMTransformPassPipeline(passManager);
+      buildLLVMTransformPassPipeline(passManager,
+                                     getLLVMCodegenOptionsFromClOptions());
     });
 
 static PassPipelineRegistration<> hloToLinalgLLVMVPipeline(
     "iree-codegen-hlo-to-llvm-pipeline",
     "Runs the progressive lowering pipeline from XLA HLO to Linalg to LLVM",
     [](OpPassManager &passManager) {
-      buildLLVMTransformPassPipeline(passManager);
+      buildLLVMTransformPassPipeline(passManager,
+                                     getLLVMCodegenOptionsFromClOptions());
     });
 
 }  // namespace iree_compiler

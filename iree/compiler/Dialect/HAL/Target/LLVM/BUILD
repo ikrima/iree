@@ -22,7 +22,7 @@ package(
 
 iree_cmake_extra_content(
     content = """
-if(NOT ${IREE_TARGET_BACKEND_DYLIB-LLVM-AOT})
+if(NOT "${IREE_TARGET_BACKEND_DYLIB-LLVM-AOT}" AND NOT "${IREE_TARGET_BACKEND_WASM-LLVM-AOT}")
   return()
 endif()
 """,
@@ -32,9 +32,11 @@ cc_library(
     name = "LLVM",
     srcs = [
         "LLVMAOTTarget.cpp",
+        "LibraryBuilder.cpp",
     ],
     hdrs = [
         "LLVMAOTTarget.h",
+        "LibraryBuilder.h",
     ],
     deps = [
         ":LLVMIRPasses",
@@ -55,10 +57,13 @@ cc_library(
         "@llvm-project//llvm:RISCVAsmParser",
         "@llvm-project//llvm:RISCVCodeGen",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:WebAssemblyAsmParser",
+        "@llvm-project//llvm:WebAssemblyCodeGen",
         "@llvm-project//llvm:X86AsmParser",
         "@llvm-project//llvm:X86CodeGen",
         "@llvm-project//mlir:LLVMDialect",
-        "@llvm-project//mlir:TargetLLVMIR",
+        "@llvm-project//mlir:LLVMToLLVMIRTranslation",
+        "@llvm-project//mlir:ToLLVMIRTranslation",
     ],
 )
 
@@ -74,6 +79,7 @@ cc_library(
         ":LLVMTargetOptions",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Instrumentation",
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
@@ -101,7 +107,9 @@ cc_library(
     name = "LinkerTool",
     srcs = ["LinkerTool.cpp"],
     hdrs = ["LinkerTool.h"],
-    deps = platform_trampoline_deps("LinkerTools", "compiler/Dialect/HAL/Target/LLVM"),
+    deps = platform_trampoline_deps("LinkerTools", "compiler/Dialect/HAL/Target/LLVM") + [
+        "@llvm-project//llvm:Support",
+    ],
 )
 
 cc_library(

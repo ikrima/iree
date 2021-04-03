@@ -39,7 +39,7 @@ func @log_plus_one() {
    outs(%0 : memref<4xf32>) {
   ^bb0(%arg0: f32, %arg1: f32):  // no predecessors
     %2 = addf %arg0, %cst : f32
-    %3 = log %2 : f32
+    %3 = math.log %2 : f32
     linalg.yield %3 : f32
   }
   return
@@ -53,7 +53,7 @@ func @log_plus_one() {
 //  CHECK-SAME:   outs(%[[BUF1]] :
 //       CHECK: ^bb0(%[[ARG0:.+]]: vector<4xf32>, %[[ARG1:.+]]: vector<4xf32>)
 //       CHECK:   %[[T1:.+]] = addf %[[ARG0]], %[[CST]] : vector<4xf32>
-//       CHECK:   %[[T2:.+]] = log %[[T1]] : vector<4xf32>
+//       CHECK:   %[[T2:.+]] = math.log %[[T1]] : vector<4xf32>
 //       CHECK:   linalg.yield %[[T2]] : vector<4xf32>
 
 // -----
@@ -66,7 +66,7 @@ func @cmp_and_select() {
     ins(%1, %2 : memref<4xi32>, memref<4xi32>)
    outs(%0 : memref<4xi32>) {
   ^bb0(%arg0: i32, %arg1: i32, %arg2: i32):  // no predecessors
-    %3 = cmpi "sgt", %arg0, %arg1 : i32
+    %3 = cmpi sgt, %arg0, %arg1 : i32
     %4 = select %3, %arg0, %arg1 : i32
     linalg.yield %4 : i32
   }
@@ -80,7 +80,7 @@ func @cmp_and_select() {
 //  CHECK-SAME:   ins(%[[BUF0]], %[[BUF1]] :
 //  CHECK-SAME:   outs(%[[BUF2]] :
 //       CHECK: ^bb0(%[[ARG0:.+]]: vector<4xi32>, %[[ARG1:.+]]: vector<4xi32>, %[[ARG2:.+]]: vector<4xi32>)
-//       CHECK:   %[[T1:.+]] = cmpi "sgt", %[[ARG0]], %[[ARG1]] : vector<4xi32>
+//       CHECK:   %[[T1:.+]] = cmpi sgt, %[[ARG0]], %[[ARG1]] : vector<4xi32>
 //       CHECK:   %[[T2:.+]] = select %[[T1]], %[[ARG0]], %[[ARG1]] : vector<4xi1>, vector<4xi32>
 //       CHECK:   linalg.yield %[[T2]] : vector<4xi32>
 
@@ -98,7 +98,7 @@ func @cmp_convert_mul() {
     ins(%1, %2 : memref<4xf32>, memref<4xi32>)
    outs(%0 : memref<4xi32>) {
   ^bb0(%arg0: f32, %arg1: i32, %arg2: i32):  // no predecessors
-    %3 = cmpf "oeq", %arg0, %cst : f32
+    %3 = cmpf oeq, %arg0, %cst : f32
     %4 = zexti %3 : i1 to i32
     %5 = muli %4, %arg1 : i32
     linalg.yield %5 : i32
@@ -113,7 +113,7 @@ func @cmp_convert_mul() {
 //  CHECK-SAME:   ins(%[[BUF0]], %[[BUF1]] :
 //  CHECK-SAME:  outs(%[[BUF2]] :
 //       CHECK: ^bb0(%[[ARG0:.+]]: vector<4xf32>, %[[ARG1:.+]]: vector<4xi32>, %[[ARG2:.+]]: vector<4xi32>)
-//       CHECK:   %[[T1:.+]] = cmpf "oeq", %[[ARG0]], %{{.+}} : vector<4xf32>
+//       CHECK:   %[[T1:.+]] = cmpf oeq, %[[ARG0]], %{{.+}} : vector<4xf32>
 //       CHECK:   %[[T2:.+]] = zexti %[[T1]] : vector<4xi1> to vector<4xi32>
 //       CHECK:   %[[T3:.+]] = muli %[[T2]], %[[ARG1]] : vector<4xi32>
 //       CHECK:   linalg.yield %[[T3]] : vector<4xi32>
@@ -167,7 +167,7 @@ func @cst() {
   %0 = iree.placeholder for "interface buffer" {binding = @legacy_io::@ret0} : memref<4xf32>
   linalg.generic {indexing_maps = [affine_map<(d0) -> (d0)>], iterator_types = ["parallel"]} outs(%0 : memref<4xf32>) {
   ^bb0(%arg0: f32):  // no predecessors
-    %1 = rsqrt %cst : f32
+    %1 = math.rsqrt %cst : f32
     linalg.yield %1 : f32
   }
   return

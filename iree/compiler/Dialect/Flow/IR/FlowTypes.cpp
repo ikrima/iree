@@ -25,6 +25,25 @@ namespace Flow {
 // Object types
 //===----------------------------------------------------------------------===//
 
+// static
+DispatchTensorType DispatchTensorType::get(TensorAccess access,
+                                           ArrayRef<int64_t> shape,
+                                           Type elementType) {
+  return Base::get(elementType.getContext(), static_cast<uint32_t>(access),
+                   shape, elementType);
+}
+
+// static
+DispatchTensorType DispatchTensorType::get(TensorAccess access,
+                                           TensorType tensorType) {
+  return DispatchTensorType::get(access, tensorType.getShape(),
+                                 tensorType.getElementType());
+}
+
+TensorAccess DispatchTensorType::getAccess() const {
+  return static_cast<TensorAccess>(static_cast<ImplType *>(impl)->access);
+}
+
 Type DispatchTensorType::getElementType() const {
   return static_cast<ImplType *>(impl)->elementType;
 }
@@ -78,31 +97,53 @@ bool DispatchTensorType::hasStaticShape(ArrayRef<int64_t> shape) const {
   return hasStaticShape() && getShape() == shape;
 }
 
-LogicalResult DispatchTensorType::verifyConstructionInvariants(
-    Location loc, ArrayRef<int64_t> shape, Type elementType) {
+LogicalResult DispatchTensorType::verify(
+    function_ref<InFlightDiagnostic()> emitError, uint32_t access,
+    ArrayRef<int64_t> shape, Type elementType) {
   if (!isValidElementType(elementType)) {
-    return emitError(loc, "dispatch tensor elements must be int or float type");
+    return emitError() << "dispatch tensor elements must be int or float type";
   }
   if (any_of(shape, [](int64_t i) { return i < -1; })) {
-    return emitError(loc,
-                     "dispatch tensor dimensions must be positive if defined");
+    return emitError()
+           << "dispatch tensor dimensions must be positive if defined";
   }
   return success();
 }
 
 template <typename T>
 static T parseShapedType(DialectAsmParser &parser) {
+  StringRef accessStr;
   SmallVector<int64_t, 4> shape;
   Type elementType;
-  if (failed(parser.parseLess()) ||
+  if (failed(parser.parseLess()) || failed(parser.parseKeyword(&accessStr)) ||
+      failed(parser.parseColon()) ||
       failed(parser.parseDimensionList(shape, /*allowDynamic=*/true)) ||
       failed(parser.parseType(elementType)) || failed(parser.parseGreater())) {
     return {};
   }
-  return T::get(shape, elementType);
+  auto access = llvm::StringSwitch<TensorAccess>(accessStr)
+                    .Case("readonly", TensorAccess::ReadOnly)
+                    .Case("readwrite", TensorAccess::ReadWrite)
+                    .Case("writeonly", TensorAccess::WriteOnly)
+                    .Default(TensorAccess::ReadOnly);
+  return T::get(access, shape, elementType);
 }
 
 static void printShapedType(DispatchTensorType &type, DialectAsmPrinter &p) {
+  switch (type.getAccess()) {
+    case TensorAccess::ReadOnly:
+      p << "readonly";
+      break;
+    case TensorAccess::ReadWrite:
+      p << "readwrite";
+      break;
+    case TensorAccess::WriteOnly:
+      p << "writeonly";
+      break;
+    default:
+      llvm_unreachable("unhandled access");
+  }
+  p << ":";
   for (int64_t dim : type.getShape()) {
     if (ShapedType::isDynamic(dim)) {
       p << '?';
@@ -115,61 +156,12 @@ static void printShapedType(DispatchTensorType &type, DialectAsmPrinter &p) {
 }
 
 // static
-DispatchInputType DispatchInputType::get(ArrayRef<int64_t> shape,
-                                         Type elementType) {
-  return Base::get(elementType.getContext(), shape, elementType);
+DispatchTensorType DispatchTensorType::parse(DialectAsmParser &parser) {
+  return parseShapedType<DispatchTensorType>(parser);
 }
 
-// static
-DispatchInputType DispatchInputType::getChecked(ArrayRef<int64_t> shape,
-                                                Type elementType,
-                                                Location location) {
-  return Base::getChecked(location, shape, elementType);
-}
-
-// static
-DispatchInputType DispatchInputType::get(TensorType tensorType) {
-  return DispatchInputType::get(tensorType.getShape(),
-                                tensorType.getElementType());
-}
-
-// static
-DispatchInputType DispatchInputType::parse(DialectAsmParser &parser) {
-  return parseShapedType<DispatchInputType>(parser);
-}
-
-void printType(DispatchInputType &type, DialectAsmPrinter &p) {
-  p << "dispatch.input<";
-  printShapedType(type, p);
-  p << '>';
-}
-
-// static
-DispatchOutputType DispatchOutputType::get(ArrayRef<int64_t> shape,
-                                           Type elementType) {
-  return Base::get(elementType.getContext(), shape, elementType);
-}
-
-// static
-DispatchOutputType DispatchOutputType::getChecked(ArrayRef<int64_t> shape,
-                                                  Type elementType,
-                                                  Location location) {
-  return Base::getChecked(location, shape, elementType);
-}
-
-// static
-DispatchOutputType DispatchOutputType::get(TensorType tensorType) {
-  return DispatchOutputType::get(tensorType.getShape(),
-                                 tensorType.getElementType());
-}
-
-// static
-DispatchOutputType DispatchOutputType::parse(DialectAsmParser &parser) {
-  return parseShapedType<DispatchOutputType>(parser);
-}
-
-void printType(DispatchOutputType &type, DialectAsmPrinter &p) {
-  p << "dispatch.output<";
+void printType(DispatchTensorType &type, DialectAsmPrinter &p) {
+  p << "dispatch.tensor<";
   printShapedType(type, p);
   p << '>';
 }

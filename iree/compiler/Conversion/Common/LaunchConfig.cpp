@@ -28,6 +28,7 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/Linalg/Analysis/DependenceAnalysis.h"
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
@@ -38,6 +39,7 @@ namespace iree_compiler {
 /// Name of the StrAttr that can be used to get the key to access the tile size
 /// information.
 static const char kLaunchInfoKey[] = "launch_info_key";
+static const char kRootOpKey[] = "is_root_op";
 
 static Optional<StringRef> getKey(Operation *op) {
   StringAttr attr = op->getAttrOfType<StringAttr>(kLaunchInfoKey);
@@ -48,7 +50,7 @@ static Optional<StringRef> getKey(Operation *op) {
 static void setKey(Operation *op, StringRef key) {
   MLIRContext *context = op->getContext();
   op->setAttr(Identifier::get(kLaunchInfoKey, op->getContext()),
-              StringAttr::get(key, context));
+              StringAttr::get(context, key));
 }
 
 static std::string getOrSetNewKey(Operation *op, int64_t suffix) {
@@ -61,7 +63,7 @@ static std::string getOrSetNewKey(Operation *op, int64_t suffix) {
 
 void LaunchConfig::finalize(FuncOp funcOp) {
   funcOp.walk([&](linalg::LinalgOp linalgOp) {
-    linalgOp.removeAttr(Identifier::get(kLaunchInfoKey, funcOp.getContext()));
+    linalgOp->removeAttr(Identifier::get(kLaunchInfoKey, funcOp.getContext()));
   });
 }
 
@@ -69,6 +71,7 @@ TileSizesListTypeRef LaunchConfig::getTileSizes(Operation *op) const {
   auto key = getKey(op);
   if (!key) return {};
   auto it = tileSizes.find(*key);
+  if (it == tileSizes.end()) return {};
   return it->second;
 }
 
@@ -77,6 +80,13 @@ ArrayRef<int64_t> LaunchConfig::getTileSizes(Operation *op,
   auto t = getTileSizes(op);
   if (level >= t.size()) return {};
   return t[level];
+}
+
+Operation *LaunchConfig::getRootOperation(ArrayRef<Operation *> ops) {
+  for (auto op : ops) {
+    if (op->getAttrOfType<UnitAttr>(kRootOpKey)) return op;
+  }
+  return nullptr;
 }
 
 void LaunchConfig::setTileSizes(Operation *op, TileSizesListType vTileSizes) {
@@ -104,6 +114,10 @@ void LaunchConfig::setNumSubgroups(ArrayRef<int64_t> vNumSubgroups) {
   setArrayVals(numSubgroups, vNumSubgroups);
 }
 
+void LaunchConfig::setRootOperation(Operation *op) {
+  op->setAttr(kRootOpKey, UnitAttr::get(op->getContext()));
+}
+
 void LaunchConfig::setSameConfig(Operation *source, Operation *target) {
   assert(getKey(source) && "missing configuration of source operation");
   setKey(target, *getKey(source));
@@ -116,51 +130,12 @@ void LaunchConfig::setVectorize(bool enableVectorize) {
 LogicalResult propogateRootOperationLaunchConfig(
     LaunchConfig &config, linalg::LinalgOp rootOperation,
     const linalg::LinalgDependenceGraph &dependenceGraph) {
-  // Check the dependencies going into and out of the root operation. For now
-  // only the following dependencies are supported
-  // - WAW dependencies going into the root operation.
-  // - RAW dependencies going out of the root operation.
-  // - WAW dependencies going out of the root operation.
-  // i.e. there are no RAW dependences going into the root operation.
-  auto inRAWDependencies = dependenceGraph.getDependencesInto(
-      rootOperation, linalg::LinalgDependenceGraph::RAW);
-  if (!inRAWDependencies.empty()) {
-    return rootOperation.getOperation()->emitError(
-        "unhandled fusion of root operation with producer");
-  }
   auto dependences = dependenceGraph.getDependentOperations(rootOperation);
-  unsigned numOuterParallel = getNumOuterParallelLoops(rootOperation);
-
-  // Check that for all dependences into and out of the root operation,
-  // - The result expressions of the indexing maps of the fused view in the
-  //   producer and consumer must match for the parallel loops.
-  for (auto dependence :
-       dependenceGraph.getDependentOperations(rootOperation)) {
-    unsigned viewIndex = dependence.indexingOpView->getOperandNumber();
-    AffineMap indexingMap = rootOperation.getIndexingMap(viewIndex);
-    linalg::LinalgOp fusedOp =
-        cast<linalg::LinalgOp>(dependence.dependentOpView->getOwner());
-    unsigned fusedViewIndex = dependence.dependentOpView->getOperandNumber();
-    AffineMap fusedIndexingMap = fusedOp.getIndexingMap(fusedViewIndex);
-    if (indexingMap.getNumResults() < numOuterParallel ||
-        fusedIndexingMap.getNumResults() < numOuterParallel ||
-        !llvm::all_of(
-            llvm::seq<unsigned>(0, numOuterParallel),
-            [&indexingMap, fusedIndexingMap](unsigned i) {
-              return indexingMap.getResult(i).isa<AffineDimExpr>() &&
-                     fusedIndexingMap.getResult(i).isa<AffineDimExpr>() &&
-                     indexingMap.getResult(i) == fusedIndexingMap.getResult(i);
-            })) {
-      return rootOperation.getOperation()->emitError(
-          "unhandled fusion of root operation with all operations in the "
-          "dispatch region");
-    }
-  }
   // The dependent operations get the same tile size information as the root
   // operation. To propogate that information, just use the same key as the root
   // operation.
   for (auto dependence : dependences) {
-    config.setSameConfig(rootOperation, dependence.dependentOpView->getOwner());
+    config.setSameConfig(rootOperation, dependence.getDependentOp());
   }
   return success();
 }

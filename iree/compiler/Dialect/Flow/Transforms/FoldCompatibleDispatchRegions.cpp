@@ -71,7 +71,7 @@ DispatchRegionOp appendRegionArgsAndResults(DispatchRegionOp &regionOp,
 
   // Location is original region + new region location (both probably fused).
   SmallVector<Location, 2> fusedLocs = {regionOp.getLoc(), otherLoc};
-  auto fusedLoc = FusedLoc::get(fusedLocs, regionOp.getContext());
+  auto fusedLoc = FusedLoc::get(regionOp.getContext(), fusedLocs);
 
   // Clone with new results.
   SmallVector<Value, 8> operands;
@@ -84,7 +84,7 @@ DispatchRegionOp appendRegionArgsAndResults(DispatchRegionOp &regionOp,
   }
   auto newRegionOp = builder.create<DispatchRegionOp>(
       fusedLoc, resultTypes, regionOp.workload(), operands,
-      regionOp.getAttrs());
+      regionOp->getAttrs());
   newRegionOp.body().takeBody(regionOp.body());
 
   // Replace uses of original values with the new values.
@@ -134,7 +134,7 @@ DispatchRegionOp removeUnusedResults(DispatchRegionOp regionOp) {
   // Clone with new results.
   auto newRegionOp = builder.create<DispatchRegionOp>(
       regionOp.getLoc(), newReturnTypes, regionOp.workload(), regionOp.args(),
-      regionOp.getAttrs());
+      regionOp->getAttrs());
   newRegionOp.body().takeBody(regionOp.body());
 
   // Replace uses of original values with the new values.
@@ -301,7 +301,7 @@ DispatchRegionOp mergeDispatchRegions(DispatchRegionOp &lhs,
     // we have those new values).
     //
     // We avoid the return op here as we have already merged it above.
-    if (!op.isKnownTerminator()) {
+    if (!op.hasTrait<OpTrait::IsTerminator>()) {
       regionBuilder.clone(op, mapping);
     }
   }

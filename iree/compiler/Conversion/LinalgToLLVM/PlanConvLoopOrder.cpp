@@ -38,10 +38,10 @@ void PlanConvLoopOrderPass::runOnFunction() {
   auto context = funcOp.getContext();
 
   auto marker = Identifier::get("generalized_from_conv", context);
-  linalg::LinalgMarker firstStepMarker(
+  linalg::LinalgTransformationFilter firstStepMarker(
       /*matchDisjunction=*/ArrayRef<Identifier>(),
       /*replacement=*/marker);
-  linalg::LinalgMarker secondStepMarker(
+  linalg::LinalgTransformationFilter secondStepMarker(
       /*matchDisjunction=*/marker,
       /*replacement=*/llvm::None);
 
@@ -55,13 +55,12 @@ void PlanConvLoopOrderPass::runOnFunction() {
       /*output_channel=*/3,
   };
 
-  OwningRewritePatternList patterns;
-  linalg::populateLinalgConvGeneralizationPatterns(context, patterns,
-                                                   firstStepMarker);
+  OwningRewritePatternList patterns(&getContext());
+  linalg::populateLinalgConvGeneralizationPatterns(patterns, firstStepMarker);
   patterns.insert<linalg::LinalgInterchangePattern<linalg::GenericOp>>(
       context, loopOrder, secondStepMarker);
 
-  applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
+  (void)applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
 }
 
 std::unique_ptr<FunctionPass> createPlanConvLoopOrderPass() {

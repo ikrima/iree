@@ -16,6 +16,7 @@
 #define IREE_COMPILER_CONVERSION_INIT_CONVERSIONS_H_
 
 #include "iree/compiler/Conversion/CodegenUtils/ForOpCanonicalization.h"
+#include "iree/compiler/Conversion/Common/Passes.h"
 #include "iree/compiler/Conversion/HLOToHLO/Passes.h"
 #include "iree/compiler/Conversion/HLOToLinalg/HLOToLinalgOnTensorPasses.h"
 #include "iree/compiler/Conversion/HLOToLinalg/Passes.h"
@@ -30,11 +31,25 @@ namespace iree_compiler {
 // expects all the possible conversions to be made available to the context
 // automatically.
 
+inline void registerCommonConversionPasses() {
+  static bool init_once = []() {
+    // Common
+    createLinalgBufferizePass();
+    createLinalgRewriteDestructiveUpdatesPass();
+    return true;
+  }();
+  (void)init_once;
+}
+
 inline void registerHLOToLinalgPasses() {
-  createDecomposeHLOClampPass();
-  createHLOToLinalgOnBuffersPass();
-  createHLOToLinalgOnTensorsPass();
-  createDemoteF32ToF16Pass();
+  static bool init_once = []() {
+    createDecomposeHLOClampPass();
+    createHLOToLinalgOnBuffersPass();
+    createHLOToLinalgOnTensorsPass();
+    createDemoteF32ToF16Pass();
+    return true;
+  }();
+  (void)init_once;
 }
 
 inline void registerLinalgToVectorPasses() {
@@ -48,9 +63,10 @@ inline void registerLinalgToVectorPasses() {
 inline void registerLinalgToSPIRVPasses() {
   static bool init_once = []() {
     // LinalgToSPIRV
-    createConvertToGPUPass();
+    createConvertToGPUPass(SPIRVCodegenOptions());
     createFoldProcessorIDUsesPass();
-    createLinalgTileAndFusePass(SPIRVCodegenOptions());
+    createTileAndDistributeAmongWorkgroupsPass(SPIRVCodegenOptions());
+    createTileAndVectorizeInOneWorkgroupPass(SPIRVCodegenOptions());
     createSplitDispatchFunctionPass();
     createVectorToGPUPass();
     createMatMulTileAndVectorizeGPUPass();
@@ -65,11 +81,10 @@ inline void registerLinalgToLLVMPasses() {
   static bool init_once = []() {
     // LinalgToLLVM
     createConvImg2ColMatmulConversionPass();
-    createLinalgLLVMBufferizePass();
-    createLinalgRewriteDestructiveUpdatesPass();
     createLinalgTileAndDistributePass();
-    createLinalgTileAndDistributeOnTensorsPass();
     createLinalgTileAndVectorizeWorkgroupsPass();
+    createMaterializeCPULaunchConfigurationPass();
+    createUnfusedFMAOpsPass();
     return true;
   }();
   (void)init_once;

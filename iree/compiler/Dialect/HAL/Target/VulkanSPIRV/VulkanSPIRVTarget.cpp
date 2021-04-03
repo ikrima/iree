@@ -147,7 +147,8 @@ class VulkanSPIRVTargetBackend : public SPIRVTargetBackend {
       // We have multiple entry points in this module. Make sure the order
       // specified in the schedule attribute is respected.
       for (Attribute entryPoint : scheduleAttr) {
-        entryPointNames.push_back(entryPoint.cast<StringAttr>().getValue());
+        entryPointNames.push_back(
+            entryPoint.cast<FlatSymbolRefAttr>().getValue());
       }
     } else {
       spvModuleOp.walk([&](spirv::EntryPointOp entryPointOp) {
@@ -163,7 +164,7 @@ class VulkanSPIRVTargetBackend : public SPIRVTargetBackend {
 
     // Add the binary data to the target executable.
     executableBuilder.create<IREE::HAL::ExecutableBinaryOp>(
-        targetOp.getLoc(),
+        targetOp.getLoc(), targetOp.sym_name(),
         static_cast<uint32_t>(IREE::HAL::ExecutableFormat::SpirV),
         builder.getBufferAttr(executableBuilder.getContext()));
 

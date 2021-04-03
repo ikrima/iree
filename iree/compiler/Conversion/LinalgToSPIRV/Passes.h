@@ -16,6 +16,7 @@
 #define IREE_COMPILER_CONVERSION_LINALGTOSPIRV_PASSES_H_
 
 #include "iree/compiler/Conversion/LinalgToSPIRV/CodeGenOptionUtils.h"
+#include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "mlir/Dialect/SCF/SCF.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassOptions.h"
@@ -28,18 +29,15 @@ namespace iree_compiler {
 // Passes
 //===----------------------------------------------------------------------===//
 
-/// Pass to tile and fuse linalg operations on buffers. The pass takes as
-/// argument the `workgroupSize` that the tiling should use. Note that the
-/// tile-sizes are the reverse of the workgroup size. So workgroup size along
-/// "x" is used to tile the innermost loop, along "y" for the next innermost (if
-/// it exists) and along "z" for the next loop (if it exists). The workgroup
-/// size is expected to be of size at-most 3.
-std::unique_ptr<OperationPass<ModuleOp>> createLinalgTileAndFusePass(
-    const SPIRVCodegenOptions &options);
+/// Pass to tile and vectorize Linalg operations on buffers in a single
+/// workgroup.
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createTileAndVectorizeInOneWorkgroupPass(const SPIRVCodegenOptions &options);
 
 /// Pass to add the synchronizations and attributes needed to lower from PLoops
 /// to GPU dialect.
-std::unique_ptr<OperationPass<ModuleOp>> createConvertToGPUPass();
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createConvertToGPUPass(const SPIRVCodegenOptions &options);
 
 /// Pass to perform the final conversion to SPIR-V dialect.
 /// This pass converts remaining interface ops into SPIR-V global variables,
@@ -54,7 +52,8 @@ std::unique_ptr<OperationPass<ModuleOp>> createConvertToSPIRVPass();
 /// all workgroups to complete, then we need to split A and B into different
 /// kernels because there is no mechanism to perform cross-workgroup
 /// synchronization within a single kernel.
-std::unique_ptr<OperationPass<ModuleOp>> createSplitDispatchFunctionPass();
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createSplitDispatchFunctionPass();
 
 /// Pass to convert vector operations to GPU level operations. Instructions of
 /// vector size equal to subgroup size are distributed across the subgroup.
@@ -69,7 +68,24 @@ std::unique_ptr<FunctionPass> createMatMulTileAndVectorizeGPUPass();
 std::unique_ptr<OperationPass<ModuleOp>> createVectorizeMemref();
 
 /// Creates a pass to fold processor ID uses where possible.
-std::unique_ptr<OperationPass<FuncOp>> createFoldProcessorIDUsesPass();
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createFoldProcessorIDUsesPass();
+
+/// Pass that materializes new hal.executable.entry_point ops for
+/// spv.EntryPoints that are added by other passes.
+/// To be removed along with SplitDispatchFunctionPass.
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createMaterializeEntryPointsPass();
+
+/// Creates a pass to concretize hal.interface.workgroup.* ops with concrete
+/// tiling and distribution scheme.
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createConcretizeTileAmongWorkgroupsPass(const SPIRVCodegenOptions &options);
+
+/// Tiles and distributes Linalg operations on buffers among multiple
+/// workgroups.
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createTileAndDistributeAmongWorkgroupsPass(const SPIRVCodegenOptions &options);
 
 //===----------------------------------------------------------------------===//
 // Pipelines

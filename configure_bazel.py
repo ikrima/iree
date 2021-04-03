@@ -18,52 +18,56 @@ import subprocess
 import sys
 
 
-def normalize_path(p):
-  if platform.system() == "Windows":
-    # Sure. Good idea, bazel.
-    return p.replace("\\", "/")
-  return p
+def detect_unix_platform_config(bazelrc):
+  # This is hoaky. Ideally, bazel had any kind of rational way of selecting
+  # options from within its environment (key word: "rational"), but sadly, it
+  # is unintelligible to mere mortals. Why should a build system have a way for
+  # people to condition their build options on what compiler they are using
+  # (without descending down the hole of deciphering what a Bazel toolchain is)?
+  # All I want to do is set a couple of project specific warning options!
+
+  if platform.system() == "Darwin":
+    print(f"build --config=macos_clang", file=bazelrc)
+    print(f"build:release --config=macos_clang_release", file=bazelrc)
+  else:
+
+    # If the user specified a CXX environment var, bazel will later respect that,
+    # so we just see if it says "clang".
+    cxx = os.environ.get("CXX")
+    cc = os.environ.get("CC")
+    if (cxx is not None and cc is None) or (cxx is None and cc is not None):
+      print("WARNING: Only one of CXX or CC is set, which can confuse bazel. "
+            "Recommend: set both appropriately (or none)")
+    if cc is not None and cxx is not None:
+      # Persist the variables.
+      print(f"build --action_env CC=\"{cc}\"", file=bazelrc)
+      print(f"build --action_env CXX=\"{cxx}\"", file=bazelrc)
+    else:
+      print(
+          "WARNING: CC and CXX are not set, which can cause mismatches between "
+          "flag configurations and compiler. Recommend setting them explicitly."
+      )
+
+    if cxx is not None and "clang" in cxx:
+      print(
+          f"Choosing generic_clang config because CXX is set to clang ({cxx})")
+      print(f"build --config=generic_clang", file=bazelrc)
+      print(f"build:release --config=generic_clang_release", file=bazelrc)
+    else:
+      print(f"Choosing generic_gcc config by default because no CXX set or "
+            f"not recognized as clang ({cxx})")
+      print(f"build --config=generic_gcc", file=bazelrc)
+      print(f"build:release --config=generic_gcc_release", file=bazelrc)
 
 
 def write_platform(bazelrc):
-  platform_config = "generic_clang"
   if platform.system() == "Windows":
-    platform_config = "windows"
-  print("build --config={}".format(platform_config), file=bazelrc)
+    print(f"build --config=msvc", file=bazelrc)
+    print(f"build:release --config=msvc_release", file=bazelrc)
+  else:
+    detect_unix_platform_config(bazelrc)
   if not (platform.system() == "Darwin"):
-    print("common --config={}".format("non_darwin"), file=bazelrc)
-
-
-def write_python_bin(bazelrc):
-  python_bin = normalize_path(sys.executable)
-  print("build --python_path=\"{}\"".format(python_bin), file=bazelrc)
-  # IREE extension compilation requires PYTHON_BIN
-  print("build --action_env PYTHON_BIN=\"{}\"".format(python_bin), file=bazelrc)
-  # TensorFlow defines this one. No idea why.
-  print("build --action_env PYTHON_BIN_PATH=\"{}\"".format(python_bin),
-        file=bazelrc)
-
-
-def write_python_path(bazelrc):
-  # For some reason, bazel doesn't always find the user site path, which
-  # is typically where "pip install --user" libraries end up. Inject it.
-  try:
-    user_site = subprocess.run(
-        [sys.executable, "-m", "site", "--user-site"],
-        check=True,
-        # TODO(#4131) python>=3.7: Use capture_output=True.
-        stderr=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        # TODO(#4131) python>=3.7: Replace 'universal_newlines' with 'text'.
-        universal_newlines=True,
-    ).stdout.strip()
-    print("Found user site directory:", user_site)
-  except subprocess.CalledProcessError:
-    print("Could not resolve user site directory")
-    return
-  print("build --action_env PYTHONPATH=\"{}\"".format(
-      normalize_path(user_site)),
-        file=bazelrc)
+    print("common --config=non_darwin", file=bazelrc)
 
 
 if len(sys.argv) > 1:
@@ -72,7 +76,5 @@ else:
   local_bazelrc = os.path.join(os.path.dirname(__file__), "configured.bazelrc")
 with open(local_bazelrc, "wt") as bazelrc:
   write_platform(bazelrc)
-  write_python_bin(bazelrc)
-  write_python_path(bazelrc)
 
 print("Wrote", local_bazelrc)

@@ -23,7 +23,6 @@ package(
 
 exports_files([
     "run_lit.sh",
-    "sanitizer_suppressions.txt",
 ])
 
 cc_binary(
@@ -31,10 +30,10 @@ cc_binary(
     testonly = True,
     srcs = ["iree-benchmark-module-main.cc"],
     deps = [
-        "//iree/base:file_io",
-        "//iree/base:flags",
         "//iree/base:status",
         "//iree/base:tracing",
+        "//iree/base/internal:file_io",
+        "//iree/base/internal:flags",
         "//iree/hal/drivers",
         "//iree/modules/hal",
         "//iree/tools/utils:vm_util",
@@ -49,10 +48,33 @@ cc_binary(
 )
 
 cc_binary(
+    name = "iree-check-module",
+    testonly = True,
+    srcs = ["iree-check-module-main.cc"],
+    deps = [
+        "//iree/base:api",
+        "//iree/base:core_headers",
+        "//iree/base:status",
+        "//iree/base:tracing",
+        "//iree/base/internal:file_io",
+        "//iree/base/internal:flags",
+        "//iree/hal/drivers",
+        "//iree/modules/check:native_module",
+        "//iree/modules/hal",
+        "//iree/testing:gtest",
+        "//iree/tools/utils:vm_util",
+        "//iree/vm:bytecode_module",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_binary(
     name = "iree-dump-module",
     srcs = ["iree-dump-module-main.cc"],
     deps = [
-        "//iree/base:file_mapping",
+        "//iree/base:status",
+        "//iree/base/internal:file_io",
         "//iree/schemas:bytecode_module_def_c_fbs",
     ],
 )
@@ -64,6 +86,7 @@ cc_library(
         "init_iree_passes.h",
     ],
     deps = [
+        "//iree/compiler/Bindings/TFLite/Transforms",
         "//iree/compiler/Dialect/Flow/Analysis",
         "//iree/compiler/Dialect/Flow/IR",
         "//iree/compiler/Dialect/Flow/Transforms",
@@ -71,7 +94,6 @@ cc_library(
         "//iree/compiler/Dialect/HAL/Transforms",
         "//iree/compiler/Dialect/IREE/IR",
         "//iree/compiler/Dialect/IREE/Transforms",
-        "//iree/compiler/Dialect/Sequence/IR",
         "//iree/compiler/Dialect/Shape/Conversion",
         "//iree/compiler/Dialect/Shape/IR",
         "//iree/compiler/Dialect/Shape/Transforms",
@@ -106,6 +128,7 @@ cc_library(
         "@llvm-project//mlir:LinalgToLLVM",
         "@llvm-project//mlir:LinalgToSPIRV",
         "@llvm-project//mlir:LinalgTransforms",
+        "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:QuantOps",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:SCFToGPUPass",
@@ -157,8 +180,10 @@ cc_library(
         "IREE_HAVE_VMLA_TARGET",
         "IREE_HAVE_VULKANSPIRV_TARGET",
         "IREE_HAVE_METALSPIRV_TARGET",
+        "IREE_HAVE_CUDA_TARGET",
     ],
     deps = [
+        "//iree/compiler/Dialect/HAL/Target/CUDA",
         "//iree/compiler/Dialect/HAL/Target/LLVM",
         "//iree/compiler/Dialect/HAL/Target/MetalSPIRV",
         "//iree/compiler/Dialect/HAL/Target/VMLA",
@@ -184,8 +209,8 @@ cc_library(
     ],
     deps = [
         "@llvm-project//mlir:IR",
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo",
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo:lhlo",
+        "@mlir-hlo//:hlo",
+        "@mlir-hlo//:lhlo",
     ],
 )
 
@@ -218,15 +243,11 @@ cc_binary(
         ":init_passes_and_dialects",
         ":init_targets",
         "//iree/base:api",
-        "//iree/base:flags",
         "//iree/base:status",
         "//iree/base:tracing",
-        "//iree/compiler/Dialect/Flow/Transforms",
-        "//iree/compiler/Dialect/HAL/Transforms",
-        "//iree/compiler/Dialect/IREE/Transforms",
+        "//iree/base/internal:flags",
         "//iree/compiler/Dialect/VM/Target:init_targets",
         "//iree/compiler/Dialect/VM/Target/Bytecode",
-        "//iree/compiler/Dialect/VM/Transforms",
         "//iree/compiler/Translation:IREEVM",
         "//iree/hal:api",
         "//iree/hal/drivers",
@@ -239,9 +260,11 @@ cc_binary(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMToLLVMIRTranslation",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:ToLLVMIRTranslation",
     ],
 )
 
@@ -249,10 +272,10 @@ cc_binary(
     name = "iree-run-module",
     srcs = ["iree-run-module-main.cc"],
     deps = [
-        "//iree/base:file_io",
-        "//iree/base:flags",
         "//iree/base:status",
         "//iree/base:tracing",
+        "//iree/base/internal:file_io",
+        "//iree/base/internal:flags",
         "//iree/hal/drivers",
         "//iree/modules/hal",
         "//iree/tools/utils:vm_util",
@@ -271,6 +294,7 @@ cc_binary(
     ],
     tags = ["hostonly"],
     deps = [
+        "//build_tools:default_linkopts",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TableGen",
         "@llvm-project//mlir:MlirTableGenMain",
@@ -295,9 +319,11 @@ cc_library(
         "//iree/compiler/Translation:IREEVM",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMToLLVMIRTranslation",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFTransforms",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:ToLLVMIRTranslation",
         "@llvm-project//mlir:Translation",
     ],
 )
