@@ -16,13 +16,16 @@
 
 #include <string>
 
-#include "absl/flags/flag.h"
-#include "absl/strings/str_format.h"
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
+#include "iree/base/internal/flags.h"
 #include "iree/base/tracing.h"
 
-ABSL_FLAG(int, iree_minloglevel, 0,
+IREE_FLAG(int32_t, iree_minloglevel, 0,
           "Minimum logging level. 0 = INFO and above.");
-ABSL_FLAG(int, iree_v, 0,
+IREE_FLAG(int32_t, iree_v, 0,
           "Verbosity level maximum. 1 = IREE_VLOG(0-1), 2 = IREE_VLOG(0-2).");
 
 namespace iree {
@@ -56,7 +59,7 @@ int64_t MinLogLevelFromEnv() {
   if (LogLevelStrToInt(iree_env_var_val, &level)) {
     return level;
   }
-  return absl::GetFlag(FLAGS_iree_minloglevel);
+  return FLAG_iree_minloglevel;
 }
 
 int64_t MinVLogLevelFromEnv() {
@@ -65,7 +68,7 @@ int64_t MinVLogLevelFromEnv() {
   if (LogLevelStrToInt(iree_env_var_val, &level)) {
     return level;
   }
-  return absl::GetFlag(FLAGS_iree_v);
+  return FLAG_iree_v;
 }
 
 }  // namespace
@@ -91,6 +94,26 @@ void LogMessage::EmitLogMessage() {
   fprintf(stderr, "%c %s:%d] %s\n", "IWEF"[severity_], file_name_, line_,
           str().c_str());
 
+#if defined(__ANDROID__)
+  // Define equivalent android log levels to map to IREE.
+  constexpr int kStatusToAndroidLevel[4] = {
+      4,  // Android info
+      5,  // Android waring
+      6,  // Android error
+      6   // Android fatal (doesn't exist, so reusing error)
+  };
+
+  // NOTE: this truncates. That's fine for now and stderr is still usable.
+  int android_severity = kStatusToAndroidLevel[severity_];
+  {
+    // NOTE: this truncates. That's fine for now and stderr is still usable.
+    char str_buffer[512];
+    snprintf(str_buffer, sizeof(str_buffer), "%s:%d] %s\n", file_name_, line_,
+             str().c_str());
+    __android_log_write(android_severity, "native", str_buffer);
+  }
+#endif  // !defined(__ANDROID__)
+
 #if IREE_TRACING_FEATURES & IREE_TRACING_FEATURE_LOG_MESSAGES
   constexpr int kLevelColors[4] = {
       IREE_TRACING_MESSAGE_LEVEL_INFO,     // INFO
@@ -98,10 +121,14 @@ void LogMessage::EmitLogMessage() {
       IREE_TRACING_MESSAGE_LEVEL_ERROR,    // ERROR
       IREE_TRACING_MESSAGE_LEVEL_ERROR,    // FATAL
   };
-  std::string message =
-      absl::StrFormat("%s:%d] %s\n", file_name_, line_, str().c_str());
-  IREE_TRACE_MESSAGE_DYNAMIC_COLORED(kLevelColors[severity_], message.c_str(),
-                                     message.size());
+  {
+    // NOTE: this truncates. That's fine for now and stderr is still usable.
+    char str_buffer[512];
+    int str_length = snprintf(str_buffer, sizeof(str_buffer), "%s:%d] %s\n",
+                              file_name_, line_, str().c_str());
+    IREE_TRACE_MESSAGE_DYNAMIC_COLORED(kLevelColors[severity_], str_buffer,
+                                       str_length);
+  }
 #endif  // IREE_TRACING_FEATURES& IREE_TRACING_FEATURE_LOG_MESSAGES
 }
 

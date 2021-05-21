@@ -16,7 +16,7 @@
 #define IREE_HAL_LOCAL_TASK_QUEUE_H_
 
 #include "iree/base/api.h"
-#include "iree/base/synchronization.h"
+#include "iree/base/internal/synchronization.h"
 #include "iree/hal/api.h"
 #include "iree/hal/local/arena.h"
 #include "iree/hal/local/task_queue_state.h"
@@ -68,8 +68,14 @@ iree_status_t iree_hal_task_queue_submit(
     iree_hal_task_queue_t* queue, iree_host_size_t batch_count,
     const iree_hal_submission_batch_t* batches);
 
-iree_status_t iree_hal_task_queue_wait_idle_with_deadline(
-    iree_hal_task_queue_t* queue, iree_time_t deadline_ns);
+iree_status_t iree_hal_task_queue_submit_and_wait(
+    iree_hal_task_queue_t* queue, iree_host_size_t batch_count,
+    const iree_hal_submission_batch_t* batches,
+    iree_hal_semaphore_t* wait_semaphore, uint64_t wait_value,
+    iree_timeout_t timeout);
+
+iree_status_t iree_hal_task_queue_wait_idle(iree_hal_task_queue_t* queue,
+                                            iree_timeout_t timeout);
 
 #ifdef __cplusplus
 }  // extern "C"

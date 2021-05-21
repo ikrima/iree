@@ -74,7 +74,7 @@ std::unique_ptr<OperationPass<ModuleOp>> createLegalizeInputTypesPass();
 /// Creates XLA-HLO preprocessing transformation pass. In this pass we should
 /// have all mhlo -> mhlo transformations that are shared between all
 /// backends.
-std::unique_ptr<OperationPass<FuncOp>> createHLOPreprocessingPass();
+std::unique_ptr<OperationPass<FuncOp>> createHLOToHLOPreprocessingPass();
 
 // Runs pre-partitioning conversion passes to convert to the flow dialect.
 // This converts some input ops directly to flow ops when doing so has a
@@ -85,29 +85,15 @@ std::unique_ptr<OperationPass<FuncOp>> createPrePartitioningConversionPass();
 std::unique_ptr<OperationPass<ModuleOp>> createExpandVariableDynamicDimsPass();
 
 //===----------------------------------------------------------------------===//
-// Dispatches (flow.dispatch.region)
+// Dispatches (flow.dispatch.workgroups)
 //===----------------------------------------------------------------------===//
 
 /// Pass to perform dispatch of Linalg on tensor ops by tiling and distribution.
 /// A dispatch region is created for each tiled loop nest.
 std::unique_ptr<OperationPass<FuncOp>> createDispatchLinalgOnTensorsPass();
 
-// Analyzes a module to identify which functions are dispatchable.
-// This information is cached on the module and is used by other FuncOp-scoped
-// passes to quickly access the module-level dispatchability information.
-std::unique_ptr<OperationPass<ModuleOp>> createDispatchabilityAnalysisPass();
-
-// Identifies dispatchable regions of functions and wraps them in
-// flow.dispatch_regions (version 2).
-std::unique_ptr<OperationPass<FuncOp>> createIdentifyDispatchRegions2Pass();
-
-// Folds multiple dispatch regions together that have compatible workloads.
-std::unique_ptr<OperationPass<FuncOp>>
-createFoldCompatibleDispatchRegionsPass();
-
 // Outlines dispatch regions into executables.
 std::unique_ptr<OperationPass<ModuleOp>> createOutlineDispatchRegionsPass();
-std::unique_ptr<OperationPass<ModuleOp>> createOutlineDispatchRegions2Pass();
 
 // Injects tracing markers for dispatch operation tensor inputs and outputs.
 std::unique_ptr<OperationPass<FuncOp>> createInjectDispatchTracingPass();
@@ -121,9 +107,9 @@ std::unique_ptr<OperationPass<ModuleOp>> createExportBenchmarkFuncsPass();
 
 // Outlines large tensor constants into flow.variables at the module level.
 //
-// NOTE: a total guess :) this feels like about the most per-dispatch-buffer
-// data we'd want to embed in the command buffer.
-static constexpr size_t kMinLargeConstantSize = 256;
+// TODO(#5493): implement the support for inlining constants into the command
+// buffer and raise this value to one that is measured to be good.
+static constexpr size_t kMinLargeConstantSize = 1;
 std::unique_ptr<OperationPass<ModuleOp>> createOutlineLargeConstantsPass(
     size_t minLargeConstantSize = kMinLargeConstantSize);
 
@@ -162,25 +148,7 @@ createStripAndSplatConstantVariablesPass();
 // Register all Passes
 //===----------------------------------------------------------------------===//
 
-inline void registerFlowPasses() {
-  registerInputTransformPassPipeline();
-  registerFlowTransformPassPipeline();
-  createConvertToFlowTensorOpsPass();
-  createLegalizeInputTypesPass();
-  createHLOPreprocessingPass();
-  createPrePartitioningConversionPass();
-  createExpandVariableDynamicDimsPass();
-  createDispatchabilityAnalysisPass();
-  createIdentifyDispatchRegions2Pass();
-  createFoldCompatibleDispatchRegionsPass();
-  createOutlineDispatchRegionsPass();
-  createExportBenchmarkFuncsPass();
-  createOutlineLargeConstantsPass();
-  createDeduplicateExecutablesPass();
-  createFormStreamsPass();
-  createHoistUnstreamableOpsPass();
-  createStripAndSplatConstantVariablesPass();
-}
+void registerFlowPasses();
 
 }  // namespace Flow
 }  // namespace IREE

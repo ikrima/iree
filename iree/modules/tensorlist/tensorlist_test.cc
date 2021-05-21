@@ -14,16 +14,16 @@
 
 // Tests that our bytecode module can call through into our native module.
 
-#include "absl/container/inlined_vector.h"
-#include "absl/strings/string_view.h"
+#include <vector>
+
 #include "absl/types/span.h"
 #include "iree/base/api.h"
 #include "iree/base/logging.h"
 #include "iree/hal/api.h"
-#include "iree/hal/vmla/registration/driver_module.h"
+#include "iree/hal/vmvx/registration/driver_module.h"
 #include "iree/modules/hal/hal_module.h"
 #include "iree/modules/tensorlist/native_module.h"
-#include "iree/modules/tensorlist/tensorlist_test_module.h"
+#include "iree/modules/tensorlist/tensorlist_test_module_c.h"
 #include "iree/testing/gtest.h"
 #include "iree/testing/status_matchers.h"
 #include "iree/vm/api.h"
@@ -37,7 +37,7 @@ namespace {
 class TensorListModulesTest : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
-    IREE_CHECK_OK(iree_hal_vmla_driver_module_register(
+    IREE_CHECK_OK(iree_hal_vmvx_driver_module_register(
         iree_hal_driver_registry_default()));
   }
 
@@ -49,7 +49,7 @@ class TensorListModulesTest : public ::testing::Test {
     // TODO(benvanik): make a 'don't care' helper method.
     iree_hal_driver_t* hal_driver = nullptr;
     IREE_CHECK_OK(iree_hal_driver_registry_try_create_by_name(
-        iree_hal_driver_registry_default(), iree_make_cstring_view("vmla"),
+        iree_hal_driver_registry_default(), iree_make_cstring_view("vmvx"),
         iree_allocator_system(), &hal_driver));
     IREE_CHECK_OK(iree_hal_driver_create_default_device(
         hal_driver, iree_allocator_system(), &device_));
@@ -62,8 +62,7 @@ class TensorListModulesTest : public ::testing::Test {
         iree_tensorlist_module_create(iree_allocator_system(), &native_module_))
         << "Native module failed to init";
 
-    const auto* module_file_toc =
-        iree::modules::tensorlist::tensorlist_test_module_create();
+    const auto* module_file_toc = iree_tensorlist_test_module_create();
     IREE_CHECK_OK(iree_vm_bytecode_module_create(
         iree_const_byte_span_t{
             reinterpret_cast<const uint8_t*>(module_file_toc->data),
@@ -87,18 +86,16 @@ class TensorListModulesTest : public ::testing::Test {
     iree_vm_instance_release(instance_);
   }
 
-  iree_vm_function_t LookupFunction(absl::string_view function_name) {
+  iree_vm_function_t LookupFunction(const char* function_name) {
     iree_vm_function_t function;
     IREE_CHECK_OK(bytecode_module_->lookup_function(
         bytecode_module_->self, IREE_VM_FUNCTION_LINKAGE_EXPORT,
-        iree_string_view_t{function_name.data(), function_name.size()},
-        &function))
+        iree_make_cstring_view(function_name), &function))
         << "Exported function '" << function_name << "' not found";
     return function;
   }
 
-  void Invoke(absl::string_view function_name,
-              absl::Span<const float> input_values,
+  void Invoke(const char* function_name, absl::Span<const float> input_values,
               absl::Span<const int32_t> input_shape,
               absl::Span<const float> expected_values,
               absl::Span<const int32_t> expected_shape) {
@@ -128,10 +125,12 @@ class TensorListModulesTest : public ::testing::Test {
         reinterpret_cast<iree_hal_buffer_view_t*>(iree_vm_list_get_ref_deref(
             outputs.get(), 0, iree_hal_buffer_view_get_descriptor()));
 
-    absl::InlinedVector<int32_t, 5> returned_shape(
+    std::vector<int32_t> returned_shape(
         iree_hal_buffer_view_shape_rank(returned_buffer_view));
-    iree_hal_buffer_view_shape(returned_buffer_view, returned_shape.size(),
-                               returned_shape.data(), nullptr);
+    if (returned_shape.size() > 0) {
+      iree_hal_buffer_view_shape(returned_buffer_view, returned_shape.size(),
+                                 returned_shape.data(), nullptr);
+    }
 
     EXPECT_EQ(returned_shape, expected_shape);
 
@@ -171,8 +170,8 @@ class TensorListModulesTest : public ::testing::Test {
     IREE_ASSERT_OK(iree_hal_buffer_write_data(buffer.get(), 0, contents.data(),
                                               contents.size() * sizeof(float)));
     IREE_ASSERT_OK(iree_hal_buffer_view_create(
-        buffer.get(), IREE_HAL_ELEMENT_TYPE_FLOAT_32, shape.data(),
-        shape.size(), &*out_buffer_view));
+        buffer.get(), shape.data(), shape.size(),
+        IREE_HAL_ELEMENT_TYPE_FLOAT_32, &*out_buffer_view));
   }
 
   iree_hal_device_t* device_ = nullptr;
@@ -202,33 +201,33 @@ TEST_F(TensorListModulesTest, IdentityThroughSetItemGetItem2D) {
 TEST_F(TensorListModulesTest, IdentityThroughConcat) {
   // Allocate the buffer we'll be passing through.
   std::vector<float> input = {42.0f, 43.0f, 44.0f, 45.0f};
-  absl::InlinedVector<int32_t, 4> input_shape = {4, 1};
-  absl::InlinedVector<int32_t, 4> expected_shape = {4};
+  std::vector<int32_t> input_shape = {4, 1};
+  std::vector<int32_t> expected_shape = {4};
   Invoke("identity_through_concat", input, input_shape, input, expected_shape);
 }
 
 TEST_F(TensorListModulesTest, ConcatAppendsEmpty) {
   // Allocate the buffer we'll be passing through.
   std::vector<float> input = {42.0f};
-  absl::InlinedVector<int32_t, 4> input_shape = {1};
+  std::vector<int32_t> input_shape = {1};
   std::vector<float> expected = {42.0f, 0.0f};
-  absl::InlinedVector<int32_t, 4> expected_shape = {2};
+  std::vector<int32_t> expected_shape = {2};
   Invoke("concat_appends_empty", input, input_shape, expected, expected_shape);
 }
 
 TEST_F(TensorListModulesTest, IdentityThroughStack) {
   // Allocate the buffer we'll be passing through.
   std::vector<float> input = {42.0f, 43.0f};
-  absl::InlinedVector<int32_t, 4> input_shape = {2, 1};
+  std::vector<int32_t> input_shape = {2, 1};
   Invoke("identity_through_stack", input, input_shape, input, input_shape);
 }
 
 TEST_F(TensorListModulesTest, StackAppendsEmpty) {
   // Allocate the buffer we'll be passing through.
   std::vector<float> input = {42.0f};
-  absl::InlinedVector<int32_t, 4> input_shape = {};
+  std::vector<int32_t> input_shape = {};
   std::vector<float> expected = {42.0f, 0.0f};
-  absl::InlinedVector<int32_t, 4> expected_shape = {2};
+  std::vector<int32_t> expected_shape = {2};
   Invoke("stack_appends_empty", input, input_shape, expected, expected_shape);
 }
 

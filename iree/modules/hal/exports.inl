@@ -36,7 +36,6 @@ EXPORT_FN("allocator.allocate", iree_hal_module_allocator_allocate, riii, r)
 EXPORT_FN("allocator.wrap.byte_buffer", iree_hal_module_allocator_wrap_byte_buffer, riirii, r)
 
 EXPORT_FN("buffer.allocator", iree_hal_module_buffer_allocator, r, r)
-EXPORT_FN("buffer.fill", iree_hal_module_buffer_fill, riii, v)
 EXPORT_FN("buffer.load", iree_hal_module_buffer_load, rii, i)
 EXPORT_FN("buffer.store", iree_hal_module_buffer_store, irii, v)
 EXPORT_FN("buffer.subspan", iree_hal_module_buffer_subspan, rii, r)
@@ -67,11 +66,12 @@ EXPORT_FN("descriptor_set_layout.create", iree_hal_module_descriptor_set_layout_
 
 EXPORT_FN("device.allocator", iree_hal_module_device_allocator, r, r)
 EXPORT_FN("device.match.id", iree_hal_module_device_match_id, rr, i)
+EXPORT_FN("device.query.i32", iree_hal_module_device_query_i32, rr, ii)
 
 EXPORT_FN("ex.shared_device", iree_hal_module_ex_shared_device, v, r)
 EXPORT_FN("ex.submit_and_wait", iree_hal_module_ex_submit_and_wait, rr, v)
 
-EXPORT_FN("executable.create", iree_hal_module_executable_create, rirCrD, r)
+EXPORT_FN("executable.create", iree_hal_module_executable_create, rrrCrD, r)
 
 EXPORT_FN("executable_layout.create", iree_hal_module_executable_layout_create, riCrD, r)
 

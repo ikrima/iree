@@ -26,36 +26,44 @@ and functions.
 # TODO(#4131) python>=3.7: Use postponed type annotations.
 
 __all__ = [
-    "load_module",
-    "load_modules",
+    "load_vm_flatbuffer",
+    "load_vm_flatbuffer_file",
+    "load_vm_module",
+    "load_vm_modules",
     "normalize_value",
     "Config",
     "SystemContext",
+    "TARGET_BACKEND_TO_DRIVER",
 ]
 
 import os
 import sys
 
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
 from . import binding as _binding
+from .function import FunctionInvoker
 
 import numpy as np
-
-# Typing aliases (largely used for documentation).
-AnyModule = _binding.VmModule
 
 # Environment key for a comma-delimitted list of drivers to try to load.
 PREFERRED_DRIVER_ENV_KEY = "IREE_DEFAULT_DRIVER"
 
 # Default value for IREE_DRIVER
-DEFAULT_IREE_DRIVER_VALUE = "vulkan,vmla"
+DEFAULT_IREE_DRIVER_VALUE = "dylib,vulkan,vmvx"
+
+# Mapping from IREE target backends to their corresponding drivers.
+TARGET_BACKEND_TO_DRIVER = {
+    "dylib-llvm-aot": "dylib",
+    "vmvx": "vmvx",
+    "vulkan-*": "vulkan",
+}
 
 
 def _create_default_iree_driver(
     driver_names: Optional[Sequence[str]] = None) -> _binding.HalDriver:
   """Returns a default driver based on environment settings."""
-  # TODO(laurenzo): Ideally this should take a module and join any explicitly
+  # TODO(laurenzo): Ideally this should take a VmModule and join any explicitly
   # provided driver list with environmental constraints and what the module
   # was compiled for.
   if driver_names is None:
@@ -109,7 +117,7 @@ class Config:
   device: _binding.HalDevice
   vm_instance: _binding.VmInstance
   host_type_factory: _binding.HostTypeFactory
-  default_modules: Tuple[AnyModule]
+  default_vm_modules: Tuple[_binding.VmModule, ...]
 
   def __init__(self, driver_name: Optional[str] = None):
     self.vm_instance = _binding.VmInstance()
@@ -120,7 +128,7 @@ class Config:
     strings_module = _binding.create_strings_module()
     tensorlist_module = _binding.create_tensorlist_module()
     self.host_type_factory = _binding.HostTypeFactory.get_numpy()
-    self.default_modules = (hal_module, strings_module, tensorlist_module)
+    self.default_vm_modules = (hal_module, strings_module, tensorlist_module)
 
 
 _global_config = None
@@ -139,9 +147,7 @@ def _bool_to_int8(
     return array
 
   # IREE models booleans as i8s.
-  # TODO: This cast should be moved into the function abi. If it's possible to
-  # tell that the result should have boolean type from the IR, then the return
-  # type should also be recast to np.bool at that level.
+  # TODO(#5359): This cast should be moved into the function abi.
   if array.dtype == np.bool:
     array = array.astype(np.int8)
   return array
@@ -154,10 +160,11 @@ def normalize_value(
     # Exclude None from falling through to blanket np.asarray conversion.
     return value
 
-  if isinstance(value, (list, tuple)):
+  if isinstance(value, (list, tuple, dict)):
     return value
 
   array = np.asarray(value)
+  # TODO(#5359): Move into the function abi.
   if isinstance(value, (bool, int, float)):
     # Manually convert ints and floats to 32 bits.
     if array.dtype == np.float64:
@@ -166,6 +173,17 @@ def normalize_value(
       array = array.astype(np.int32)
 
   return array
+
+
+def _convert_lists_to_tuples(pytree):
+  if isinstance(pytree, Sequence):
+    return tuple(_convert_lists_to_tuples(leaf) for leaf in pytree)
+  elif isinstance(pytree, Mapping):
+    for key in pytree:
+      pytree[key] = _convert_lists_to_tuples(pytree[key])
+    return pytree
+  else:
+    return pytree
 
 
 class BoundFunction:
@@ -195,6 +213,17 @@ class BoundFunction:
     self._context._vm_context.invoke(self._vm_function, inputs, results)
     self._serialized_outputs = tuple(self._abi.serialize_vm_list(results))
     unpacked_results = self._abi.unpack_results(results)
+
+    # TODO(#5359): Add support for list and tuple return types.
+    # The SIP signature used by the runtime bindings cannot differentiate
+    # between Lists and Tuples, as it only has a single 'sequence' type.
+    # The function abi uses py::list when unpacking the results according to the
+    # SIP signature. The most common instance of a returned Sequence in Python
+    # however is multiple return values, and that is represented by a tuple.
+    # We manually change the return types of all Sequences to Tuple in order to
+    # match the semantics of this case.
+    unpacked_results = _convert_lists_to_tuples(unpacked_results)
+
     return unpacked_results
 
   def __repr__(self):
@@ -213,7 +242,7 @@ class BoundModule:
   Resolves item access (["foo"]) as function resolution.
   """
 
-  def __init__(self, context: "SystemContext", vm_module: AnyModule):
+  def __init__(self, context: "SystemContext", vm_module: _binding.VmModule):
     self._context = context
     self._vm_module = vm_module
     self._lazy_functions = dict()
@@ -221,6 +250,10 @@ class BoundModule:
   @property
   def name(self):
     return self._vm_module.name
+
+  @property
+  def vm_module(self):
+    return self._vm_module
 
   def __getattr__(self, name):
     try:
@@ -235,7 +268,20 @@ class BoundModule:
 
     vm_function = self._vm_module.lookup_function(name)
     if vm_function is None:
-      raise KeyError(f"Function '{name}' not found in module '{self.name}'")
+      raise KeyError(f"Function '{name}' not found in module '{self}'")
+
+    # TODO: Remove this fork and delete the local BoundFunction once SIP is
+    # removed. We take the new path if there is a native IREE ABI attribute
+    # or no SIP ('f') attribute.
+    reflection_dict = vm_function.reflection
+    if "iree.abi" in reflection_dict or "f" not in reflection_dict:
+      # TODO: Needing to know the precise device to allocate on here is bad
+      # layering and will need to be fixed in some fashion if/when doing
+      # heterogenous dispatch.
+      return FunctionInvoker(self._context.vm_context,
+                             self._context.config.device, vm_function)
+
+    # Legacy SIP path.
     bound_function = BoundFunction(self._context, vm_function)
     self._lazy_functions[name] = bound_function
     return bound_function
@@ -244,8 +290,8 @@ class BoundModule:
     return f"<BoundModule {repr(self._vm_module)}>"
 
 
-class Modules(dict):
-  """Provides nice python accessors for a dict of modules."""
+class BoundModules(dict):
+  """Provides nice python accessors for a dict of BoundModules."""
 
   def __getattr__(self, name):
     try:
@@ -257,27 +303,32 @@ class Modules(dict):
 class SystemContext:
   """Global system."""
 
-  def __init__(self, modules=None, config: Optional[Config] = None):
+  def __init__(self, vm_modules=None, config: Optional[Config] = None):
     self._config = config if config is not None else _get_global_config()
     print(f"SystemContext driver={repr(self._config.driver)}", file=sys.stderr)
-    self._is_dynamic = modules is None
-    if not self._is_dynamic:
-      init_modules = self._config.default_modules + tuple(modules)
+    self._is_dynamic = vm_modules is None
+    if self._is_dynamic:
+      init_vm_modules = None
     else:
-      init_modules = None
+      init_vm_modules = self._config.default_vm_modules + tuple(vm_modules)
 
     self._vm_context = _binding.VmContext(instance=self._config.vm_instance,
-                                          modules=init_modules)
+                                          modules=init_vm_modules)
 
     if self._is_dynamic:
-      self._vm_context.register_modules(self._config.default_modules)
-      self._modules = Modules([
-          (m.name, BoundModule(self, m)) for m in self._config.default_modules
+      self._vm_context.register_modules(self._config.default_vm_modules)
+      self._bound_modules = BoundModules([
+          (m.name, BoundModule(self, m))
+          for m in self._config.default_vm_modules
       ])
     else:
-      self._modules = Modules([
-          (m.name, BoundModule(self, m)) for m in init_modules
+      self._bound_modules = BoundModules([
+          (m.name, BoundModule(self, m)) for m in init_vm_modules
       ])
+
+  @property
+  def vm_context(self) -> _binding.VmContext:
+    return self._vm_context
 
   @property
   def is_dynamic(self) -> bool:
@@ -292,34 +343,70 @@ class SystemContext:
     return self._instance
 
   @property
-  def modules(self) -> Modules:
-    return self._modules
+  def modules(self) -> BoundModules:
+    return self._bound_modules
 
   def create_function_abi(self, f: _binding.VmFunction) -> _binding.FunctionAbi:
     return self._vm_context.create_function_abi(self._config.device,
                                                 self._config.host_type_factory,
                                                 f)
 
-  def add_modules(self, modules):
+  def add_vm_modules(self, vm_modules):
     assert self._is_dynamic, "Cannot 'add_module' on a static context"
-    for m in modules:
-      name = m.name
-      if name in self._modules:
-        raise ValueError(f"Attempt to register duplicate module: '{name}'")
-      self._modules[m.name] = BoundModule(self, m)
-    self._vm_context.register_modules(modules)
+    for m in vm_modules:
+      if m.name in self._bound_modules:
+        raise ValueError(f"Attempt to register duplicate VmModule: '{m.name}'")
+      self._bound_modules[m.name] = BoundModule(self, m)
+    self._vm_context.register_modules(vm_modules)
 
-  def add_module(self, module):
-    self.add_modules((module,))
+  def add_vm_module(self, vm_module):
+    self.add_vm_modules((vm_module,))
 
 
-def load_modules(*modules, config: Optional[Config] = None):
-  """Loads modules into a new or shared context and returns them."""
-  context = SystemContext(modules=modules, config=config)
-  bound_modules = [context.modules[m.name] for m in modules]
+def load_vm_modules(*vm_modules, config: Optional[Config] = None):
+  """Loads VmModules into a new SystemContext and returns them."""
+  context = SystemContext(vm_modules=vm_modules, config=config)
+  bound_modules = [context.modules[m.name] for m in vm_modules]
   return bound_modules
 
 
-def load_module(module, config: Optional[Config] = None):
-  """Loads a module into a new or shared context and returns them."""
-  return load_modules(module, config=config)[0]
+def load_vm_module(vm_module, config: Optional[Config] = None):
+  """Loads a VmModule into a new SystemContext and returns it."""
+  return load_vm_modules(vm_module, config=config)[0]
+
+
+def load_vm_flatbuffer(vm_flatbuffer: bytes,
+                       *,
+                       driver: Optional[str] = None,
+                       backend: Optional[str] = None) -> BoundModule:
+  """Loads a VM Flatbuffer into a callable module.
+
+  Either 'driver' or 'backend' must be specified.
+  """
+  if driver is None and backend is None:
+    raise ValueError("Either 'driver' or 'backend' must be specified, but got "
+                     "'None' for both.")
+  if backend is not None and driver is not None:
+    raise ValueError("Cannot specify both 'driver' and a 'backend' to infer "
+                     "the driver from.")
+  if backend is not None:
+    driver = TARGET_BACKEND_TO_DRIVER[backend]
+  vm_module = _binding.VmModule.from_flatbuffer(vm_flatbuffer)
+  config = Config(TARGET_BACKEND_TO_DRIVER[backend])
+  bound_module = load_vm_module(vm_module, config)
+  return bound_module
+
+
+# TODO: There should be an API for mmap'ing the file which should be used
+# instead of reading into memory.
+def load_vm_flatbuffer_file(path: str,
+                            *,
+                            driver: Optional[str] = None,
+                            backend: Optional[str] = None) -> BoundModule:
+  """Loads a file containing a VM Flatbuffer into a callable module.
+
+  Either 'driver' or 'backend' must be specified.
+  """
+  with open(path, "rb") as f:
+    vm_flatbuffer = f.read()
+  return load_vm_flatbuffer(vm_flatbuffer, driver=driver, backend=backend)

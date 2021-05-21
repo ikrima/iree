@@ -26,10 +26,12 @@ iree_lit_test_suite(
     srcs = enforce_glob(
         [
             "convert_to_mhlo.mlir",
+            "emit_default_iree_abi.mlir",
             "lower_global_tensors.mlir",
             "lower_global_tensors_complex.mlir",
             "lower_global_tensors_invalid.mlir",
             "propagate_resource_casts.mlir",
+            "saved_model_to_iree_abi.mlir",
             "strip_asserts.mlir",
             "strip_metadata.mlir",
             "verify_fully_converted.mlir",

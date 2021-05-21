@@ -24,9 +24,6 @@ EXPLICIT_TARGET_MAPPING = {
     "@com_google_absl//absl/flags:parse": ["absl::flags_parse"],
     # MLIR
     "@llvm-project//mlir:AllPassesAndDialects": ["MLIRAllDialects"],
-    "@llvm-project//mlir:AllPassesAndDialectsNoRegistration": [
-        "MLIRAllDialects"
-    ],
     "@llvm-project//mlir:AffineToStandardTransforms": ["MLIRAffineToStandard"],
     "@llvm-project//mlir:CFGTransforms": ["MLIRSCFToStandard"],
     "@llvm-project//mlir:DialectUtils": [""],
@@ -54,10 +51,11 @@ EXPLICIT_TARGET_MAPPING = {
     "@llvm-project//mlir:VectorOps": ["MLIRVector"],
     "@llvm-project//mlir:TensorDialect": ["MLIRTensor"],
     "@llvm-project//mlir:NVVMDialect": ["MLIRNVVMIR"],
+    "@llvm-project//mlir:ROCDLDialect": ["MLIRROCDLIR"],
     # Vulkan
     "@iree_vulkan_headers//:vulkan_headers": ["Vulkan::Headers"],
     # Cuda
-    "@cuda_headers": ["cuda_headers"],
+    "@cuda//:cuda_headers": ["cuda_headers"],
     # The Bazel target maps to the IMPORTED target defined by FindVulkan().
     "@vulkan_sdk//:sdk": ["Vulkan::Vulkan"],
     # Misc single targets
@@ -66,10 +64,8 @@ EXPLICIT_TARGET_MAPPING = {
     "@com_github_dvidelabs_flatcc//:runtime": ["flatcc::runtime"],
     "@com_google_googletest//:gtest": ["gmock", "gtest"],
     "@renderdoc_api//:renderdoc_app": ["renderdoc_api::renderdoc_app"],
-    "@pffft": ["pffft"],
     "@spirv_cross//:spirv_cross_lib": ["spirv-cross-msl"],
     "@cpuinfo": ["cpuinfo"],
-    "@half//:includes": ["half::includes"],
     "@vulkan_memory_allocator//:impl_header_only": ["vulkan_memory_allocator"],
 }
 
@@ -129,8 +125,5 @@ def convert_external_target(target):
   if target.startswith("@mlir-hlo//"):
     # All Bazel targets map to a single CMake target.
     return ["tensorflow::mlir_hlo"]
-  if target.startswith("@com_google_ruy//ruy"):
-    # All Bazel targets map to a single CMake target.
-    return ["ruy"]
 
   raise KeyError(f"No conversion found for target '{target}'")

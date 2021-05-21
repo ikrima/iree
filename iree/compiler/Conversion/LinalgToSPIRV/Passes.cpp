@@ -20,15 +20,14 @@
 
 #include "iree/compiler/Conversion/LinalgToSPIRV/Passes.h"
 
-#include "iree/compiler/Conversion/CodegenUtils/ForOpCanonicalization.h"
 #include "iree/compiler/Conversion/Common/Passes.h"
-#include "iree/compiler/Conversion/HLOToHLO/Passes.h"
 #include "iree/compiler/Conversion/HLOToLinalg/Passes.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/CodeGenOptionUtils.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/MemorySpace.h"
 #include "iree/compiler/Conversion/LinalgToVector/Passes.h"
 #include "iree/compiler/Dialect/Shape/Transforms/Passes.h"
 #include "llvm/Support/CommandLine.h"
+#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRV.h"
 #include "mlir/Conversion/SCFToGPU/SCFToGPUPass.h"
 #include "mlir/Conversion/StandardToSPIRV/StandardToSPIRV.h"
@@ -38,6 +37,7 @@
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/SCF.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/Dialect/SPIRV/Transforms/Passes.h"
@@ -83,20 +83,12 @@ static void addLinalgToSPIRVPasses(OpPassManager &pm,
   //     - The Linalg op is kept untouched.
   //
   //===--------------------------------------------------------------------===//
-  if (options.usingLinalgOnTensors) {
-    // flow.dispatch.workgroups performed abstract tiling and distribution. Make
-    // them concrete now since we know the target and settings now.
-    pm.addPass(createConcretizeTileAmongWorkgroupsPass(options));
-  } else {
-    pm.addPass(createSplitDispatchFunctionPass());
-    pm.addPass(createTileAndDistributeAmongWorkgroupsPass(options));
-  }
+
+  // flow.dispatch.workgroups performed abstract tiling and distribution. Make
+  // them concrete now since we know the target and settings now.
+  pm.addPass(createConcretizeTileAmongWorkgroupsPass(options));
 
   pm.addPass(createTileAndVectorizeInOneWorkgroupPass(options));
-  if (options.vectorizeMemref) {
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(
-        createLoadStoreVectorizationPass());
-  }
   pm.nest<ModuleOp>().addPass(createCanonicalizerPass());
 
   //===--------------------------------------------------------------------===//
@@ -107,10 +99,8 @@ static void addLinalgToSPIRVPasses(OpPassManager &pm,
   //     workgroups.
   //   - Linalg ops are converted to loop.for ops and mapped to workitems.
   //===--------------------------------------------------------------------===//
-  pm.addPass(createConvertToGPUPass(options));
-  if (options.enableVectorization) {
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(createVectorToGPUPass());
-  }
+  pm.addPass(createConvertToGPUPass());
+  pm.nest<ModuleOp>().addNestedPass<FuncOp>(createVectorToGPUPass());
   pm.nest<ModuleOp>().addPass(createLowerAffinePass());
   pm.nest<ModuleOp>().addPass(createCanonicalizerPass());
   pm.nest<ModuleOp>().addPass(createCSEPass());
@@ -124,20 +114,22 @@ static void addLinalgToSPIRVPasses(OpPassManager &pm,
   //   - Load/store on std.subview ops are converted into load/store on the
   //     original buffers.
   //===--------------------------------------------------------------------===//
-  if (options.enableVectorization) {
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(
-        createVectorTransferOptimizationPass());
-  }
-  pm.nest<ModuleOp>().addPass(createLegalizeStdOpsForSPIRVLoweringPass());
+  pm.nest<ModuleOp>().addNestedPass<FuncOp>(
+      createVectorTransferOptimizationPass());
+  pm.nest<ModuleOp>().addPass(memref::createFoldSubViewOpsPass());
   pm.nest<ModuleOp>().addPass(createCanonicalizerPass());
   pm.nest<ModuleOp>().addPass(createCSEPass());
-  if (options.enableVectorization) {
-    pm.nest<ModuleOp>().addPass(createVectorizeMemref());
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(
-        createForOpCanonicalizationPass());
-    pm.nest<ModuleOp>().addPass(createCanonicalizerPass());
-    pm.nest<ModuleOp>().addPass(createCSEPass());
-  }
+  pm.nest<ModuleOp>().addPass(createVectorizeMemrefLoadStorePass());
+  pm.nest<ModuleOp>().addNestedPass<FuncOp>(
+      createConvertVectorToCooperativeMatrixPass());
+  pm.nest<ModuleOp>().addNestedPass<FuncOp>(createForOpCanonicalizationPass());
+  pm.nest<ModuleOp>().addPass(createCanonicalizerPass());
+  pm.nest<ModuleOp>().addPass(createCSEPass());
+
+  pm.nest<ModuleOp>().addPass(createFlattenMemRefSubspanPass());
+  pm.nest<ModuleOp>().addPass(createLowerAffinePass());
+  pm.nest<ModuleOp>().addPass(createCanonicalizerPass());
+  pm.nest<ModuleOp>().addPass(createCSEPass());
 
   //===--------------------------------------------------------------------===//
   // Final conversion to SPIR-V dialect.
@@ -170,54 +162,15 @@ void buildSPIRVTransformPassPipeline(OpPassManager &pm,
   // TODO(antiagainst): re-evaluate the inlining timing.
   //===--------------------------------------------------------------------===//
   pm.nest<ModuleOp>().addPass(createInlinerPass());
-
-  if (options.usingLinalgOnTensors) {
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(
-        createBufferAllocViewCleanUpPass());
-
-    WorkgroupMemoryAllocationFn allocationFn =
-        [](OpBuilder &builder, Location loc, ArrayRef<int64_t> staticShape,
-           Type elementType, ArrayRef<Value> dynamicSizes) {
-          MemRefType allocType = MemRefType::get(staticShape, elementType, {},
-                                                 getWorkgroupMemorySpace());
-          return builder.create<memref::AllocOp>(loc, allocType, dynamicSizes);
-        };
-    addLinalgBufferizePasses(pm.nest<ModuleOp>(), allocationFn);
-  } else {
-    //===--------------------------------------------------------------------===//
-    // Inject shape calculation for output buffers.
-    //
-    // Pre-conditions:
-    //   - All transformations altering the tensor-level shapes have been done.
-    //   - "Root" dynamic tensors all pass through a single shapex.tie_shape
-    //     use which associates them to their shape.
-    //   - Loose, non-associated shapex.get_ranked_shape ops can exist anywhere
-    //     and will be resolved.
-    // Post-conditions:
-    //   - All dynamic tensors bridge through a shapex.tie_shape op with the
-    //     appropriate shape.
-    //   - No shapex.get_ranked_shape ops exist.
-    //   - Shape folding and canonicalization has been done.
-    //===--------------------------------------------------------------------===//
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(
-        Shape::createTieDynamicShapesPass());
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(
-        Shape::createMaterializeShapeCalculationsPass());
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(
-        Shape::createHoistShapeCalculationsPass());
-
-    //===--------------------------------------------------------------------===//
-    // Convert XLA HLO ops to Linalg ops with buffer semantics.
-    //
-    // Post-conditions:
-    //   - All XLA HLO ops are converted.
-    //   - All Linalg ops are operating on buffers.
-    //===--------------------------------------------------------------------===//
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(createDecomposeHLOClampPass());
-    addHLOToLinalgOnBuffersPasses(pm.nest<ModuleOp>());
-    pm.nest<ModuleOp>().addNestedPass<FuncOp>(
-        createBufferAllocViewCleanUpPass());
-  }
+  pm.nest<ModuleOp>().addNestedPass<FuncOp>(createBufferAllocViewCleanUpPass());
+  WorkgroupMemoryAllocationFn allocationFn =
+      [](OpBuilder &builder, Location loc, ArrayRef<int64_t> staticShape,
+         Type elementType, ArrayRef<Value> dynamicSizes) {
+        MemRefType allocType = MemRefType::get(staticShape, elementType, {},
+                                               getWorkgroupMemorySpace());
+        return builder.create<memref::AllocOp>(loc, allocType, dynamicSizes);
+      };
+  addLinalgBufferizePasses(pm.nest<ModuleOp>(), allocationFn);
 
   //===--------------------------------------------------------------------===//
   // Convert Linalg ops to SPIR-V ops.

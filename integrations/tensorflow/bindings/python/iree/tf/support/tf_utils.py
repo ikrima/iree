@@ -17,7 +17,7 @@
 import os
 import random
 import re
-from typing import Any, Callable, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Mapping, Sequence, Set, Tuple, Union
 
 from absl import logging
 import iree.runtime
@@ -72,7 +72,7 @@ def apply_function(values, function):
     return [apply_function(v, function) for v in values]
   elif isinstance(values, tuple):
     return tuple(apply_function(v, function) for v in values)
-  elif isinstance(values, dict):
+  elif isinstance(values, Mapping):
     return {k: apply_function(v, function) for k, v in values.items()}
   else:
     return function(values)
@@ -166,8 +166,7 @@ def _complex_wrapper(function):
     for real, imag in zip(args[::2], args[1::2]):
       inputs.append(tf.complex(real, imag))
     result = function(*inputs, **kwargs)
-    # TODO(meadowlark): Support returning complex numbers.
-    return tf.math.real(result) + tf.math.imag(result)
+    return tf.math.real(result), tf.math.imag(result)
 
   return decorator
 
@@ -236,6 +235,7 @@ def check_same(ref: Any, tar: Any, rtol: float,
 
   # Base check for numpy arrays.
   elif isinstance(ref, np.ndarray):
+    # TODO(#5359): Simplify this and verify that the types are actually the same
     # Ignore np.bool != np.int8 because the IREE python runtime awkwardly
     # returns np.int8s instead of np.bools.
     if ref.dtype != tar.dtype and not (

@@ -31,6 +31,7 @@ cc_library(
         "MaterializeInterfaces.cpp",
         "MaterializeResourceCaches.cpp",
         "MemoizeDeviceQueries.cpp",
+        "PackAllocations.cpp",
         "PackConstantPoolStorage.cpp",
         "Passes.cpp",
         "PropagateConstantWorkgroupInfo.cpp",
@@ -66,6 +67,5 @@ cc_library(
         "@llvm-project//mlir:StandardOps",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
-        "@mlir-hlo//:hlo",
     ],
 )

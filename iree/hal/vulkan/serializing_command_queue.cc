@@ -16,7 +16,6 @@
 
 #include <memory>
 
-#include "absl/types/span.h"
 #include "iree/base/api.h"
 #include "iree/base/tracing.h"
 #include "iree/hal/api.h"
@@ -37,12 +36,11 @@ namespace {
 // |wait_semaphores| and |signal_semaphores| will be filled with the binary
 // `VkSemaphores` on success.
 iree_status_t TryToPrepareSemaphores(
-    const absl::InlinedVector<SemaphoreValue, 4>& batch_wait_semaphores,
-    const absl::InlinedVector<SemaphoreValue, 4>& batch_signal_semaphores,
+    const std::vector<SemaphoreValue>& batch_wait_semaphores,
+    const std::vector<SemaphoreValue>& batch_signal_semaphores,
     const ref_ptr<TimePointFence>& batch_fence,
-    absl::InlinedVector<VkSemaphore, 4>* wait_semaphores,
-    absl::InlinedVector<VkSemaphore, 4>* signal_semaphores,
-    bool* out_ready_to_submit) {
+    std::vector<VkSemaphore>* wait_semaphores,
+    std::vector<VkSemaphore>* signal_semaphores, bool* out_ready_to_submit) {
   IREE_TRACE_SCOPE0("TryToPrepareSemaphores");
   *out_ready_to_submit = false;
 
@@ -109,10 +107,11 @@ iree_status_t TryToPrepareSemaphores(
 // waiting on |wait_semaphores| and signalling |signal_semaphores|. Necessary
 // structures are allocated from |arena| and the result `VkSubmitInfo` is
 // written to |submit_info|.
-void PrepareSubmitInfo(absl::Span<const VkSemaphore> wait_semaphore_handles,
-                       absl::Span<const VkCommandBuffer> command_buffer_handles,
-                       absl::Span<const VkSemaphore> signal_semaphore_handles,
-                       VkSubmitInfo* submit_info, Arena* arena) {
+void PrepareSubmitInfo(
+    const std::vector<VkSemaphore>& wait_semaphore_handles,
+    const std::vector<VkCommandBuffer>& command_buffer_handles,
+    const std::vector<VkSemaphore>& signal_semaphore_handles,
+    VkSubmitInfo* submit_info, Arena* arena) {
   // TODO(benvanik): see if we can go to finer-grained stages.
   // For example, if this was just queue ownership transfers then we can use
   // the pseudo-stage of VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT.
@@ -127,7 +126,7 @@ void PrepareSubmitInfo(absl::Span<const VkSemaphore> wait_semaphore_handles,
   // args are mutated in-place after this function is called so we can't
   // reference them here. If we were going to preserve this code post-Vulkan 1.2
   // then we'd really want to rework all of this to properly use the arena from
-  // the start instead of all this InlinedVector tomfoolery.
+  // the start instead of all this span tomfoolery.
   auto wait_semaphores =
       arena->AllocateSpan<VkSemaphore>(wait_semaphore_handles.size());
   for (size_t i = 0, e = wait_semaphore_handles.size(); i < e; ++i) {
@@ -237,14 +236,14 @@ iree_status_t SerializingCommandQueue::TryProcessDeferredSubmissions(
   if (out_work_submitted) *out_work_submitted = false;
 
   Arena arena(4 * 1024);
-  absl::InlinedVector<VkSubmitInfo, 4> submit_infos;
-  absl::InlinedVector<VkFence, 4> submit_fences;
+  std::vector<VkSubmitInfo> submit_infos;
+  std::vector<VkFence> submit_fences;
   while (!deferred_submissions_.empty()) {
     FencedSubmission* submission = deferred_submissions_.front();
     ref_ptr<TimePointFence>& fence = submission->fence;
 
-    absl::InlinedVector<VkSemaphore, 4> wait_semaphores;
-    absl::InlinedVector<VkSemaphore, 4> signal_semaphores;
+    std::vector<VkSemaphore> wait_semaphores;
+    std::vector<VkSemaphore> signal_semaphores;
     bool ready_to_submit = false;
     IREE_RETURN_IF_ERROR(TryToPrepareSemaphores(
         submission->wait_semaphores, submission->signal_semaphores, fence,
@@ -280,8 +279,10 @@ iree_status_t SerializingCommandQueue::TryProcessDeferredSubmissions(
   return iree_ok_status();
 }
 
-iree_status_t SerializingCommandQueue::WaitIdle(iree_time_t deadline_ns) {
+iree_status_t SerializingCommandQueue::WaitIdle(iree_timeout_t timeout) {
   iree_status_t status = iree_ok_status();
+
+  iree_time_t deadline_ns = iree_timeout_as_deadline_ns(timeout);
 
   if (deadline_ns == IREE_TIME_INFINITE_FUTURE) {
     IREE_TRACE_SCOPE0("SerializingCommandQueue::WaitIdle#vkQueueWaitIdle");
@@ -325,7 +326,7 @@ iree_status_t SerializingCommandQueue::WaitIdle(iree_time_t deadline_ns) {
   do {
     status = ProcessDeferredSubmissions();
     bool has_deferred_submissions = !deferred_submissions_.empty();
-    absl::InlinedVector<VkFence, 8> fence_handles(pending_fences_.size());
+    std::vector<VkFence> fence_handles(pending_fences_.size());
     for (size_t i = 0; i < pending_fences_.size(); ++i) {
       fence_handles[i] = pending_fences_[i]->value();
     }
@@ -389,7 +390,7 @@ void SerializingCommandQueue::AbortQueueSubmission() {
   // yet so we don't need to reset.
   deferred_submissions_.clear();
 
-  absl::InlinedVector<VkFence, 8> fence_handles(pending_fences_.size());
+  std::vector<VkFence> fence_handles(pending_fences_.size());
   for (size_t i = 0; i < pending_fences_.size(); ++i) {
     fence_handles[i] = pending_fences_[i]->value();
   }
@@ -406,7 +407,7 @@ void SerializingCommandQueue::AbortQueueSubmission() {
   iree_slim_mutex_unlock(&queue_mutex_);
 }
 
-void SerializingCommandQueue::SignalFences(absl::Span<VkFence> fences) {
+void SerializingCommandQueue::SignalFences(const std::vector<VkFence>& fences) {
   const auto span_contains = [fences](VkFence fence) {
     for (VkFence f : fences) {
       if (f == fence) return true;

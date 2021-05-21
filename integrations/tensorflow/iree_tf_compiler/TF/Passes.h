@@ -46,6 +46,11 @@ void registerMHLOImportPassPipeline();
 // Converts the TF dialect to the XLA MHLO dialect.
 std::unique_ptr<FunctionPass> createConvertToMHLOPass();
 
+// Annotates an appropriate iree.abi attribute on public functions that
+// operate exclusively on tensor types. This corresponds to the expectations
+// of MHLO and is suitable for such programs.
+std::unique_ptr<OperationPass<FuncOp>> createEmitDefaultIREEABIPass();
+
 // Flattens tuple values in function signatures and blocks.
 std::unique_ptr<OperationPass<ModuleOp>> createFlattenTuplesInCFGPass();
 
@@ -60,6 +65,14 @@ std::unique_ptr<OperationPass<ModuleOp>> createLowerGlobalTensorsPass();
 // exported functions to IREE exported functions with appropriate reflection
 // metadata.
 std::unique_ptr<OperationPass<ModuleOp>> createLowerExportedFunctionsPass();
+
+// In a module tagged with `tf_saved_model.semantics`, creates IREE ABI
+// functions for any saved model exported functions.
+std::unique_ptr<OperationPass<ModuleOp>> createSavedModelToIREEABIPass();
+
+// Simplifies TensorFlow debug info for the purposes of making it easier to
+// look at.
+std::unique_ptr<OperationPass<ModuleOp>> createPrettifyDebugInfoPass();
 
 // Push resource casts forward to better propagate resource related shapes.
 std::unique_ptr<OperationPass<ModuleOp>> createPropagateResourceCastsPass();
@@ -85,10 +98,13 @@ inline void registerAllPasses() {
   registerMHLOImportPassPipeline();
 
   createConvertToMHLOPass();
+  createEmitDefaultIREEABIPass();
   createFlattenTuplesInCFGPass();
   createLowerGlobalTensorsPass();
   createLowerExportedFunctionsPass();
+  createPrettifyDebugInfoPass();
   createPropagateResourceCastsPass();
+  createSavedModelToIREEABIPass();
   createStripAssertsPass();
   createStripModuleMetadataPass();
   createStripFunctionMetadataPass();

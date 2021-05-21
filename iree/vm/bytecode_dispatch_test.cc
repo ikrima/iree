@@ -32,7 +32,7 @@
 namespace {
 
 struct TestParams {
-  const iree::FileToc& module_file;
+  const struct iree_file_toc_t& module_file;
   std::string function_name;
 };
 
@@ -47,8 +47,9 @@ std::vector<TestParams> GetModuleTestParams() {
 
   IREE_CHECK_OK(iree_vm_register_builtin_types());
 
-  auto* module_file_toc = iree::vm::test::all_bytecode_modules_cc_create();
-  for (size_t i = 0; i < iree::vm::test::all_bytecode_modules_cc_size(); ++i) {
+  const struct iree_file_toc_t* module_file_toc =
+      all_bytecode_modules_c_create();
+  for (size_t i = 0; i < all_bytecode_modules_c_size(); ++i) {
     const auto& module_file = module_file_toc[i];
     iree_vm_module_t* module = nullptr;
     IREE_CHECK_OK(iree_vm_bytecode_module_create(
@@ -100,12 +101,11 @@ class VMBytecodeDispatchTest
     iree_vm_instance_release(instance_);
   }
 
-  iree_status_t RunFunction(absl::string_view function_name) {
+  iree_status_t RunFunction(const char* function_name) {
     iree_vm_function_t function;
     IREE_CHECK_OK(bytecode_module_->lookup_function(
         bytecode_module_->self, IREE_VM_FUNCTION_LINKAGE_EXPORT,
-        iree_string_view_t{function_name.data(), function_name.size()},
-        &function))
+        iree_make_cstring_view(function_name), &function))
         << "Exported function '" << function_name << "' not found";
 
     return iree_vm_invoke(context_, function,
@@ -122,7 +122,7 @@ TEST_P(VMBytecodeDispatchTest, Check) {
   const auto& test_params = GetParam();
   bool expect_failure = absl::StartsWith(test_params.function_name, "fail_");
 
-  iree_status_t status = RunFunction(test_params.function_name);
+  iree_status_t status = RunFunction(test_params.function_name.c_str());
   if (iree_status_is_ok(status)) {
     if (expect_failure) {
       GTEST_FAIL() << "Function expected failure but succeeded";

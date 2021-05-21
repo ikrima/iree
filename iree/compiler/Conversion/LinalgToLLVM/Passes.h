@@ -22,13 +22,13 @@
 namespace mlir {
 namespace iree_compiler {
 
-/// Converts linalg::ConvInputNHWCFilterHWCFOp into packed img2col operation
-/// followed by linalg::MatmulOp.
-std::unique_ptr<FunctionPass> createConvImg2ColMatmulConversionPass();
-
 /// Converts linalg.conv into linalg.generic with a CPU-friendly iteration
 /// order.
 std::unique_ptr<FunctionPass> createPlanConvLoopOrderPass();
+
+/// Pad linalg ops workgroup tiles into the next integer multiple of the target
+/// vector size.
+std::unique_ptr<OperationPass<FuncOp>> createPadLinalgWorkgroupTilesPass();
 
 /// Distributes linalg ops among hal.interface.workgroup logical threads.
 std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
@@ -40,11 +40,6 @@ std::unique_ptr<FunctionPass> createLinalgTileAndVectorizeWorkgroupsPass();
 /// Replaces llvm.intr.fma with its unfused mul and add ops.
 std::unique_ptr<FunctionPass> createUnfusedFMAOpsPass();
 
-/// Populates patterns to rewrite linalg::ConvInputNHWCFilterHWCFOp into packed
-/// img2col operation followed by linalg::MatmulOp.
-void populateConvImg2ColMatmulConversionPatterns(
-    MLIRContext *context, OwningRewritePatternList &patterns);
-
 void populateUnfusedFMAOpsPassPatterns(MLIRContext *context,
                                        OwningRewritePatternList &patterns);
 
@@ -55,15 +50,31 @@ std::unique_ptr<OperationPass<ModuleOp>> createConvertToLLVMPass(
 /// Pass to convert Linalg ops into vector operations.
 std::unique_ptr<FunctionPass> createLinalgVectorizePass();
 
-/// Pass to materialize static launch information for a dispatch region when
-/// using the linalg on tensors path.
-std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
-createMaterializeCPULaunchConfigurationPass();
+//===----------------------------------------------------------------------===//
+// Pass Pipelines for CPU Lowering
+//===----------------------------------------------------------------------===//
 
-/// After running the upstream TensorConstantBufferize pass, remove tensor_loads
-/// introduced for use only in tensor_extract. These can be folded to use a load
-/// of the created memref object that holds the constant values.
-std::unique_ptr<OperationPass<>> createFoldTensorExtractOpPass();
+/// Populates the passes to lower to scalars operations for linalg based
+/// code-generation. This pipeline does not vectorize, but instead just converts
+/// to memrefs
+void addCPUDefaultPassPipeline(OpPassManager &passManager,
+                               LLVMCodegenOptions options);
+
+/// Populates the passes needed to lower to vector operations using linalg based
+/// progressive lowering with vectorization after bufferization.
+void addCPUVectorizationPassPipeline(OpPassManager &passManager,
+                                     LLVMCodegenOptions options);
+
+/// Populates the passes needed to lower scalar/native vector code to LLVM
+/// Dialect.
+void addLowerToLLVMPasses(OpPassManager &passManager,
+                          LLVMCodegenOptions options);
+
+/// Pass to lower the module an hal.executable.target operation to external
+/// dialect. Currently this pass lowers to LLVM dialect, but could be
+/// generalized to lower to any "final" dialect like SPIR-V/NVVM, etc.
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createLowerExecutableTargetPass(LLVMCodegenOptions options);
 
 /// Populates passes needed to lower a XLA HLO op to LLVM dialect via the
 /// structured ops path. The pass manager `pm` in here should operate on the

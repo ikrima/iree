@@ -42,7 +42,7 @@ extern "C" {
 //
 // We implement this directly in the header with ALWAYS_INLINE so that the
 // stack doesn't get all messed up.
-IREE_ATTRIBUTE_ALWAYS_INLINE static inline void iree_debug_break() {
+IREE_ATTRIBUTE_ALWAYS_INLINE static inline void iree_debug_break(void) {
 #if defined(IREE_COMPILER_HAS_BUILTIN_DEBUG_TRAP)
   __builtin_debugtrap();
 #elif defined(IREE_PLATFORM_WINDOWS)
@@ -60,36 +60,6 @@ IREE_ATTRIBUTE_ALWAYS_INLINE static inline void iree_debug_break() {
   __builtin_trap();
 #endif  // IREE_COMPILER_HAS_BUILTIN_DEBUG_TRAP
 }
-
-//===----------------------------------------------------------------------===//
-// IREE_ASSERT macros
-//===----------------------------------------------------------------------===//
-// These are no-oped in builds with NDEBUG defined (by default anything but
-// `-c dbg`/`-DCMAKE_BUILD_TYPE=Debug`). As with normal assert() ensure that
-// side-effecting behavior is avoided as the expression will not be evaluated
-// when the asserts are removed!
-
-#if !defined(NDEBUG)
-#define IREE_ASSERT(expr, ...)                      \
-  {                                                 \
-    if (IREE_UNLIKELY(!(expr))) iree_debug_break(); \
-  }
-#else
-#define IREE_ASSERT(expr, ...) \
-  do {                         \
-  } while (false)
-#endif  // !NDEBUG
-
-#define IREE_ASSERT_TRUE(expr, ...) IREE_ASSERT(!!(expr), __VA_ARGS__)
-#define IREE_ASSERT_FALSE(expr, ...) IREE_ASSERT(!(expr), __VA_ARGS__)
-#define IREE_ASSERT_CMP(lhs, op, rhs, ...) \
-  IREE_ASSERT((lhs)op(rhs), __VA_ARGS__)
-#define IREE_ASSERT_EQ(lhs, rhs, ...) IREE_ASSERT_CMP(lhs, ==, rhs, __VA_ARGS__)
-#define IREE_ASSERT_NE(lhs, rhs, ...) IREE_ASSERT_CMP(lhs, !=, rhs, __VA_ARGS__)
-#define IREE_ASSERT_LT(lhs, rhs, ...) IREE_ASSERT_CMP(lhs, <, rhs, __VA_ARGS__)
-#define IREE_ASSERT_LE(lhs, rhs, ...) IREE_ASSERT_CMP(lhs, <=, rhs, __VA_ARGS__)
-#define IREE_ASSERT_GT(lhs, rhs, ...) IREE_ASSERT_CMP(lhs, >=, rhs, __VA_ARGS__)
-#define IREE_ASSERT_GE(lhs, rhs, ...) IREE_ASSERT_CMP(lhs, >, rhs, __VA_ARGS__)
 
 //===----------------------------------------------------------------------===//
 // Sanitizer interfaces
@@ -117,6 +87,7 @@ IREE_ATTRIBUTE_ALWAYS_INLINE static inline void iree_debug_break() {
 
 #if defined(IREE_SANITIZER_ADDRESS)
 #include <sanitizer/asan_interface.h>
+#include <sanitizer/lsan_interface.h>
 #endif  // IREE_SANITIZER_ADDRESS
 
 // For whenever we want to provide specialized msan/tsan hooks:

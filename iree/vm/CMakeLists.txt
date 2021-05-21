@@ -17,7 +17,7 @@ iree_cc_library(
     "api.h"
   DEPS
     ::impl
-    iree::base::api
+    iree::base
   PUBLIC
 )
 
@@ -30,11 +30,10 @@ iree_cc_library(
     "ref_cc.h"
   DEPS
     ::vm
-    absl::inlined_vector
     absl::optional
     absl::span
     absl::strings
-    iree::base::api
+    iree::base
     iree::base::core_headers
     iree::base::status
   PUBLIC
@@ -44,6 +43,7 @@ iree_cc_library(
   NAME
     impl
   HDRS
+    "buffer.h"
     "builtin_types.h"
     "context.h"
     "instance.h"
@@ -52,10 +52,12 @@ iree_cc_library(
     "module.h"
     "native_module.h"
     "ref.h"
+    "shims.h"
     "stack.h"
     "type_def.h"
     "value.h"
   SRCS
+    "buffer.c"
     "builtin_types.c"
     "context.c"
     "instance.c"
@@ -64,13 +66,27 @@ iree_cc_library(
     "module.c"
     "native_module.c"
     "ref.c"
+    "shims.c"
     "stack.c"
   DEPS
-    iree::base::api
+    iree::base
     iree::base::core_headers
     iree::base::internal
     iree::base::tracing
   PUBLIC
+)
+
+iree_cc_test(
+  NAME
+    buffer_test
+  SRCS
+    "buffer_test.cc"
+  DEPS
+    ::cc
+    ::impl
+    iree::base
+    iree::testing::gtest
+    iree::testing::gtest_main
 )
 
 iree_cc_test(
@@ -81,7 +97,7 @@ iree_cc_test(
   DEPS
     ::cc
     ::impl
-    iree::base::api
+    iree::base
     iree::testing::gtest
     iree::testing::gtest_main
 )
@@ -95,7 +111,7 @@ iree_cc_test(
     ::cc
     ::impl
     ::native_module_test_hdrs
-    iree::base::api
+    iree::base
     iree::base::status
     iree::testing::gtest
     iree::testing::gtest_main
@@ -108,7 +124,7 @@ iree_cc_library(
     "native_module_test.h"
   DEPS
     ::impl
-    iree::base::api
+    iree::base
   PUBLIC
 )
 
@@ -121,7 +137,7 @@ iree_cc_test(
     ::impl
     ::native_module_test_hdrs
     benchmark
-    iree::base::api
+    iree::base
     iree::base::logging
     iree::testing::benchmark_main
 )
@@ -134,7 +150,7 @@ iree_cc_test(
   DEPS
     ::cc
     ::impl
-    iree::base::api
+    iree::base
     iree::testing::gtest
     iree::testing::gtest_main
 )
@@ -146,7 +162,7 @@ iree_cc_test(
     "stack_test.cc"
   DEPS
     ::impl
-    iree::base::api
+    iree::base
     iree::testing::gtest
     iree::testing::gtest_main
 )
@@ -165,10 +181,10 @@ iree_cc_library(
   DEPS
     ::ops
     ::vm
-    iree::base::api
+    iree::base
     iree::base::core_headers
-    iree::base::flatcc
     iree::base::internal
+    iree::base::internal::flatcc
     iree::base::tracing
     iree::schemas::bytecode_module_def_c_fbs
   PUBLIC
@@ -185,12 +201,16 @@ iree_cc_test(
   DEPS
     ::bytecode_module
     ::vm
+    absl::span
     absl::strings
     iree::base::logging
     iree::base::status
     iree::testing::gtest
     iree::testing::gtest_main
-    iree::vm::test::all_bytecode_modules_cc
+    iree::vm::test::all_bytecode_modules_c
+  LABELS
+    "notap"
+    "manual"
 )
 
 iree_cc_binary(
@@ -200,12 +220,10 @@ iree_cc_binary(
     "bytecode_module_benchmark.cc"
   DEPS
     ::bytecode_module
-    ::bytecode_module_benchmark_module_cc
+    ::bytecode_module_benchmark_module_c
     ::vm
-    absl::inlined_vector
-    absl::strings
     benchmark
-    iree::base::api
+    iree::base
     iree::base::logging
     iree::testing::benchmark_main
   TESTONLY
@@ -225,8 +243,8 @@ iree_bytecode_module(
     bytecode_module_benchmark_module
   SRC
     "bytecode_module_benchmark.mlir"
-  CC_NAMESPACE
-    "iree::vm"
+  C_IDENTIFIER
+    "iree_vm_bytecode_module_benchmark_module"
   FLAGS
     "-iree-vm-ir-to-bytecode-module"
   TESTONLY
@@ -240,9 +258,9 @@ iree_cc_test(
     "bytecode_module_size_benchmark.cc"
   DEPS
     ::bytecode_module
-    ::bytecode_module_size_benchmark_module_cc
+    ::bytecode_module_size_benchmark_module_c
     ::vm
-    iree::base::api
+    iree::base
 )
 
 iree_bytecode_module(
@@ -250,8 +268,8 @@ iree_bytecode_module(
     bytecode_module_size_benchmark_module
   SRC
     "bytecode_module_size_benchmark.mlir"
-  CC_NAMESPACE
-    "iree::vm"
+  C_IDENTIFIER
+    "iree_vm_bytecode_module_size_benchmark_module"
   FLAGS
     "-iree-vm-ir-to-bytecode-module"
   TESTONLY
@@ -266,15 +284,15 @@ iree_cc_library(
   HDRS
     "ops.h"
   DEPS
-    iree::base::api
+    iree::base
   PUBLIC
 )
 
 iree_cc_library(
   NAME
-    shims
+    shims_emitc
   HDRS
-    "shims.h"
+    "shims_emitc.h"
   PUBLIC
 )
 

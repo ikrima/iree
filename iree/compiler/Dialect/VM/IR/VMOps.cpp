@@ -82,18 +82,18 @@ static LogicalResult verifyModuleOp(ModuleOp op) {
 
 static ParseResult parseFuncOp(OpAsmParser &parser, OperationState *result) {
   auto buildFuncType = [](Builder &builder, ArrayRef<Type> argTypes,
-                          ArrayRef<Type> results, impl::VariadicFlag,
-                          std::string &) {
+                          ArrayRef<Type> results,
+                          function_like_impl::VariadicFlag, std::string &) {
     return builder.getFunctionType(argTypes, results);
   };
-  return impl::parseFunctionLikeOp(parser, *result, /*allowVariadic=*/false,
-                                   buildFuncType);
+  return function_like_impl::parseFunctionLikeOp(
+      parser, *result, /*allowVariadic=*/false, buildFuncType);
 }
 
 static void printFuncOp(OpAsmPrinter &p, FuncOp &op) {
   FunctionType fnType = op.getType();
-  impl::printFunctionLikeOp(p, op, fnType.getInputs(), /*isVariadic=*/false,
-                            fnType.getResults());
+  function_like_impl::printFunctionLikeOp(
+      p, op, fnType.getInputs(), /*isVariadic=*/false, fnType.getResults());
 }
 
 void FuncOp::build(OpBuilder &builder, OperationState &result, StringRef name,
@@ -108,15 +108,10 @@ void FuncOp::build(OpBuilder &builder, OperationState &result, StringRef name,
     return;
   }
 
-  unsigned numInputs = type.getNumInputs();
-  assert(numInputs == argAttrs.size() &&
+  assert(type.getNumInputs() == argAttrs.size() &&
          "expected as many argument attribute lists as arguments");
-  SmallString<8> argAttrName;
-  for (unsigned i = 0; i < numInputs; ++i) {
-    if (argAttrs[i] && !argAttrs[i].empty()) {
-      result.addAttribute(getArgAttrName(i, argAttrName), argAttrs[i]);
-    }
-  }
+  function_like_impl::addArgAndResultAttrs(builder, result, argAttrs,
+                                           /*resultAttrs=*/llvm::None);
 }
 
 Block *FuncOp::addEntryBlock() {
@@ -227,18 +222,15 @@ static ParseResult parseImportOp(OpAsmParser &parser, OperationState *result) {
     return parser.emitError(parser.getCurrentLocation())
            << "invalid result type list";
   }
-  for (int i = 0; i < argAttrs.size(); ++i) {
-    SmallString<8> argName;
-    mlir::impl::getArgAttrName(i, argName);
-    result->addAttribute(argName, argAttrs[i]);
-  }
+  function_like_impl::addArgAndResultAttrs(builder, *result, argAttrs,
+                                           /*resultAttrs=*/llvm::None);
   if (failed(parser.parseOptionalAttrDictWithKeyword(result->attributes))) {
     return failure();
   }
 
   auto functionType =
       FunctionType::get(result->getContext(), argTypes, resultTypes);
-  result->addAttribute(mlir::impl::getTypeAttrName(),
+  result->addAttribute(mlir::function_like_impl::getTypeAttrName(),
                        TypeAttr::get(functionType));
 
   // No clue why this is required.
@@ -270,12 +262,12 @@ static void printImportOp(OpAsmPrinter &p, ImportOp &op) {
   } else if (op.getNumFuncResults() > 1) {
     p << " -> (" << op.getType().getResults() << ")";
   }
-  mlir::impl::printFunctionAttributes(p, op, op.getNumFuncArguments(),
-                                      op.getNumFuncResults(),
-                                      /*elided=*/
-                                      {
-                                          "is_variadic",
-                                      });
+  mlir::function_like_impl::printFunctionAttributes(
+      p, op, op.getNumFuncArguments(), op.getNumFuncResults(),
+      /*elided=*/
+      {
+          "is_variadic",
+      });
 }
 
 void ImportOp::build(OpBuilder &builder, OperationState &result, StringRef name,
@@ -289,15 +281,10 @@ void ImportOp::build(OpBuilder &builder, OperationState &result, StringRef name,
     return;
   }
 
-  unsigned numInputs = type.getNumInputs();
-  assert(numInputs == argAttrs.size() &&
+  assert(type.getNumInputs() == argAttrs.size() &&
          "expected as many argument attribute lists as arguments");
-  SmallString<8> argAttrName;
-  for (unsigned i = 0; i < numInputs; ++i) {
-    if (argAttrs[i] && !argAttrs[i].empty()) {
-      result.addAttribute(getArgAttrName(i, argAttrName), argAttrs[i]);
-    }
-  }
+  function_like_impl::addArgAndResultAttrs(builder, result, argAttrs,
+                                           /*resultAttrs=*/llvm::None);
 }
 
 LogicalResult ImportOp::verifyType() {
@@ -451,6 +438,16 @@ void GlobalLoadI64Op::getEffects(
   addMemoryEffectsForGlobal<GlobalI64Op>(*this, global(), effects);
 }
 
+void GlobalLoadF32Op::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  addMemoryEffectsForGlobal<GlobalF32Op>(*this, global(), effects);
+}
+
+void GlobalLoadF64Op::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  addMemoryEffectsForGlobal<GlobalF64Op>(*this, global(), effects);
+}
+
 void GlobalLoadRefOp::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   addMemoryEffectsForGlobal<GlobalRefOp>(*this, global(), effects);
@@ -499,8 +496,7 @@ static LogicalResult verifyGlobalStoreOp(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 template <typename T>
-static ParseResult parseConstIntegerOp(OpAsmParser &parser,
-                                       OperationState *result) {
+static ParseResult parseConstOp(OpAsmParser &parser, OperationState *result) {
   Attribute valueAttr;
   NamedAttrList dummyAttrs;
   if (failed(parser.parseAttribute(valueAttr, "value", dummyAttrs))) {
@@ -521,7 +517,7 @@ static ParseResult parseConstIntegerOp(OpAsmParser &parser,
 }
 
 template <typename T>
-static void printConstIntegerOp(OpAsmPrinter &p, T &op) {
+static void printConstOp(OpAsmPrinter &p, T &op) {
   p << op.getOperationName() << ' ';
   p.printAttribute(op.value());
   p.printOptionalAttrDict(op->getAttrs(), /*elidedAttrs=*/{"value"});
@@ -548,6 +544,26 @@ static bool isConstIntegerBuildableWith(Attribute value, Type type) {
 }
 
 template <int SZ>
+static bool isConstFloatBuildableWith(Attribute value, Type type) {
+  // FlatSymbolRefAttr can only be used with a function type.
+  if (value.isa<FlatSymbolRefAttr>()) {
+    return false;
+  }
+  // Otherwise, the attribute must have the same type as 'type'.
+  if (value.getType() != type) {
+    return false;
+  }
+  Type elementType;
+  if (auto floatAttr = value.dyn_cast<FloatAttr>()) {
+    elementType = floatAttr.getType();
+  } else if (auto elementsAttr = value.dyn_cast<ElementsAttr>()) {
+    elementType = elementsAttr.getType().getElementType();
+  }
+  if (!elementType) return false;
+  return elementType.getIntOrFloatBitWidth() == SZ;
+}
+
+template <int SZ>
 static Attribute convertConstIntegerValue(Attribute value) {
   assert(isConstIntegerBuildableWith<SZ>(value, value.getType()));
   Builder builder(value.getContext());
@@ -563,6 +579,42 @@ static Attribute convertConstIntegerValue(Attribute value) {
   } else if (auto v = value.dyn_cast<ElementsAttr>()) {
     dims = v.getNumElements();
     ShapedType adjustedType = VectorType::get({dims}, integerType);
+    if (auto elements = v.dyn_cast<SplatElementsAttr>()) {
+      return SplatElementsAttr::get(adjustedType, elements.getSplatValue());
+    } else {
+      return DenseElementsAttr::get(
+          adjustedType, llvm::to_vector<4>(v.getValues<Attribute>()));
+    }
+  }
+  llvm_unreachable("unexpected attribute type");
+  return Attribute();
+}
+
+static FloatType getFloatType(int bitwidth, MLIRContext *context) {
+  switch (bitwidth) {
+    case 16:
+      return FloatType::getF16(context);
+    case 32:
+      return FloatType::getF32(context);
+    case 64:
+      return FloatType::getF64(context);
+    default:
+      llvm_unreachable("unhandled floating point type");
+      return {};
+  }
+}
+
+template <int SZ>
+static Attribute convertConstFloatValue(Attribute value) {
+  assert(isConstFloatBuildableWith<SZ>(value, value.getType()));
+  Builder builder(value.getContext());
+  auto floatType = getFloatType(SZ, value.getContext());
+  int32_t dims = 1;
+  if (auto v = value.dyn_cast<FloatAttr>()) {
+    return FloatAttr::get(floatType, v.getValue());
+  } else if (auto v = value.dyn_cast<ElementsAttr>()) {
+    dims = v.getNumElements();
+    ShapedType adjustedType = VectorType::get({dims}, floatType);
     if (auto elements = v.dyn_cast<SplatElementsAttr>()) {
       return SplatElementsAttr::get(adjustedType, elements.getSplatValue());
     } else {
@@ -618,12 +670,64 @@ void ConstI64Op::build(OpBuilder &builder, OperationState &result,
   return build(builder, result, builder.getI64IntegerAttr(value));
 }
 
+// static
+bool ConstF32Op::isBuildableWith(Attribute value, Type type) {
+  return isConstFloatBuildableWith<32>(value, type);
+}
+
+// static
+Attribute ConstF32Op::convertConstValue(Attribute value) {
+  return convertConstFloatValue<32>(value);
+}
+
+void ConstF32Op::build(OpBuilder &builder, OperationState &result,
+                       Attribute value) {
+  Attribute newValue = convertConstValue(value);
+  result.addAttribute("value", newValue);
+  result.addTypes(newValue.getType());
+}
+
+void ConstF32Op::build(OpBuilder &builder, OperationState &result,
+                       float value) {
+  return build(builder, result, builder.getF32FloatAttr(value));
+}
+
+// static
+bool ConstF64Op::isBuildableWith(Attribute value, Type type) {
+  return isConstFloatBuildableWith<64>(value, type);
+}
+
+// static
+Attribute ConstF64Op::convertConstValue(Attribute value) {
+  return convertConstFloatValue<64>(value);
+}
+
+void ConstF64Op::build(OpBuilder &builder, OperationState &result,
+                       Attribute value) {
+  Attribute newValue = convertConstValue(value);
+  result.addAttribute("value", newValue);
+  result.addTypes(newValue.getType());
+}
+
+void ConstF64Op::build(OpBuilder &builder, OperationState &result,
+                       double value) {
+  return build(builder, result, builder.getF64FloatAttr(value));
+}
+
 void ConstI32ZeroOp::build(OpBuilder &builder, OperationState &result) {
   result.addTypes(builder.getIntegerType(32));
 }
 
 void ConstI64ZeroOp::build(OpBuilder &builder, OperationState &result) {
   result.addTypes(builder.getIntegerType(64));
+}
+
+void ConstF32ZeroOp::build(OpBuilder &builder, OperationState &result) {
+  result.addTypes(builder.getF32Type());
+}
+
+void ConstF64ZeroOp::build(OpBuilder &builder, OperationState &result) {
+  result.addTypes(builder.getF64Type());
 }
 
 void ConstRefZeroOp::build(OpBuilder &builder, OperationState &result,
@@ -670,7 +774,8 @@ void ConstRefRodataOp::build(OpBuilder &builder, OperationState &result,
                              StringRef rodataName,
                              ArrayRef<NamedAttribute> attrs) {
   result.addAttribute("rodata", builder.getSymbolRefAttr(rodataName));
-  auto type = IREE::VM::RefType::get(ByteBufferType::get(builder.getContext()));
+  auto type =
+      IREE::VM::RefType::get(IREE::VM::BufferType::get(builder.getContext()));
   result.addTypes({type});
   result.addAttributes(attrs);
 }
@@ -693,17 +798,19 @@ static LogicalResult verifyListGetRefOp(ListGetRefOp &op) {
                       .cast<IREE::VM::ListType>();
   auto elementType = listType.getElementType();
   auto resultType = op.result().getType();
-  if (elementType.isa<IREE::VM::RefType>() !=
-      resultType.isa<IREE::VM::RefType>()) {
-    // Attempting to go between a primitive type and ref type.
-    return op.emitError() << "cannot convert between list type " << elementType
-                          << " and result type " << resultType;
-  } else if (auto refType = elementType.dyn_cast<IREE::VM::RefType>()) {
-    if (!refType.getObjectType().isa<IREE::VM::OpaqueType>() &&
-        elementType != resultType) {
-      // List has a concrete type, verify it matches.
-      return op.emitError() << "list contains " << elementType
-                            << " that cannot be accessed as " << resultType;
+  if (!elementType.isa<IREE::VM::OpaqueType>()) {
+    if (elementType.isa<IREE::VM::RefType>() !=
+        resultType.isa<IREE::VM::RefType>()) {
+      // Attempting to go between a primitive type and ref type.
+      return op.emitError() << "cannot convert between list type "
+                            << elementType << " and result type " << resultType;
+    } else if (auto refType = elementType.dyn_cast<IREE::VM::RefType>()) {
+      if (!refType.getObjectType().isa<IREE::VM::OpaqueType>() &&
+          elementType != resultType) {
+        // List has a concrete type, verify it matches.
+        return op.emitError() << "list contains " << elementType
+                              << " that cannot be accessed as " << resultType;
+      }
     }
   }
   return success();
@@ -717,17 +824,19 @@ static LogicalResult verifyListSetRefOp(ListSetRefOp &op) {
                       .cast<IREE::VM::ListType>();
   auto elementType = listType.getElementType();
   auto valueType = op.value().getType();
-  if (elementType.isa<IREE::VM::RefType>() !=
-      valueType.isa<IREE::VM::RefType>()) {
-    // Attempting to go between a primitive type and ref type.
-    return op.emitError() << "cannot convert between list type " << elementType
-                          << " and value type " << valueType;
-  } else if (auto refType = elementType.dyn_cast<IREE::VM::RefType>()) {
-    if (!refType.getObjectType().isa<IREE::VM::OpaqueType>() &&
-        elementType != valueType) {
-      // List has a concrete type, verify it matches.
-      return op.emitError() << "list contains " << elementType
-                            << " that cannot be mutated as " << valueType;
+  if (!elementType.isa<IREE::VM::OpaqueType>()) {
+    if (elementType.isa<IREE::VM::RefType>() !=
+        valueType.isa<IREE::VM::RefType>()) {
+      // Attempting to go between a primitive type and ref type.
+      return op.emitError() << "cannot convert between list type "
+                            << elementType << " and value type " << valueType;
+    } else if (auto refType = elementType.dyn_cast<IREE::VM::RefType>()) {
+      if (!refType.getObjectType().isa<IREE::VM::OpaqueType>() &&
+          elementType != valueType) {
+        // List has a concrete type, verify it matches.
+        return op.emitError() << "list contains " << elementType
+                              << " that cannot be mutated as " << valueType;
+      }
     }
   }
   return success();

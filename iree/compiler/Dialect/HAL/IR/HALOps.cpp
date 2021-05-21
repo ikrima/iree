@@ -16,6 +16,7 @@
 
 #include "iree/compiler/Dialect/HAL/IR/HALTypes.h"
 #include "iree/compiler/Dialect/IREE/IR/IREETypes.h"
+#include "iree/compiler/Dialect/Shape/IR/Builders.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/SMLoc.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
@@ -179,12 +180,138 @@ static void printDescriptorSetBindings(OpAsmPrinter &p, Operation *op,
 }
 
 //===----------------------------------------------------------------------===//
+// custom<PackSliceRanges>($lifetime_intervals,
+//                         $dynamic_slice_sizes,
+//                         type($packed_offsets))
+//===----------------------------------------------------------------------===//
+
+static ParseResult parsePackSliceRanges(
+    OpAsmParser &parser, ArrayAttr &lifetimeIntervals,
+    SmallVectorImpl<OpAsmParser::OperandType> &dynamicSliceSizes,
+    SmallVectorImpl<Type> &packedOffsetTypes) {
+  auto indexType = parser.getBuilder().getIndexType();
+  SmallVector<Attribute> lifetimeRangeValues;
+  do {
+    if (failed(parser.parseOptionalLSquare())) break;
+    IntegerAttr lifetimeStart;
+    IntegerAttr lifetimeEnd;
+    OpAsmParser::OperandType dynamicSliceSize;
+    if (failed(parser.parseAttribute(lifetimeStart, indexType)) ||
+        failed(parser.parseComma()) ||
+        failed(parser.parseAttribute(lifetimeEnd, indexType)) ||
+        failed(parser.parseRSquare()) || failed(parser.parseEqual()) ||
+        failed(parser.parseOperand(dynamicSliceSize))) {
+      return failure();
+    }
+    lifetimeRangeValues.push_back(lifetimeStart);
+    lifetimeRangeValues.push_back(lifetimeEnd);
+    dynamicSliceSizes.push_back(dynamicSliceSize);
+    packedOffsetTypes.push_back(indexType);
+  } while (succeeded(parser.parseOptionalComma()));
+  lifetimeIntervals = parser.getBuilder().getArrayAttr(lifetimeRangeValues);
+  return success();
+}
+
+static void printPackSliceRanges(OpAsmPrinter &p, Operation *op,
+                                 ArrayAttr lifetimeIntervals,
+                                 ValueRange dynamicSliceSizes,
+                                 TypeRange packedOffsetTypes) {
+  if (packedOffsetTypes.empty()) return;
+  for (unsigned i = 0; i < packedOffsetTypes.size(); ++i) {
+    auto lifetimeStart = lifetimeIntervals[i * 2];
+    auto lifetimeEnd = lifetimeIntervals[i * 2 + 1];
+    auto sliceSize = dynamicSliceSizes[i];
+    p.printNewline();
+    p << "  [";
+    p.printAttributeWithoutType(lifetimeStart);
+    p << ", ";
+    p.printAttributeWithoutType(lifetimeEnd);
+    p << "] = ";
+    p.printOperand(sliceSize);
+    if (i < packedOffsetTypes.size() - 1) p << ",";
+  }
+  p.printNewline();
+}
+
+//===----------------------------------------------------------------------===//
 // hal.ex.shared_device
 //===----------------------------------------------------------------------===//
 
 void ExSharedDeviceOp::getAsmResultNames(
     function_ref<void(Value, StringRef)> setNameFn) {
   setNameFn(result(), "device");
+}
+
+//===----------------------------------------------------------------------===//
+// hal.tensor.cast
+//===----------------------------------------------------------------------===//
+
+void TensorCastOp::build(OpBuilder &builder, OperationState &result,
+                         Type resultType, Value source,
+                         ArrayRef<NamedAttribute> attrs) {
+  SmallVector<Value> dynamicDims;
+  if (source.getType().isa<IREE::HAL::BufferViewType>()) {
+    auto shapedType = resultType.cast<ShapedType>();
+    for (int64_t i = 0; i < shapedType.getRank(); ++i) {
+      if (!shapedType.isDynamicDim(i)) continue;
+      dynamicDims.push_back(builder.createOrFold<IREE::HAL::BufferViewDimOp>(
+          result.location, builder.getIndexType(), source,
+          builder.getIndexAttr(i)));
+    }
+  } else {
+    dynamicDims =
+        Shape::buildOrFindDynamicDimsForValue(result.location, source, builder);
+  }
+  build(builder, result, resultType, source, dynamicDims, attrs);
+}
+
+void TensorCastOp::build(OpBuilder &builder, OperationState &result,
+                         Type resultType, Value source, ValueRange dynamicDims,
+                         ArrayRef<NamedAttribute> attrs) {
+  result.addTypes({resultType});
+  result.addOperands({source});
+  result.addOperands({dynamicDims});
+  result.addAttributes(attrs);
+  result.addAttribute(
+      "operand_segment_sizes",
+      builder.getI32VectorAttr({
+          static_cast<int32_t>(1),
+          static_cast<int32_t>(
+              source.getType().isa<TensorType>() ? dynamicDims.size() : 0),
+          static_cast<int32_t>(resultType.isa<TensorType>() ? dynamicDims.size()
+                                                            : 0),
+      }));
+}
+
+Value TensorCastOp::buildOperandRankedShape(unsigned idx, OpBuilder &builder) {
+  if (source().getType().isa<TensorType>()) {
+    return Shape::buildRankedShapeForValue(getLoc(), source(), source_dims(),
+                                           builder);
+  } else {
+    return buildResultRankedShape(idx, builder);
+  }
+}
+
+Value TensorCastOp::buildResultRankedShape(unsigned idx, OpBuilder &builder) {
+  if (target().getType().isa<TensorType>()) {
+    return Shape::buildRankedShapeForValue(getLoc(), target(), target_dims(),
+                                           builder);
+  } else {
+    return buildOperandRankedShape(idx, builder);
+  }
+}
+
+Value TensorCastOp::getTiedResult(unsigned resultIndex) {
+  return IREE::TiedOpInterface::findTiedBaseValue(source());
+}
+
+::llvm::Optional<unsigned> TensorCastOp::getTiedResultOperandIndex(
+    unsigned resultIndex) {
+  return {0};  // source
+}
+
+SmallVector<int64_t, 4> TensorCastOp::getTiedResultOperandIndices() {
+  return {0};  // source
 }
 
 //===----------------------------------------------------------------------===//
@@ -554,7 +681,45 @@ Value AllocatorMapOp::getOperandSize(unsigned idx) { return {}; }
 Value AllocatorMapOp::getResultSize(unsigned idx) { return length(); }
 
 //===----------------------------------------------------------------------===//
+// hal.allocator.pack
 //===----------------------------------------------------------------------===//
+
+void AllocatorPackOp::getAsmResultNames(
+    function_ref<void(Value, StringRef)> setNameFn) {
+  // TODO(benvanik): figure out if we can get the names to coalesce when there
+  // are multiple results. Ideally we'd have `%total_length, %offsets:123` but
+  // unfortunately all get splatted out and create 10k+ char lines that are a
+  // pain to read.
+  // setNameFn(total_length(), "total_length");
+  // for (auto packedOffset : llvm::enumerate(packed_offsets())) {
+  // setNameFn(packedOffset.value(),
+  //           "offset" + std::to_string(packedOffset.index()));
+  // }
+}
+
+static LogicalResult verifyAllocatorPackOp(AllocatorPackOp op) {
+  size_t sliceCount = op.packed_offsets().size();
+  if (op.lifetime_intervals().size() != sliceCount * 2) {
+    return op.emitOpError() << "requires a [start, end] range for each slice";
+  }
+  if (op.dynamic_slice_sizes().size() != sliceCount) {
+    return op.emitOpError() << "requires a size for each slice";
+  }
+  return success();
+}
+
+SmallVector<AllocatorPackOp::Slice> AllocatorPackOp::getSlices() {
+  auto intervalPairs = lifetime_intervals().getValue();
+  auto sizes = dynamic_slice_sizes();
+  auto offsets = packed_offsets();
+  SmallVector<AllocatorPackOp::Slice> slices(offsets.size());
+  for (size_t i = 0; i < offsets.size(); ++i) {
+    int64_t start = intervalPairs[i * 2 + 0].cast<IntegerAttr>().getInt();
+    int64_t end = intervalPairs[i * 2 + 1].cast<IntegerAttr>().getInt();
+    slices[i] = {start, end, sizes[i], offsets[i]};
+  }
+  return slices;
+}
 
 //===----------------------------------------------------------------------===//
 // hal.buffer.allocator
@@ -1232,13 +1397,12 @@ static void printExecutableTargetOp(OpAsmPrinter &p, ExecutableTargetOp op) {
 //===----------------------------------------------------------------------===//
 
 void ExecutableBinaryOp::build(OpBuilder &builder, OperationState &state,
-                               StringRef symName, uint32_t format,
+                               StringRef symName, StringRef format,
                                std::vector<uint8_t> data) {
   ensureTerminator(*state.addRegion(), builder, state.location);
   state.addAttribute(mlir::SymbolTable::getSymbolAttrName(),
                      builder.getStringAttr(symName));
-  state.addAttribute(
-      "format", builder.getIntegerAttr(builder.getIntegerType(32), format));
+  state.addAttribute("format", builder.getStringAttr(format));
   state.addAttribute("data",
                      DenseIntElementsAttr::get(
                          VectorType::get({static_cast<int64_t>(data.size())},
@@ -1247,13 +1411,12 @@ void ExecutableBinaryOp::build(OpBuilder &builder, OperationState &state,
 }
 
 void ExecutableBinaryOp::build(OpBuilder &builder, OperationState &state,
-                               StringRef symName, uint32_t format,
+                               StringRef symName, StringAttr format,
                                DenseIntElementsAttr data) {
   ensureTerminator(*state.addRegion(), builder, state.location);
   state.addAttribute(mlir::SymbolTable::getSymbolAttrName(),
                      builder.getStringAttr(symName));
-  state.addAttribute(
-      "format", builder.getIntegerAttr(builder.getIntegerType(32), format));
+  state.addAttribute("format", format);
   state.addAttribute("data", data);
 }
 
@@ -1491,42 +1654,6 @@ void InterfaceWorkgroupSizeOp::getAsmResultNames(
     function_ref<void(Value, StringRef)> setNameFn) {
   getAsmResultNamesForInterfaceWorkgroupOp("workgroup_size_", dimension(),
                                            result(), setNameFn);
-}
-
-//===----------------------------------------------------------------------===//
-// hal.interface.load.tensor
-//===----------------------------------------------------------------------===//
-
-InterfaceBindingOp InterfaceLoadTensorOp::queryBindingOp() {
-  return dyn_cast_or_null<InterfaceBindingOp>(
-      SymbolTable::lookupNearestSymbolFrom(getOperation(), binding()));
-}
-
-//===----------------------------------------------------------------------===//
-// hal.interface.store.tensor
-//===----------------------------------------------------------------------===//
-
-InterfaceBindingOp InterfaceStoreTensorOp::queryBindingOp() {
-  return dyn_cast_or_null<InterfaceBindingOp>(
-      SymbolTable::lookupNearestSymbolFrom(getOperation(), binding()));
-}
-
-//===----------------------------------------------------------------------===//
-// hal.interface.load.tensor.tile
-//===----------------------------------------------------------------------===//
-
-InterfaceBindingOp InterfaceLoadTensorTileOp::queryBindingOp() {
-  return dyn_cast_or_null<InterfaceBindingOp>(
-      SymbolTable::lookupNearestSymbolFrom(getOperation(), binding()));
-}
-
-//===----------------------------------------------------------------------===//
-// hal.interface.store.tensor.tile
-//===----------------------------------------------------------------------===//
-
-InterfaceBindingOp InterfaceStoreTensorTileOp::queryBindingOp() {
-  return dyn_cast_or_null<InterfaceBindingOp>(
-      SymbolTable::lookupNearestSymbolFrom(getOperation(), binding()));
 }
 
 //===----------------------------------------------------------------------===//

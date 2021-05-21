@@ -14,6 +14,7 @@
 
 #include "iree/compiler/Translation/IREEVM.h"
 
+#include "iree/compiler/Bindings/Native/Transforms/Passes.h"
 #include "iree/compiler/Bindings/SIP/Transforms/Passes.h"
 #include "iree/compiler/Bindings/TFLite/Transforms/Passes.h"
 #include "iree/compiler/Dialect/Flow/Transforms/Passes.h"
@@ -40,6 +41,8 @@ namespace iree_compiler {
 // match upstream better, and then our own iree-compile C API/binary will do the
 // whole end-to-end with options for bindings/targets/etc.
 struct BindingOptions {
+  // Whether to include runtime support functions for the IREE native ABI.
+  bool native = false;
   // Whether to include runtime support functions and metadata required for
   // SIP-compatible bindings (like bindings/python/iree).
   bool sip = true;
@@ -51,6 +54,12 @@ struct BindingOptions {
 static BindingOptions getBindingOptionsFromFlags() {
   static llvm::cl::OptionCategory bindingOptionsCategory(
       "IREE translation binding support options");
+
+  static llvm::cl::opt<bool> *bindingsNativeFlag = new llvm::cl::opt<bool>{
+      "iree-native-bindings-support",
+      llvm::cl::desc(
+          "Include runtime support for native IREE ABI-compatible bindings"),
+      llvm::cl::init(false), llvm::cl::cat(bindingOptionsCategory)};
 
   static llvm::cl::opt<bool> *bindingsSIPFlag = new llvm::cl::opt<bool>{
       "iree-sip-bindings-support",
@@ -64,6 +73,7 @@ static BindingOptions getBindingOptionsFromFlags() {
       llvm::cl::init(false), llvm::cl::cat(bindingOptionsCategory)};
 
   BindingOptions bindingOptions;
+  bindingOptions.native = *bindingsNativeFlag;
   bindingOptions.sip = *bindingsSIPFlag;
   bindingOptions.tflite = *bindingsTFLiteFlag;
   return bindingOptions;
@@ -78,6 +88,7 @@ static BindingOptions getBindingOptionsFromFlags() {
 static LogicalResult convertToFlowModule(ModuleOp moduleOp) {
   PassManager passManager(moduleOp.getContext());
   mlir::applyPassManagerCLOptions(passManager);
+  mlir::applyDefaultTimingPassManagerCLOptions(passManager);
   passManager.addInstrumentation(std::make_unique<PassTracing>());
   IREE::Flow::buildInputTransformPassPipeline(passManager);
   IREE::Flow::buildFlowTransformPassPipeline(passManager);
@@ -94,6 +105,7 @@ static LogicalResult convertToHALModule(
     ModuleOp moduleOp, IREE::HAL::TargetOptions executableOptions) {
   PassManager passManager(moduleOp.getContext());
   mlir::applyPassManagerCLOptions(passManager);
+  mlir::applyDefaultTimingPassManagerCLOptions(passManager);
   passManager.addInstrumentation(std::make_unique<PassTracing>());
   IREE::HAL::buildHALTransformPassPipeline(passManager, executableOptions);
   if (failed(passManager.run(moduleOp))) {
@@ -110,6 +122,7 @@ static LogicalResult convertToVMModule(ModuleOp moduleOp,
                                        IREE::VM::TargetOptions targetOptions) {
   PassManager passManager(moduleOp.getContext());
   mlir::applyPassManagerCLOptions(passManager);
+  mlir::applyDefaultTimingPassManagerCLOptions(passManager);
   passManager.addInstrumentation(std::make_unique<PassTracing>());
   IREE::VM::buildVMTransformPassPipeline(passManager, targetOptions);
   if (failed(passManager.run(moduleOp))) {
@@ -122,6 +135,9 @@ static LogicalResult convertToVMModule(ModuleOp moduleOp,
 static void buildIREEVMTransformPassPipeline(
     BindingOptions bindingOptions, IREE::HAL::TargetOptions executableOptions,
     IREE::VM::TargetOptions targetOptions, OpPassManager &passManager) {
+  if (bindingOptions.native) {
+    IREE::ABI::buildTransformPassPipeline(passManager);
+  }
   if (bindingOptions.sip) {
     IREE::SIP::buildTransformPassPipeline(passManager);
   }
@@ -159,6 +175,7 @@ static LogicalResult translateFromMLIRToVM(
     IREE::VM::TargetOptions targetOptions) {
   PassManager passManager(moduleOp.getContext());
   mlir::applyPassManagerCLOptions(passManager);
+  mlir::applyDefaultTimingPassManagerCLOptions(passManager);
   passManager.addInstrumentation(std::make_unique<PassTracing>());
   buildIREEVMTransformPassPipeline(bindingOptions, executableOptions,
                                    targetOptions, passManager);

@@ -63,15 +63,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":dynamic_symbols",
-        "//iree/base:api",
+        "//iree/base",
         "//iree/base:core_headers",
-        "//iree/base:flatcc",
         "//iree/base:logging",
         "//iree/base:status",
-        "//iree/base:synchronization",
         "//iree/base:tracing",
         "//iree/base/internal",
-        "//iree/hal:api",
+        "//iree/base/internal:flatcc",
+        "//iree/base/internal:synchronization",
+        "//iree/hal",
         "//iree/schemas:cuda_executable_def_c_fbs",
     ],
 )
@@ -92,7 +92,7 @@ cc_library(
         "//iree/base:core_headers",
         "//iree/base:tracing",
         "//iree/base/internal:dynamic_library",
-        "@cuda_headers",
+        "@cuda//:cuda_headers",
     ],
 )
 

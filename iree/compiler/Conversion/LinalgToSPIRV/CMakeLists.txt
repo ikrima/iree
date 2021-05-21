@@ -26,7 +26,6 @@ iree_cc_library(
   NAME
     LinalgToSPIRV
   HDRS
-    "CooperativeMatrixAnalysis.h"
     "KernelDispatchUtils.h"
     "MemorySpace.h"
     "Passes.h"
@@ -35,17 +34,14 @@ iree_cc_library(
     "ConcretizeTileAmongWorkgroupsPass.cpp"
     "ConvertToGPUPass.cpp"
     "ConvertToSPIRVPass.cpp"
-    "CooperativeMatrixAnalysis.cpp"
     "FoldGPUProcessorIDUses.cpp"
     "KernelDispatchUtils.cpp"
-    "LinalgTileAndDistributePass.cpp"
-    "MatMulVectorizationTest.cpp"
     "Passes.cpp"
-    "SplitDispatchFunctionPass.cpp"
     "TileAndVectorizeInOneWorkgroupPass.cpp"
     "Utils.cpp"
+    "VectorToCooperativeMatrixPass.cpp"
     "VectorToGPUPass.cpp"
-    "VectorizeMemref.cpp"
+    "VectorizeMemrefLoadStorePass.cpp"
   DEPS
     ::CodeGenOptionUtils
     LLVMSupport
@@ -58,6 +54,7 @@ iree_cc_library(
     MLIRLinalg
     MLIRLinalgTransforms
     MLIRMemRef
+    MLIRMemRefTransforms
     MLIRPass
     MLIRSCF
     MLIRSCFToGPU
@@ -69,12 +66,13 @@ iree_cc_library(
     MLIRStandard
     MLIRStandardToSPIRV
     MLIRSupport
+    MLIRTosa
+    MLIRTosaToStandard
     MLIRTransforms
     MLIRVector
     MLIRVectorToSPIRV
     iree::compiler::Conversion::CodegenUtils
     iree::compiler::Conversion::Common
-    iree::compiler::Conversion::HLOToHLO
     iree::compiler::Conversion::HLOToLinalg
     iree::compiler::Conversion::LinalgToVector
     iree::compiler::Dialect::Flow::IR

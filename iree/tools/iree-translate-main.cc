@@ -88,6 +88,7 @@ int main(int argc, char **argv) {
   mlir::registerAsmPrinterCLOptions();
   // Register pass manager command-line options like -print-ir-*.
   mlir::registerPassManagerCLOptions();
+  mlir::registerDefaultTimingManagerCLOptions();
 
   // Add flags for all the registered translations.
   llvm::cl::opt<const mlir::TranslateFunction *, false, mlir::TranslationParser>
@@ -113,6 +114,7 @@ int main(int argc, char **argv) {
   auto processBuffer = [&](std::unique_ptr<llvm::MemoryBuffer> ownedBuffer,
                            llvm::raw_ostream &os) {
     mlir::MLIRContext context;
+    context.allowUnregisteredDialects();
     context.appendDialectRegistry(registry);
     llvm::SourceMgr sourceMgr;
     sourceMgr.AddNewSourceBuffer(std::move(ownedBuffer), llvm::SMLoc());

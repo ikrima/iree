@@ -7,12 +7,10 @@ hal.executable @ex {
     // CHECK-DAG: hal.executable.entry_point @entry0 attributes {
     // CHECK-SAME:     interface = @interface
     // CHECK-SAME:     ordinal = 0 : index
-    // CHECK-SAME:     signature = (tensor<4xf32>) -> tensor<4xf32>
     // CHECK-SAME:     workgroup_size = [4 : index, 1 : index, 1 : index]
     hal.executable.entry_point @entry0 attributes {
       interface = @interface,
       ordinal = 0 : index,
-      signature = (tensor<4xf32>) -> tensor<4xf32>,
       workgroup_size = [4 : index, 1 : index, 1 : index]
     }
   }
@@ -27,8 +25,8 @@ hal.executable @ex {
   hal.executable.binary @backend_binary attributes {
     // CHECK-SAME: data = dense<1> : vector<128xi8>,
     data = dense<1> : vector<128xi8>,
-    // CHECK-SAME: format = 1230128453 : i32
-    format = 1230128453 : i32
+    // CHECK-SAME: format = "some_format"
+    format = "some_format"
   }
 }
 
@@ -41,12 +39,10 @@ hal.executable @ex_with_workgroup_count_region {
     // CHECK-DAG: hal.executable.entry_point @entry0 attributes {
     // CHECK-SAME:     interface = @interface
     // CHECK-SAME:     ordinal = 0 : index
-    // CHECK-SAME:     signature = (tensor<4xf32>) -> tensor<4xf32>
     // CHECK-SAME:     workgroup_size = [4 : index, 1 : index, 1 : index]
     hal.executable.entry_point @entry0 attributes {
       interface = @interface,
       ordinal = 0 : index,
-      signature = (tensor<4xf32>) -> tensor<4xf32>,
       workgroup_size = [4 : index, 1 : index, 1 : index]
     } {
     ^bb0(%arg0: index, %arg1: index, %arg2: index):
@@ -64,8 +60,8 @@ hal.executable @ex_with_workgroup_count_region {
   hal.executable.binary @backend_binary attributes {
     // CHECK-SAME: data = dense<1> : vector<128xi8>,
     data = dense<1> : vector<128xi8>,
-    // CHECK-SAME: format = 1230128453 : i32
-    format = 1230128453 : i32
+    // CHECK-SAME: format = "some_format"
+    format = "some_format"
   }
 }
 
@@ -77,8 +73,8 @@ hal.executable @ex_with_source {
   hal.executable.binary @backend_binary attributes {
     // CHECK-SAME: data = dense<1> : vector<128xi8>,
     data = dense<1> : vector<128xi8>,
-    // CHECK-SAME: format = 1230128453 : i32
-    format = 1230128453 : i32
+    // CHECK-SAME: format = "some_format"
+    format = "some_format"
   } {
     // CHECK-NEXT: module {
     module {

@@ -15,14 +15,13 @@
 #ifndef IREE_COMPILER_CONVERSION_INIT_CONVERSIONS_H_
 #define IREE_COMPILER_CONVERSION_INIT_CONVERSIONS_H_
 
-#include "iree/compiler/Conversion/CodegenUtils/ForOpCanonicalization.h"
 #include "iree/compiler/Conversion/Common/Passes.h"
-#include "iree/compiler/Conversion/HLOToHLO/Passes.h"
 #include "iree/compiler/Conversion/HLOToLinalg/HLOToLinalgOnTensorPasses.h"
-#include "iree/compiler/Conversion/HLOToLinalg/Passes.h"
 #include "iree/compiler/Conversion/LinalgToLLVM/Passes.h"
+#include "iree/compiler/Conversion/LinalgToLinalg/Passes.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/Passes.h"
 #include "iree/compiler/Conversion/LinalgToVector/Passes.h"
+#include "iree/compiler/Conversion/VectorToLLVM/Passes.h"
 
 namespace mlir {
 namespace iree_compiler {
@@ -34,8 +33,10 @@ namespace iree_compiler {
 inline void registerCommonConversionPasses() {
   static bool init_once = []() {
     // Common
+    createFlattenMemRefSubspanPass();
+    createForOpCanonicalizationPass();
     createLinalgBufferizePass();
-    createLinalgRewriteDestructiveUpdatesPass();
+    createSetNumWorkgroupsPass();
     return true;
   }();
   (void)init_once;
@@ -43,8 +44,6 @@ inline void registerCommonConversionPasses() {
 
 inline void registerHLOToLinalgPasses() {
   static bool init_once = []() {
-    createDecomposeHLOClampPass();
-    createHLOToLinalgOnBuffersPass();
     createHLOToLinalgOnTensorsPass();
     createDemoteF32ToF16Pass();
     return true;
@@ -54,7 +53,7 @@ inline void registerHLOToLinalgPasses() {
 
 inline void registerLinalgToVectorPasses() {
   static bool init_once = []() {
-    createLoadStoreVectorizationPass();
+    createVectorizeLinalgConvPass();
     return true;
   }();
   (void)init_once;
@@ -63,15 +62,11 @@ inline void registerLinalgToVectorPasses() {
 inline void registerLinalgToSPIRVPasses() {
   static bool init_once = []() {
     // LinalgToSPIRV
-    createConvertToGPUPass(SPIRVCodegenOptions());
+    createConvertToGPUPass();
     createFoldProcessorIDUsesPass();
-    createTileAndDistributeAmongWorkgroupsPass(SPIRVCodegenOptions());
     createTileAndVectorizeInOneWorkgroupPass(SPIRVCodegenOptions());
-    createSplitDispatchFunctionPass();
     createVectorToGPUPass();
-    createMatMulTileAndVectorizeGPUPass();
-    createForOpCanonicalizationPass();
-    createVectorizeMemref();
+    createVectorizeMemrefLoadStorePass();
     return true;
   }();
   (void)init_once;
@@ -79,12 +74,30 @@ inline void registerLinalgToSPIRVPasses() {
 
 inline void registerLinalgToLLVMPasses() {
   static bool init_once = []() {
+    createLowerExecutableTargetPass(LLVMCodegenOptions());
     // LinalgToLLVM
-    createConvImg2ColMatmulConversionPass();
-    createLinalgTileAndDistributePass();
     createLinalgTileAndVectorizeWorkgroupsPass();
-    createMaterializeCPULaunchConfigurationPass();
     createUnfusedFMAOpsPass();
+    createPadLinalgWorkgroupTilesPass();
+    return true;
+  }();
+  (void)init_once;
+}
+
+inline void registerLinalgToLinalgPasses() {
+  static bool init_once = []() {
+    // LinalgToLinalg
+    createConvert1x1ConvToMatmulPass();
+    createConvertConv2DToImg2ColPass();
+    return true;
+  }();
+  (void)init_once;
+}
+
+inline void registerVectorToLLVMPasses() {
+  // VectorToLLVM
+  static bool init_once = []() {
+    createVectorToAArch64InlineAssemblyPass();
     return true;
   }();
   (void)init_once;

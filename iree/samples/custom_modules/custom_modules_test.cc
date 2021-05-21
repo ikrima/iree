@@ -14,13 +14,12 @@
 
 // Tests that our bytecode module can call through into our native module.
 
-#include "absl/strings/string_view.h"
 #include "iree/base/api.h"
 #include "iree/base/logging.h"
 #include "iree/hal/api.h"
-#include "iree/hal/vmla/registration/driver_module.h"
+#include "iree/hal/vmvx/registration/driver_module.h"
 #include "iree/modules/hal/hal_module.h"
-#include "iree/samples/custom_modules/custom_modules_test_module.h"
+#include "iree/samples/custom_modules/custom_modules_test_module_c.h"
 #include "iree/samples/custom_modules/native_module.h"
 #include "iree/testing/gtest.h"
 #include "iree/testing/status_matchers.h"
@@ -33,7 +32,7 @@ namespace {
 class CustomModulesTest : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
-    IREE_CHECK_OK(iree_hal_vmla_driver_module_register(
+    IREE_CHECK_OK(iree_hal_vmvx_driver_module_register(
         iree_hal_driver_registry_default()));
   }
 
@@ -45,7 +44,7 @@ class CustomModulesTest : public ::testing::Test {
     // TODO(benvanik): make a 'don't care' helper method.
     iree_hal_driver_t* hal_driver = nullptr;
     IREE_CHECK_OK(iree_hal_driver_registry_try_create_by_name(
-        iree_hal_driver_registry_default(), iree_make_cstring_view("vmla"),
+        iree_hal_driver_registry_default(), iree_make_cstring_view("vmvx"),
         iree_allocator_system(), &hal_driver));
     iree_hal_device_t* hal_device = nullptr;
     IREE_CHECK_OK(iree_hal_driver_create_default_device(
@@ -62,7 +61,7 @@ class CustomModulesTest : public ::testing::Test {
         << "Native module failed to init";
 
     const auto* module_file_toc =
-        iree::samples::custom_modules::custom_modules_test_module_create();
+        iree_samples_custom_modules_test_module_create();
     IREE_CHECK_OK(iree_vm_bytecode_module_create(
         iree_const_byte_span_t{
             reinterpret_cast<const uint8_t*>(module_file_toc->data),
@@ -85,12 +84,11 @@ class CustomModulesTest : public ::testing::Test {
     iree_vm_instance_release(instance_);
   }
 
-  iree_vm_function_t LookupFunction(absl::string_view function_name) {
+  iree_vm_function_t LookupFunction(const char* function_name) {
     iree_vm_function_t function;
     IREE_CHECK_OK(bytecode_module_->lookup_function(
         bytecode_module_->self, IREE_VM_FUNCTION_LINKAGE_EXPORT,
-        iree_string_view_t{function_name.data(), function_name.size()},
-        &function))
+        iree_make_cstring_view(function_name), &function))
         << "Exported function '" << function_name << "' not found";
     return function;
   }

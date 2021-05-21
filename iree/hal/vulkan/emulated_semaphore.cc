@@ -17,9 +17,9 @@
 #include <inttypes.h>
 #include <stdint.h>
 
-#include "absl/container/inlined_vector.h"
-#include "iree/base/status.h"
-#include "iree/base/synchronization.h"
+#include <vector>
+
+#include "iree/base/internal/synchronization.h"
 #include "iree/base/tracing.h"
 #include "iree/hal/vulkan/dynamic_symbols.h"
 #include "iree/hal/vulkan/serializing_command_queue.h"
@@ -33,14 +33,14 @@ namespace vulkan {
 
 namespace {
 
-class RaiiLocker {
+class RAIILock {
  public:
-  explicit RaiiLocker(iree_slim_mutex_t* mu)
+  explicit RAIILock(iree_slim_mutex_t* mu)
       IREE_THREAD_ANNOTATION_ATTRIBUTE(no_thread_safety_analysis)
       : mu_(mu) {
     iree_slim_mutex_lock(mu_);
   }
-  ~RaiiLocker() IREE_THREAD_ANNOTATION_ATTRIBUTE(no_thread_safety_analysis) {
+  ~RAIILock() IREE_THREAD_ANNOTATION_ATTRIBUTE(no_thread_safety_analysis) {
     iree_slim_mutex_unlock(mu_);
   }
 
@@ -64,7 +64,7 @@ class EmulatedTimelineSemaphore final {
 
   iree_status_t Signal(uint64_t value);
 
-  iree_status_t Wait(uint64_t value, iree_time_t deadline_ns);
+  iree_status_t Wait(uint64_t value, iree_timeout_t timeout);
 
   void Fail(iree_status_t status);
 
@@ -94,9 +94,9 @@ class EmulatedTimelineSemaphore final {
                                      bool* out_reached_upper_value);
   // Similar to the above, but also returns the fences that are known to have
   // already signaled via |signaled_fences|.
-  iree_status_t TryToAdvanceTimeline(
-      uint64_t to_upper_value, bool* out_reached_upper_value,
-      absl::InlinedVector<VkFence, 4>* out_signaled_fences);
+  iree_status_t TryToAdvanceTimeline(uint64_t to_upper_value,
+                                     bool* out_reached_upper_value,
+                                     std::vector<VkFence>* out_signaled_fences);
 
   std::atomic<uint64_t> signaled_value_;
 
@@ -172,7 +172,7 @@ iree_status_t EmulatedTimelineSemaphore::Query(uint64_t* out_value) {
   uint64_t value = signaled_value_.load();
   IREE_DVLOG(2) << "Current timeline value: " << value;
   if (value == UINT64_MAX) {
-    RaiiLocker locker(&mutex_);
+    RAIILock locker(&mutex_);
     return iree_status_clone(status_);
   }
   *out_value = value;
@@ -200,9 +200,11 @@ iree_status_t EmulatedTimelineSemaphore::Signal(uint64_t value) {
 }
 
 iree_status_t EmulatedTimelineSemaphore::Wait(uint64_t value,
-                                              iree_time_t deadline_ns) {
+                                              iree_timeout_t timeout) {
   IREE_TRACE_SCOPE0("EmulatedTimelineSemaphore::Wait");
   IREE_DVLOG(2) << "EmulatedTimelineSemaphore::Wait";
+
+  iree_time_t deadline_ns = iree_timeout_as_deadline_ns(timeout);
 
   VkFence fence = VK_NULL_HANDLE;
   do {
@@ -216,7 +218,7 @@ iree_status_t EmulatedTimelineSemaphore::Wait(uint64_t value,
     // We must wait now. Find the first emulated time point that has a value >=
     // the desired value so we can wait on its associated signal fence to make
     // sure the timeline is advanced to the desired value.
-    RaiiLocker locker(&mutex_);
+    RAIILock locker(&mutex_);
     auto semaphore = outstanding_semaphores_.begin();
     for (; semaphore != outstanding_semaphores_.end(); ++semaphore) {
       if ((*semaphore)->value >= value) break;
@@ -254,7 +256,7 @@ iree_status_t EmulatedTimelineSemaphore::Wait(uint64_t value,
 
 void EmulatedTimelineSemaphore::Fail(iree_status_t status) {
   IREE_TRACE_SCOPE0("EmulatedTimelineSemaphore::Fail");
-  RaiiLocker locker(&mutex_);
+  RAIILock locker(&mutex_);
   if (status_) return;
   status_ = status;
   signaled_value_.store(UINT64_MAX);
@@ -265,7 +267,7 @@ VkSemaphore EmulatedTimelineSemaphore::GetWaitSemaphore(
   IREE_TRACE_SCOPE0("EmulatedTimelineSemaphore::GetWaitSemaphore");
   IREE_DVLOG(2) << "EmulatedTimelineSemaphore::GetWaitSemaphore";
 
-  RaiiLocker locker(&mutex_);
+  RAIILock locker(&mutex_);
 
   VkSemaphore semaphore = VK_NULL_HANDLE;
   for (TimePointSemaphore* point : outstanding_semaphores_) {
@@ -288,7 +290,7 @@ iree_status_t EmulatedTimelineSemaphore::CancelWaitSemaphore(
   IREE_TRACE_SCOPE0("EmulatedTimelineSemaphore::CancelWaitSemaphore");
   IREE_DVLOG(2) << "EmulatedTimelineSemaphore::CancelWaitSemaphore";
 
-  RaiiLocker locker(&mutex_);
+  RAIILock locker(&mutex_);
   for (TimePointSemaphore* point : outstanding_semaphores_) {
     if (point->semaphore != semaphore) continue;
 
@@ -316,7 +318,7 @@ iree_status_t EmulatedTimelineSemaphore::GetSignalSemaphore(
                             value);
   }
 
-  RaiiLocker locker(&mutex_);
+  RAIILock locker(&mutex_);
 
   auto insertion_point = outstanding_semaphores_.begin();
   while (insertion_point != outstanding_semaphores_.end()) {
@@ -344,7 +346,7 @@ iree_status_t EmulatedTimelineSemaphore::GetSignalSemaphore(
 
 iree_status_t EmulatedTimelineSemaphore::TryToAdvanceTimeline(
     uint64_t to_upper_value, bool* out_reached_upper_value) {
-  absl::InlinedVector<VkFence, 4> signaled_fences;
+  std::vector<VkFence> signaled_fences;
   iree_status_t status = TryToAdvanceTimeline(
       to_upper_value, out_reached_upper_value, &signaled_fences);
   // Inform the queue that some fences are known to have signaled. This should
@@ -353,7 +355,7 @@ iree_status_t EmulatedTimelineSemaphore::TryToAdvanceTimeline(
   if (!signaled_fences.empty()) {
     for (iree_host_size_t i = 0; i < command_queue_count_; ++i) {
       ((SerializingCommandQueue*)command_queues_[i])
-          ->SignalFences(absl::MakeSpan(signaled_fences));
+          ->SignalFences(signaled_fences);
     }
   }
   return status;
@@ -361,7 +363,7 @@ iree_status_t EmulatedTimelineSemaphore::TryToAdvanceTimeline(
 
 iree_status_t EmulatedTimelineSemaphore::TryToAdvanceTimeline(
     uint64_t to_upper_value, bool* out_reached_upper_value,
-    absl::InlinedVector<VkFence, 4>* out_signaled_fences) {
+    std::vector<VkFence>* out_signaled_fences) {
   IREE_TRACE_SCOPE0("EmulatedTimelineSemaphore::TryToAdvanceTimeline");
   IREE_DVLOG(3) << "EmulatedTimelineSemaphore::TryToAdvanceTimeline";
   if (out_reached_upper_value) *out_reached_upper_value = false;
@@ -378,7 +380,7 @@ iree_status_t EmulatedTimelineSemaphore::TryToAdvanceTimeline(
 
   // We hold the lock during the entire resolve process so that we can resolve
   // to the furthest possible value.
-  RaiiLocker locker(&mutex_);
+  RAIILock locker(&mutex_);
 
   IREE_DVLOG(3) << "# outstanding semaphores: "
                 << outstanding_semaphores_.size();
@@ -610,24 +612,17 @@ static void iree_hal_vulkan_emulated_semaphore_fail(
   semaphore->Fail(status);
 }
 
-static iree_status_t iree_hal_vulkan_emulated_semaphore_wait_with_deadline(
+static iree_status_t iree_hal_vulkan_emulated_semaphore_wait(
     iree_hal_semaphore_t* base_semaphore, uint64_t value,
-    iree_time_t deadline_ns) {
+    iree_timeout_t timeout) {
   EmulatedTimelineSemaphore* semaphore =
       iree_hal_vulkan_emulated_semaphore_cast(base_semaphore);
-  return semaphore->Wait(value, deadline_ns);
-}
-
-static iree_status_t iree_hal_vulkan_emulated_semaphore_wait_with_timeout(
-    iree_hal_semaphore_t* base_semaphore, uint64_t value,
-    iree_duration_t timeout_ns) {
-  return iree_hal_vulkan_emulated_semaphore_wait_with_deadline(
-      base_semaphore, value, iree_relative_timeout_to_deadline_ns(timeout_ns));
+  return semaphore->Wait(value, timeout);
 }
 
 iree_status_t iree_hal_vulkan_emulated_semaphore_multi_wait(
     iree::hal::vulkan::VkDeviceHandle* logical_device,
-    const iree_hal_semaphore_list_t* semaphore_list, iree_time_t deadline_ns,
+    const iree_hal_semaphore_list_t* semaphore_list, iree_timeout_t timeout,
     VkSemaphoreWaitFlags wait_flags) {
   // TODO(antiagainst): We actually should get the fences associated with the
   // emulated timeline semaphores so that we can wait them in a bunch. This
@@ -635,9 +630,9 @@ iree_status_t iree_hal_vulkan_emulated_semaphore_multi_wait(
   // first semaphore taking extra long time but the following ones signal
   // quickly.
   for (iree_host_size_t i = 0; i < semaphore_list->count; ++i) {
-    IREE_RETURN_IF_ERROR(iree_hal_vulkan_emulated_semaphore_wait_with_deadline(
+    IREE_RETURN_IF_ERROR(iree_hal_vulkan_emulated_semaphore_wait(
         semaphore_list->semaphores[i], semaphore_list->payload_values[i],
-        deadline_ns));
+        timeout));
     if (wait_flags & VK_SEMAPHORE_WAIT_ANY_BIT) return iree_ok_status();
   }
   return iree_ok_status();
@@ -648,8 +643,6 @@ const iree_hal_semaphore_vtable_t iree_hal_vulkan_emulated_semaphore_vtable = {
     /*.query=*/iree_hal_vulkan_emulated_semaphore_query,
     /*.signal=*/iree_hal_vulkan_emulated_semaphore_signal,
     /*.fail=*/iree_hal_vulkan_emulated_semaphore_fail,
-    /*.wait_with_deadline=*/
-    iree_hal_vulkan_emulated_semaphore_wait_with_deadline,
-    /*.wait_with_timeout=*/
-    iree_hal_vulkan_emulated_semaphore_wait_with_timeout,
+    /*.wait=*/
+    iree_hal_vulkan_emulated_semaphore_wait,
 };

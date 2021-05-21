@@ -34,22 +34,12 @@ static inline uint64_t align(uint64_t value, const APInt &alignment) {
   return align(value, alignment.getZExtValue());
 }
 
+// Aligns |value| to |alignment|, rounding up if needed.
+Value align(Location loc, Value value, int64_t alignment, OpBuilder &builder);
+
 // Returns the number of bytes an element of the given type occupies
 // post-conversion. For example, the size of i1 would be '1 byte'.
 int32_t getRoundedElementByteWidth(Type type);
-
-// Converts a `tensor` type with an arbitrary element size to one supported by
-// the HAL ABI. For example, `tensor<4x8xi1>` is converted to `tensor<4x8xi8>`.
-TensorType convertTensorTypeToABIType(TensorType sourceType);
-
-// Returns an array of i32 values representing the shape of the |shapedType|.
-SmallVector<Value, 4> getStaticShapeDims(Location loc, ShapedType shapedType,
-                                         OpBuilder &builder);
-
-// Returns an array of i32 values representing the shape of the |shapedValue|.
-llvm::Optional<SmallVector<Value, 4>> getShapeDims(Location loc,
-                                                   Value shapedValue,
-                                                   OpBuilder &builder);
 
 // Returns the size of |value| as an index type.
 // The returned value may either be produced at the current insertion site or

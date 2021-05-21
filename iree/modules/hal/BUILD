@@ -22,8 +22,6 @@ cc_library(
     name = "hal",
     srcs = [
         "hal_module.c",
-        "shims.c",
-        "shims.h",
     ],
     hdrs = [
         "hal_module.h",
@@ -32,9 +30,9 @@ cc_library(
         "exports.inl",
     ],
     deps = [
-        "//iree/base:api",
+        "//iree/base",
         "//iree/base:tracing",
-        "//iree/hal:api",
+        "//iree/hal",
         "//iree/vm",
     ],
 )

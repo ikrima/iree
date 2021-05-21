@@ -8,12 +8,26 @@ func @constantI64() -> i64 {
   return %c123 : i64
 }
 
+// CHECK-LABEL: func @argUI64
+// CHECK-SAME: (%{{.*}}: ui32) -> ui32
+func @argUI64(%arg: ui64) -> ui64 {
+  return %arg : ui64
+}
+
 // CHECK-LABEL: func @hloConstantI64
 // CHECK-SAME: () -> tensor<1xi32>
 func @hloConstantI64() -> tensor<1xi64> {
   // CHECK-NEXT: mhlo.constant dense<123> : tensor<1xi32>
   %c123 = mhlo.constant dense<123> : tensor<1xi64>
   return %c123 : tensor<1xi64>
+}
+
+// CHECK-LABEL: func @hloConstantUI64
+// CHECK-SAME: () -> tensor<1xui32>
+func @hloConstantUI64() -> tensor<1xui64> {
+  // CHECK-NEXT: mhlo.constant dense<123> : tensor<1xui32>
+  %c123 = mhlo.constant dense<123> : tensor<1xui64>
+  return %c123 : tensor<1xui64>
 }
 
 // -----
@@ -114,4 +128,18 @@ func @tensor(%A: tensor<2x3xf32>, %B: tensor<3x4xf32>, %C: tensor<2x4xf32>)  -> 
   %E = linalg.matmul ins(%A, %B: tensor<2x3xf32>, tensor<3x4xf32>)
                     outs(%C: tensor<2x4xf32>) -> tensor<2x4xf32>
   return %E : tensor<2x4xf32>
+}
+
+// -----
+
+#map = affine_map<(d0) -> (d0)>
+
+func @linalg(%A: tensor<2xf32>)  -> tensor<2xf32> {
+  %init = linalg.init_tensor [2] : tensor<2xf32>
+  %generic = linalg.generic {indexing_maps = [#map, #map], iterator_types = ["parallel"]} ins(%A : tensor<2xf32>) outs(%init : tensor<2xf32>) {
+  ^bb0(%arg1: f32, %arg2: f32):
+    linalg.yield %arg1 : f32
+  } -> tensor<2xf32>
+
+  return %init : tensor<2xf32>
 }

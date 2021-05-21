@@ -18,7 +18,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "iree/compiler/Conversion/Common/Attributes.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/Passes.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "llvm/ADT/STLExtras.h"
@@ -102,7 +101,7 @@ IREE::HAL::ReturnOp getEntryPointReturnOp(Operation *op) {
       break;
     }
   }
-  if (!entryPointOp) return {};
+  if (!entryPointOp || !entryPointOp.getBody()) return {};
 
   Operation *terminator = entryPointOp.getBlock()->getTerminator();
   auto retOp = dyn_cast<IREE::HAL::ReturnOp>(terminator);

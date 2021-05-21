@@ -14,12 +14,10 @@ iree_cc_library(
   NAME
     CodegenUtils
   HDRS
-    "ForOpCanonicalization.h"
     "FunctionUtils.h"
     "MarkerUtils.h"
     "TransformUtils.h"
   SRCS
-    "ForOpCanonicalization.cpp"
     "FunctionUtils.cpp"
     "MarkerUtils.cpp"
     "TransformUtils.cpp"
@@ -37,6 +35,7 @@ iree_cc_library(
     MLIRTransforms
     MLIRVector
     MLIRVectorToSCF
+    iree::compiler::Dialect::Flow::IR
     iree::compiler::Dialect::HAL::IR
     iree::compiler::Dialect::HAL::IR::HALDialect
     iree::compiler::Dialect::HAL::Utils

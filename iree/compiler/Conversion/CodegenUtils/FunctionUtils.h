@@ -25,21 +25,21 @@ namespace iree_compiler {
 /// Returns true if the given `func` is a kernel dispatch entry point.
 bool isEntryPoint(FuncOp func);
 
-/// Returns the attribute name used to record the binding associated with an
-/// iree.placeholder operation.
-inline const char* getBindingAttrName() { return "binding"; }
-
-/// Returns the attribute name used to record argument position in the (operand
-/// + result) list of shaped types of the dispatch region.
-inline const char* getOperandResultNumAttrName() {
-  return "operand_result_index";
-}
-
 /// Returns the number of outer parallel loops of a linalgOp.
 unsigned getNumOuterParallelLoops(linalg::LinalgOp op);
 
 /// Returns the entry point op for the `funcOp`. Returns `nullptr` on failure.
 IREE::HAL::ExecutableEntryPointOp getEntryPoint(FuncOp funcOp);
+
+/// Returns the untiled type of a tiled view for both tensor and memref
+/// types. Either walks the `ViewOpInterface` chain (for memrefs) or the
+/// `subtensor` op chain (for tensors).
+Type getUntiledType(Value tiledView);
+
+/// Returns the untiled type of a tiled view for both tensor and memref
+/// types. Either walks the `ViewOpInterface` chain (for memrefs) or the
+/// `subtensor` op chain (for tensors).
+ArrayRef<int64_t> getUntiledShape(Value tiledView);
 
 }  // namespace iree_compiler
 }  // namespace mlir

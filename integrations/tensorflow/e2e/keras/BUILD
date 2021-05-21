@@ -89,17 +89,6 @@ iree_e2e_cartesian_product_test_suite(
     name = "keyword_spotting_tests",
     failing_configurations = [
         {
-            # TODO(#4065): VMLA raises INVALID_ARGUMENT errors after DeviceQueue failure.
-            "model": [
-                "att_mh_rnn",
-                "att_rnn",
-                "crnn",
-                "gru",
-                "lstm",
-            ],
-            "target_backends": "iree_vmla",
-        },
-        {
             "model": [
                 # Timing out on SwiftShader
                 "att_mh_rnn",
@@ -130,7 +119,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -162,6 +150,12 @@ iree_e2e_cartesian_product_test_suite(
             # These models do not currently support streaming.
             "model": NON_STREAMING_KEYWORD_SPOTTING_MODELS,
         },
+        {
+            "model": [
+                "crnn",  # TODO(b/188221333): Get this test working.
+            ],
+            "target_backends": "iree_vulkan",
+        },
     ],
     matrix = {
         "src": "keyword_spotting_streaming_test.py",
@@ -171,7 +165,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -201,7 +194,6 @@ iree_e2e_cartesian_product_test_suite(
             "target_backends": [
                 "tf",
                 "tflite",
-                "iree_vmla",
                 "iree_llvmaot",
                 "iree_vulkan",
             ],
@@ -219,7 +211,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],

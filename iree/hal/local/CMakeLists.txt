@@ -18,10 +18,10 @@ iree_cc_library(
   SRCS
     "arena.c"
   DEPS
-    iree::base::api
+    iree::base
     iree::base::core_headers
     iree::base::internal::atomic_slist
-    iree::base::synchronization
+    iree::base::internal::synchronization
   PUBLIC
 )
 
@@ -33,11 +33,11 @@ iree_cc_library(
   SRCS
     "event_pool.c"
   DEPS
-    iree::base::api
+    iree::base
     iree::base::core_headers
     iree::base::internal
+    iree::base::internal::synchronization
     iree::base::internal::wait_handle
-    iree::base::synchronization
     iree::base::tracing
   PUBLIC
 )
@@ -50,11 +50,40 @@ iree_cc_library(
   PUBLIC
 )
 
+iree_cc_test(
+  NAME
+    executable_library_benchmark
+  SRCS
+    "executable_library_benchmark.c"
+  DEPS
+    ::executable_library
+    ::local
+    iree::base
+    iree::base::internal::flags
+    iree::base::tracing
+    iree::hal::local::loaders::embedded_library_loader
+    iree::testing::benchmark
+)
+
+iree_cc_test(
+  NAME
+    executable_library_test
+  SRCS
+    "executable_library_demo.c"
+    "executable_library_demo.h"
+    "executable_library_test.c"
+  DEPS
+    iree::base
+    iree::base::core_headers
+    iree::hal::local::executable_library
+)
+
 iree_cc_library(
   NAME
     local
   HDRS
     "executable_loader.h"
+    "inline_command_buffer.h"
     "local_descriptor_set.h"
     "local_descriptor_set_layout.h"
     "local_executable.h"
@@ -62,6 +91,7 @@ iree_cc_library(
     "local_executable_layout.h"
   SRCS
     "executable_loader.c"
+    "inline_command_buffer.c"
     "local_descriptor_set.c"
     "local_descriptor_set_layout.c"
     "local_executable.c"
@@ -69,11 +99,38 @@ iree_cc_library(
     "local_executable_layout.c"
   DEPS
     ::executable_library
-    iree::base::api
+    iree::base
     iree::base::core_headers
     iree::base::internal
     iree::base::tracing
-    iree::hal::api
+    iree::hal
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    sync_driver
+  HDRS
+    "sync_device.h"
+    "sync_driver.h"
+    "sync_event.h"
+    "sync_semaphore.h"
+  SRCS
+    "sync_device.c"
+    "sync_driver.c"
+    "sync_event.c"
+    "sync_semaphore.c"
+  DEPS
+    ::arena
+    ::local
+    iree::base
+    iree::base::core_headers
+    iree::base::internal
+    iree::base::internal::synchronization
+    iree::base::internal::wait_handle
+    iree::base::tracing
+    iree::hal
+    iree::task
   PUBLIC
 )
 
@@ -100,13 +157,13 @@ iree_cc_library(
     ::arena
     ::event_pool
     ::local
-    iree::base::api
+    iree::base
     iree::base::core_headers
     iree::base::internal
+    iree::base::internal::synchronization
     iree::base::internal::wait_handle
-    iree::base::synchronization
     iree::base::tracing
-    iree::hal::api
+    iree::hal
     iree::task
   PUBLIC
 )

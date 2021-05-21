@@ -42,6 +42,7 @@ class MaterializeResourceCachesPass
 
   void runOnOperation() override {
     auto moduleOp = getOperation();
+    if (moduleOp.getBody()->empty()) return;
     moduleBuilder = OpBuilder(&moduleOp.getBody()->front());
 
     auto executableOps = llvm::to_vector<8>(moduleOp.getOps<ExecutableOp>());
@@ -330,8 +331,7 @@ class MaterializeResourceCachesPass
 
 std::unique_ptr<OperationPass<ModuleOp>> createMaterializeResourceCachesPass(
     TargetOptions targetOptions) {
-  return std::make_unique<MaterializeResourceCachesPass>(
-      targetOptions);  // NOLINT
+  return std::make_unique<MaterializeResourceCachesPass>(targetOptions);
 }
 
 static PassRegistration<MaterializeResourceCachesPass> pass(

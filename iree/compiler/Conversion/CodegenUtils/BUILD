@@ -23,18 +23,17 @@ package(
 cc_library(
     name = "CodegenUtils",
     srcs = [
-        "ForOpCanonicalization.cpp",
         "FunctionUtils.cpp",
         "MarkerUtils.cpp",
         "TransformUtils.cpp",
     ],
     hdrs = [
-        "ForOpCanonicalization.h",
         "FunctionUtils.h",
         "MarkerUtils.h",
         "TransformUtils.h",
     ],
     deps = [
+        "//iree/compiler/Dialect/Flow/IR",
         "//iree/compiler/Dialect/HAL/IR",
         "//iree/compiler/Dialect/HAL/IR:HALDialect",
         "//iree/compiler/Dialect/HAL/Utils",

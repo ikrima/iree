@@ -16,8 +16,8 @@
 
 #include <memory>
 
-#include "iree/compiler/Conversion/HLOToHLO/Passes.h"
 #include "iree/compiler/Conversion/HLOToLinalg/HLOToLinalgOnTensorPasses.h"
+#include "iree/compiler/Conversion/LinalgToLinalg/Passes.h"
 #include "iree/compiler/Dialect/Shape/Conversion/Passes.h"
 #include "iree/compiler/Dialect/Shape/Transforms/Passes.h"
 #include "mlir-hlo/Dialect/mhlo/transforms/passes.h"
@@ -30,12 +30,6 @@
 #include "mlir/Pass/PassOptions.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Transforms/Passes.h"
-
-static llvm::cl::opt<bool> clEnableLinalgOnTensorsDispatch(
-    "iree-flow-dispatch-linalg-on-tensors",
-    llvm::cl::desc(
-        "Enable use of Linalg on tensors for dispatch region creation."),
-    llvm::cl::init(false));
 
 // TODO(benvanik): change to a pipeline option.
 static llvm::cl::opt<bool> clExportBenchmarkFuncs(
@@ -52,6 +46,17 @@ static llvm::cl::opt<bool> clTraceDispatchTensors(
         "Trace runtime input/output tensors for each dispatch function."),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> clEnable1x1ConvToMatmul(
+    "iree-flow-enable-1x1-conv-to-matmul",
+    llvm::cl::desc("Enable converting 1x1 linalg convolution ops to linalg "
+                   "matmul ops pass."),
+    llvm::cl::init(true));
+
+static llvm::cl::opt<bool> clEnableConvToImg2Col(
+    "iree-flow-enable-conv-img2col-transform",
+    llvm::cl::desc("Enable converting convolution ops to img2col form."),
+    llvm::cl::init(false));
+
 namespace mlir {
 namespace iree_compiler {
 namespace IREE {
@@ -65,12 +70,8 @@ namespace Flow {
 // here, but soon we'll be shifting away from that and only accepting upstream
 // dialects like linalg.
 static void buildHLOInputTransformPassPipeline(OpPassManager &passManager) {
-  passManager.addNestedPass<FuncOp>(IREE::Flow::createHLOPreprocessingPass());
-  if (clEnableLinalgOnTensorsDispatch) {
-    // TODO(ataei): This should run as part of createHLOPreprocessingPass which
-    // will break VMLA backend.
-    passManager.addNestedPass<FuncOp>(createDecomposeHLOClampPass());
-  }
+  passManager.addNestedPass<FuncOp>(
+      IREE::Flow::createHLOToHLOPreprocessingPass());
 
   // Run passes to remove shape constraints. HLO lowering inserts them, but they
   // are not desired here.
@@ -196,42 +197,39 @@ void buildFlowTransformPassPipeline(OpPassManager &passManager) {
       IREE::Flow::createPrePartitioningConversionPass());
   passManager.addNestedPass<FuncOp>(mlir::createCanonicalizerPass());
 
-  if (clEnableLinalgOnTensorsDispatch) {
-    // TODO(benvanik): move up to input; requires pre-partitioning conversion
-    // to be reworked first.
-    passManager.addNestedPass<FuncOp>(
-        mlir::iree_compiler::createHLOToLinalgOnTensorsPass(true));
+  // TODO(benvanik): move up to input; requires pre-partitioning conversion
+  // to be reworked first.
+  passManager.addNestedPass<FuncOp>(
+      mlir::iree_compiler::createHLOToLinalgOnTensorsPass(true));
 
+  if (clEnable1x1ConvToMatmul) {
     passManager.addNestedPass<FuncOp>(
-        mlir::createConvertElementwiseToLinalgPass());
-    passManager.addNestedPass<FuncOp>(
-        mlir::createLinalgFoldUnitExtentDimsPass());
-    passManager.addNestedPass<FuncOp>(mlir::createCanonicalizerPass());
-    passManager.addNestedPass<FuncOp>(
-        mlir::iree_compiler::createFusionOfTensorOpsPass());
-    passManager.addNestedPass<FuncOp>(
-        IREE::Flow::createConvertToFlowTensorOpsPass());
-    passManager.addNestedPass<FuncOp>(mlir::createCSEPass());
-
-    passManager.addNestedPass<FuncOp>(
-        IREE::Flow::createDispatchLinalgOnTensorsPass());
-    // NOTE: required because the current dispatch-linalg-on-tensors pass
-    // creates a lot of dead IR that needs to be cleaned up.
-    passManager.addNestedPass<FuncOp>(mlir::createCanonicalizerPass());
-
-    // Outline the dispatch regions into their own functions wrapped in
-    // executables.
-    passManager.addPass(IREE::Flow::createOutlineDispatchRegions2Pass());
-  } else {
-    // DEPRECATED: legacy HLO-based path.
-    passManager.addPass(IREE::Flow::createDispatchabilityAnalysisPass());
-    passManager.addNestedPass<FuncOp>(
-        IREE::Flow::createIdentifyDispatchRegions2Pass());
-    passManager.addNestedPass<FuncOp>(createCSEPass());
-    passManager.addNestedPass<FuncOp>(
-        IREE::Flow::createFoldCompatibleDispatchRegionsPass());
-    passManager.addPass(IREE::Flow::createOutlineDispatchRegionsPass());
+        mlir::iree_compiler::createConvert1x1ConvToMatmulPass());
   }
+  if (clEnableConvToImg2Col) {
+    passManager.addNestedPass<FuncOp>(
+        mlir::iree_compiler::createConvertConv2DToImg2ColPass());
+  }
+
+  passManager.addNestedPass<FuncOp>(
+      mlir::createConvertElementwiseToLinalgPass());
+  passManager.addNestedPass<FuncOp>(mlir::createLinalgFoldUnitExtentDimsPass());
+  passManager.addNestedPass<FuncOp>(mlir::createCanonicalizerPass());
+  passManager.addNestedPass<FuncOp>(
+      mlir::iree_compiler::createFusionOfTensorOpsPass());
+  passManager.addNestedPass<FuncOp>(
+      IREE::Flow::createConvertToFlowTensorOpsPass());
+  passManager.addNestedPass<FuncOp>(mlir::createCSEPass());
+
+  passManager.addNestedPass<FuncOp>(
+      IREE::Flow::createDispatchLinalgOnTensorsPass());
+  // NOTE: required because the current dispatch-linalg-on-tensors pass
+  // creates a lot of dead IR that needs to be cleaned up.
+  passManager.addNestedPass<FuncOp>(mlir::createCanonicalizerPass());
+
+  // Outline the dispatch regions into their own functions wrapped in
+  // executables.
+  passManager.addPass(IREE::Flow::createOutlineDispatchRegionsPass());
 
   // Cleanup identity ops that clutter up the IR and canonicalize.
   passManager.addNestedPass<FuncOp>(mlir::createCanonicalizerPass());
@@ -297,6 +295,20 @@ void registerFlowTransformPassPipeline() {
       [](OpPassManager &passManager) {
         buildFlowTransformPassPipeline(passManager);
       });
+}
+
+namespace {
+#define GEN_PASS_REGISTRATION
+#include "iree/compiler/Dialect/Flow/Transforms/Passes.h.inc"
+}  // namespace
+
+void registerFlowPasses() {
+  // Generated.
+  registerPasses();
+
+  // Pipelines.
+  registerInputTransformPassPipeline();
+  registerFlowTransformPassPipeline();
 }
 
 }  // namespace Flow

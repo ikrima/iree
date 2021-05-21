@@ -189,7 +189,7 @@ LogicalResult TargetBackend::linkExecutablesInto(
           linkedInterfaceOp = dyn_cast<IREE::HAL::InterfaceOp>(
               linkedExecutableBuilder.clone(*sourceInterfaceOp));
           linkedInterfaceOp.setName(
-              llvm::formatv("legacy_io_{0}", linkedInterfaceOps.size()).str());
+              llvm::formatv("io_{0}", linkedInterfaceOps.size()).str());
           linkedInterfaceOps.push_back(linkedInterfaceOp);
         }
 
@@ -198,7 +198,7 @@ LogicalResult TargetBackend::linkExecutablesInto(
                 entryPointOp.getLoc(), entryPointOp.sym_nameAttr(),
                 builder.getIndexAttr(nextEntryPointOrdinal++),
                 builder.getSymbolRefAttr(linkedInterfaceOp.getName()),
-                entryPointOp.signatureAttr(), ArrayAttr{});
+                ArrayAttr{});
 
         // Add to replacement table for fixing up dispatch calls referencing
         // this entry point.

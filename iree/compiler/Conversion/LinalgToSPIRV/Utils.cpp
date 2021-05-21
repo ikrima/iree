@@ -63,6 +63,7 @@ LogicalResult copyToWorkgroupMemory(OpBuilder &b, Value src, Value dst) {
 
 Optional<Value> allocateWorkgroupMemory(OpBuilder &b, memref::SubViewOp subview,
                                         ArrayRef<Value> boundingSubViewSize,
+                                        DataLayout &layout,
                                         OperationFolder *folder) {
   // Allocate the memory into the entry block of the parent FuncOp. This better
   // aligns with the semantics of this memory which is available at the entry of
@@ -104,9 +105,10 @@ template <typename GPUIdOp, typename GPUCountOp>
 static linalg::ProcInfo getGPUProcessorIdAndCountImpl(OpBuilder &builder,
                                                       Location loc,
                                                       unsigned dim) {
-  std::array<StringRef, kNumGPUDims> dimAttr{"x", "y", "z"};
-  StringAttr attr =
-      builder.getStringAttr(dimAttr[std::min<unsigned>(dim, kNumGPUDims)]);
+  assert(dim < kNumGPUDims && "processor index out of range!");
+
+  std::array<const char *, kNumGPUDims> dimAttr{"x", "y", "z"};
+  StringAttr attr = builder.getStringAttr(dimAttr[dim]);
   Type indexType = builder.getIndexType();
   return {builder.create<GPUIdOp>(loc, indexType, attr),
           builder.create<GPUCountOp>(loc, indexType, attr)};
@@ -115,9 +117,10 @@ static linalg::ProcInfo getGPUProcessorIdAndCountImpl(OpBuilder &builder,
 template <>
 linalg::ProcInfo getGPUProcessorIdAndCountImpl<GPUGlobalId, GPUGlobalCount>(
     OpBuilder &builder, Location loc, unsigned dim) {
-  std::array<StringRef, kNumGPUDims> dimAttr{"x", "y", "z"};
-  StringAttr attr =
-      builder.getStringAttr(dimAttr[std::min<unsigned>(dim, kNumGPUDims)]);
+  assert(dim < kNumGPUDims && "processor index out of range!");
+
+  std::array<const char *, kNumGPUDims> dimAttr{"x", "y", "z"};
+  StringAttr attr = builder.getStringAttr(dimAttr[dim]);
   Type indexType = builder.getIndexType();
   Value gridDim = builder.create<gpu::GridDimOp>(loc, indexType, attr);
   Value blockId = builder.create<gpu::BlockIdOp>(loc, indexType, attr);

@@ -16,7 +16,7 @@
 # Each test file should have a name matching the corresponding TOSA op and test only the
 # functionality of that op (though may make use of other ops where necessary). Tests should be
 # written using the IREE Check framework.
-# See https://google.github.io/iree/developing-iree/testing-guide#iree-core-end-to-end-tests.
+# See https://github.com/google/iree/blob/main/docs/developers/developing_iree/testing_guide.md#iree-core-end-to-end-tests.
 
 load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
 load("//build_tools/bazel:iree_check_test.bzl", "iree_check_single_backend_test_suite")
@@ -27,7 +27,109 @@ package(
     licenses = ["notice"],  # Apache 2.0
 )
 
-ALL_SRCS = enforce_glob(
+LLVM_SRCS = enforce_glob(
+    [
+        "abs.mlir",
+        "add.mlir",
+        "bitwise_and.mlir",
+        "bitwise_or.mlir",
+        "bitwise_xor.mlir",
+        "ceil.mlir",
+        "clamp.mlir",
+        "const.mlir",
+        "exp.mlir",
+        "floor.mlir",
+        "greater.mlir",
+        "greater_equal.mlir",
+        "if.mlir",
+        "log.mlir",
+        "logical_left_shift.mlir",
+        "logical_right_shift.mlir",
+        "max_pool.mlir",
+        "maximum.mlir",
+        "minimum.mlir",
+        "mul.mlir",
+        "negate.mlir",
+        "pad.mlir",
+        "reduce.mlir",
+        "reluN.mlir",
+        "reshape.mlir",
+        "rsqrt.mlir",
+        "select.mlir",
+        "sub.mlir",
+        "table.mlir",
+        "tanh.mlir",
+        "transpose.mlir",
+        "while.mlir",
+    ],
+    include = ["*.mlir"],
+    exclude = [
+    ],
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_dylib-llvm-aot_dylib",
+    srcs = LLVM_SRCS,
+    driver = "dylib",
+    target_backend = "dylib-llvm-aot",
+)
+
+VMVX_SRCS = enforce_glob(
+    [
+        "abs.mlir",
+        "add.mlir",
+        "bitwise_and.mlir",
+        "bitwise_or.mlir",
+        "bitwise_xor.mlir",
+        "ceil.mlir",
+        "clamp.mlir",
+        "const.mlir",
+        "exp.mlir",
+        "floor.mlir",
+        "greater.mlir",
+        "greater_equal.mlir",
+        "if.mlir",
+        "log.mlir",
+        "logical_left_shift.mlir",
+        "logical_right_shift.mlir",
+        "max_pool.mlir",
+        "maximum.mlir",
+        "minimum.mlir",
+        "mul.mlir",
+        "negate.mlir",
+        "pad.mlir",
+        "reluN.mlir",
+        "reshape.mlir",
+        "rsqrt.mlir",
+        "select.mlir",
+        "sub.mlir",
+        "table.mlir",
+        "tanh.mlir",
+        "transpose.mlir",
+        "while.mlir",
+    ],
+    include = ["*.mlir"],
+    exclude = [
+        "reduce.mlir",  # Currently flakey https://github.com/google/iree/issues/5885
+    ],
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_vmvx_vmvx",
+    srcs = VMVX_SRCS,
+    compiler_flags = [
+        # tosa.apply_scale currently expands to i64 math, requiring this
+        # extension. Nothing else about the tests require it, though, and we
+        # really should not be emulating it with 64-bit math. Having this
+        # prevents any of these tests from being executed on a runtime compiled
+        # without the VM's I64 extension.
+        "-iree-vm-target-extension=i64",
+    ],
+    driver = "vmvx",
+    target_backend = "vmvx",
+)
+
+VULKAN_SRCS = enforce_glob(
     [
         "abs.mlir",
         "add.mlir",
@@ -47,40 +149,38 @@ ALL_SRCS = enforce_glob(
         "logical_right_shift.mlir",
         "maximum.mlir",
         "minimum.mlir",
+        "mul.mlir",
         "negate.mlir",
+        "pad.mlir",
         "reluN.mlir",
         "reshape.mlir",
         "rsqrt.mlir",
         "select.mlir",
         "sub.mlir",
+        "table.mlir",
         "tanh.mlir",
         "transpose.mlir",
         "while.mlir",
     ],
     include = ["*.mlir"],
     exclude = [
-        "mul.mlir",  # TODO(suderman): Re-enable once apply_scale lowering lands.
+        "reduce.mlir",  # Currently failing on vulkan.
+        "max_pool.mlir",  # Currently failing on vulkan.
     ],
 )
 
 iree_check_single_backend_test_suite(
     name = "check_vulkan-spirv_vulkan",
-    srcs = ALL_SRCS,
+    srcs = VULKAN_SRCS,
     driver = "vulkan",
     target_backend = "vulkan-spirv",
-)
-
-iree_check_single_backend_test_suite(
-    name = "check_dylib-llvm-aot_dylib",
-    srcs = ALL_SRCS,
-    driver = "dylib",
-    target_backend = "dylib-llvm-aot",
 )
 
 test_suite(
     name = "check",
     tests = [
         ":check_dylib-llvm-aot_dylib",
+        ":check_vmvx_vmvx",
         ":check_vulkan-spirv_vulkan",
     ],
 )

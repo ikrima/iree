@@ -72,29 +72,6 @@ def IREE_ByteBufferConstantOp : IREE_PureOp<"byte_buffer.constant"> {
 }
 
 //===----------------------------------------------------------------------===//
-// Executable ABI DO NOT ADD THINGS HERE
-//===----------------------------------------------------------------------===//
-
-// ***WARNING***: this is going away soon - please don't extend or add more
-// things like this to this file. Ops should go to the dialect they relate to
-// (HAL, in this case).
-def IREE_PlaceholderOp : IREE_Op<"placeholder", [MemoryEffects<[MemAlloc]>]> {
-  let summary = "A placeholder op to feed a value/buffer into computation";
-  let description = [{
-    This op is intended as a way to represent a value or buffer that will be fed
-    into computation. It can host additional attributes related to the value or
-    buffer. This op can be used for the cases where one need to feed in value or
-    buffer to computation in a function but cannot do that via the function
-    argument due to ABI or contract issues.
-  }];
-
-  let arguments = (ins StrAttr:$purpose);
-  let results = (outs Res<AnyType, "", [MemAlloc]>:$output);
-
-  let assemblyFormat = [{ `for` $purpose attr-dict `:` type($output) }];
-}
-
-//===----------------------------------------------------------------------===//
 // Compiler hints
 //===----------------------------------------------------------------------===//
 
@@ -167,14 +144,16 @@ def IREE_UnreachableOp : IREE_Op<"unreachable", [NoSideEffect, Terminator]> {
       cond_br %true, ^bb2, ^bb1
     ^bb1:
       // Indicates that this branch should never be taken.
-      iree.unreachable
+      iree.unreachable "shouldn't be here"
     ^bb2:
       ...
 
     ```
   }];
 
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins StrAttr:$message);
+
+  let assemblyFormat = "$message attr-dict";
 }
 
 //===----------------------------------------------------------------------===//
@@ -185,7 +164,24 @@ def IREE_UnreachableOp : IREE_Op<"unreachable", [NoSideEffect, Terminator]> {
 // new SSA values. This would make optimizing the list usage much easier and
 // enable hoisting/CSE of list access/mutation.
 
-def IREE_ListSizeOp : IREE_Op<"list.size"> {
+def IREE_ListCreateOp : IREE_PureOp<
+    "list.create", [MemoryEffects<[MemAlloc]>]> {
+  let summary = [{creates a new empty list}];
+  let description = [{
+    Creates a new empty list with an optional initial capacity.
+  }];
+
+  let arguments = (ins
+    Optional<Index>:$initial_capacity
+  );
+  let results = (outs
+    AnyList:$result
+  );
+
+  let assemblyFormat = "($initial_capacity^)? attr-dict `:` type($result)";
+}
+
+def IREE_ListSizeOp : IREE_Op<"list.size", [MemoryEffects<[MemRead]>]> {
   let summary = [{the size of the list in elements}];
   let description = [{
     Returns the current size of the list in elements.
@@ -201,7 +197,7 @@ def IREE_ListSizeOp : IREE_Op<"list.size"> {
   let assemblyFormat = "operands attr-dict `:` type($list)";
 }
 
-def IREE_ListResizeOp : IREE_Op<"list.resize"> {
+def IREE_ListResizeOp : IREE_Op<"list.resize", [MemoryEffects<[MemWrite]>]> {
   let summary = [{resizes the list to a new count in elements}];
   let description = [{
     Resizes the list to contain `new_size` elements. This will either truncate
@@ -217,7 +213,7 @@ def IREE_ListResizeOp : IREE_Op<"list.resize"> {
   let assemblyFormat = "operands attr-dict `:` type($list)";
 }
 
-def IREE_ListGetOp : IREE_Op<"list.get"> {
+def IREE_ListGetOp : IREE_Op<"list.get", [MemoryEffects<[MemRead]>]> {
   let summary = [{element accessor}];
   let description = [{
     Returns the value of the element at the given index. Note that the value
@@ -232,12 +228,12 @@ def IREE_ListGetOp : IREE_Op<"list.get"> {
     AnyType:$result
   );
 
-  let assemblyFormat = "operands attr-dict `:` custom<ListType>(type($list), type($result))";
+  let assemblyFormat = "$list `[` $index `]` attr-dict `:` custom<ListTypeGet>(type($list), type($result))";
 
   let verifier = [{ return verify$cppClass(*this); }];
 }
 
-def IREE_ListSetOp : IREE_Op<"list.set"> {
+def IREE_ListSetOp : IREE_Op<"list.set", [MemoryEffects<[MemWrite]>]> {
   let summary = [{element mutator}];
   let description = [{
     Sets the element at the given index to the new value.
@@ -249,7 +245,7 @@ def IREE_ListSetOp : IREE_Op<"list.set"> {
     AnyType:$value
   );
 
-  let assemblyFormat = "operands attr-dict `:` custom<ListType>(type($list), type($value))";
+  let assemblyFormat = "$list `[` $index `]` `,` $value attr-dict `:` custom<ListTypeSet>(type($list), type($value))";
 
   let verifier = [{ return verify$cppClass(*this); }];
 }

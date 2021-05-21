@@ -25,10 +25,9 @@ package(
 #===------------------------------------------------------------------------===#
 # Public API
 #===------------------------------------------------------------------------===#
-# TODO(benvanik): rename to :hal
 
 cc_library(
-    name = "api",
+    name = "hal",
     srcs = [
         "allocator.c",
         "allocator.h",
@@ -36,8 +35,8 @@ cc_library(
         "buffer.c",
         "buffer.h",
         "buffer_heap.c",
+        "buffer_heap_impl.h",
         "buffer_view.c",
-        "buffer_view.cc",
         "buffer_view.h",
         "command_buffer.c",
         "command_buffer.h",
@@ -64,7 +63,7 @@ cc_library(
         "resource.h",
         "semaphore.c",
         "semaphore.h",
-        "string_util.cc",
+        "string_util.c",
         "string_util.h",
     ],
     hdrs = [
@@ -72,16 +71,11 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//iree/base:api",
+        "//iree/base",
         "//iree/base:core_headers",
-        "//iree/base:synchronization",
-        "//iree/base:threading",
         "//iree/base:tracing",
         "//iree/base/internal",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@half//:includes",
+        "//iree/base/internal:synchronization",
     ],
 )
 
@@ -89,12 +83,12 @@ cc_test(
     name = "string_util_test",
     srcs = ["string_util_test.cc"],
     deps = [
-        ":api",
+        ":hal",
         "//iree/base:core_headers",
         "//iree/base:status",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
-        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )

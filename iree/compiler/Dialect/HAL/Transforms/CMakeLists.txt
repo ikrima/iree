@@ -26,6 +26,7 @@ iree_cc_library(
     "MaterializeInterfaces.cpp"
     "MaterializeResourceCaches.cpp"
     "MemoizeDeviceQueries.cpp"
+    "PackAllocations.cpp"
     "PackConstantPoolStorage.cpp"
     "Passes.cpp"
     "PropagateConstantWorkgroupInfo.cpp"
@@ -57,7 +58,6 @@ iree_cc_library(
     iree::compiler::Dialect::IREE::Transforms
     iree::compiler::Dialect::Shape::IR
     iree::compiler::Dialect::Shape::Transforms
-    tensorflow::mlir_hlo
   PUBLIC
 )
 

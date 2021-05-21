@@ -15,7 +15,8 @@
 #ifndef IREE_HAL_VULKAN_DESCRIPTOR_POOL_CACHE_H_
 #define IREE_HAL_VULKAN_DESCRIPTOR_POOL_CACHE_H_
 
-#include "absl/container/inlined_vector.h"
+#include <vector>
+
 #include "iree/hal/vulkan/dynamic_symbols.h"
 #include "iree/hal/vulkan/handle_util.h"
 
@@ -43,7 +44,7 @@ class DescriptorSetGroup final {
  public:
   DescriptorSetGroup() = default;
   DescriptorSetGroup(DescriptorPoolCache* descriptor_pool_cache,
-                     absl::InlinedVector<DescriptorPool, 8> descriptor_pools)
+                     std::vector<DescriptorPool> descriptor_pools)
       : descriptor_pool_cache_(descriptor_pool_cache),
         descriptor_pools_(std::move(descriptor_pools)) {}
   DescriptorSetGroup(const DescriptorSetGroup&) = delete;
@@ -58,11 +59,11 @@ class DescriptorSetGroup final {
   }
   ~DescriptorSetGroup();
 
-  Status Reset();
+  iree_status_t Reset();
 
  private:
   DescriptorPoolCache* descriptor_pool_cache_;
-  absl::InlinedVector<DescriptorPool, 8> descriptor_pools_;
+  std::vector<DescriptorPool> descriptor_pools_;
 };
 
 // A "cache" (or really, pool) of descriptor pools. These pools are allocated
@@ -82,12 +83,14 @@ class DescriptorPoolCache final {
   // The pool will have been reset and have all descriptor sets available.
   // When all sets allocated from the pool are no longer in use it must be
   // returned to the cache with ReleaseDescriptorPool.
-  StatusOr<DescriptorPool> AcquireDescriptorPool(
-      VkDescriptorType descriptor_type, int max_descriptor_count);
+  iree_status_t AcquireDescriptorPool(VkDescriptorType descriptor_type,
+                                      int max_descriptor_count,
+                                      DescriptorPool* out_descriptor_pool);
 
   // Releases descriptor pools back to the cache. The pools will be reset
   // immediately and must no longer be in use by any in-flight command.
-  Status ReleaseDescriptorPools(absl::Span<DescriptorPool> descriptor_pools);
+  iree_status_t ReleaseDescriptorPools(
+      const std::vector<DescriptorPool>& descriptor_pools);
 
  private:
   VkDeviceHandle* logical_device_;

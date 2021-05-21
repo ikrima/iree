@@ -17,8 +17,7 @@
 
 #include <string>
 
-#include "iree/base/status.h"
-#include "iree/base/synchronization.h"
+#include "iree/base/internal/synchronization.h"
 #include "iree/hal/api.h"
 #include "iree/hal/vulkan/dynamic_symbols.h"
 #include "iree/hal/vulkan/handle_util.h"
@@ -59,7 +58,7 @@ class CommandQueue {
   virtual iree_status_t Submit(iree_host_size_t batch_count,
                                const iree_hal_submission_batch_t* batches) = 0;
 
-  virtual iree_status_t WaitIdle(iree_time_t deadline_ns) = 0;
+  virtual iree_status_t WaitIdle(iree_timeout_t timeout) = 0;
 
  protected:
   CommandQueue(VkDeviceHandle* logical_device,

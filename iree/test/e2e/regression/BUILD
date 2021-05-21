@@ -18,12 +18,17 @@
 
 load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
 load("//iree:lit_test.bzl", "iree_lit_test_suite")
+load("//build_tools/bazel:iree_check_test.bzl", "iree_check_single_backend_test_suite")
 
 package(
     default_visibility = ["//visibility:public"],
     features = ["layering_check"],
     licenses = ["notice"],  # Apache 2.0
 )
+
+BACKEND_TESTS = [
+    "linalg_ops.mlir",
+]
 
 iree_lit_test_suite(
     name = "lit",
@@ -33,12 +38,10 @@ iree_lit_test_suite(
             "dynamic_add.mlir",
             "dynamic_compare_and_select.mlir",
             "dynamic_dot.mlir",
-            "dynamic_dot_general.mlir",
             "dynamic_torch_index_select_high_rank.mlir",
             "dynamic_torch_index_select_negative.mlir",
             "dynamic_torch_index_select_scalar.mlir",
             "dynamic_torch_index_select_vector.mlir",
-            "executable_benchmark.mlir",
             "globals.mlir",
             "scalar.mlir",
             "trace_dispatch_tensors.mlir",
@@ -46,13 +49,14 @@ iree_lit_test_suite(
         ],
         include =
             ["*.mlir"],
-        # Disabled temporarily. See GH Issue #4733
+        # TODO(#5897): enable these for codegen linalg on tensors/etc.
         exclude = [
+            "dynamic_dot_general.mlir",
             "dynamic_linalg_matmul_on_tensors.mlir",
             "dynamic_linalg_matmul_on_tensors_fuse_0.mlir",
             "dynamic_linalg_matmul_on_tensors_fuse_1.mlir",
             "dynamic_linalg_matmul_on_tensors_fuse_2.mlir",
-        ],
+        ] + BACKEND_TESTS,
     ),
     data = [
         "//iree/tools:IreeFileCheck",
@@ -61,4 +65,25 @@ iree_lit_test_suite(
         "//iree/tools:iree-translate",
     ],
     tags = ["hostonly"],
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_regression_linalg_ops_dylib-llvm-aot",
+    srcs = BACKEND_TESTS,
+    driver = "dylib",
+    target_backend = "dylib-llvm-aot",
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_regression_linalg_ops_vmvx",
+    srcs = BACKEND_TESTS,
+    driver = "vmvx",
+    target_backend = "vmvx",
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_regression_linalg_ops_vulkan-spirv",
+    srcs = BACKEND_TESTS,
+    driver = "vulkan",
+    target_backend = "vulkan-spirv",
 )

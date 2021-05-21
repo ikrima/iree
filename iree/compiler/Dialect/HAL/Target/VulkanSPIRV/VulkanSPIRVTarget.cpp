@@ -14,7 +14,6 @@
 
 #include "iree/compiler/Dialect/HAL/Target/VulkanSPIRV/VulkanSPIRVTarget.h"
 
-#include "iree/compiler/Conversion/Common/Attributes.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/CodeGenOptionUtils.h"
 #include "iree/compiler/Dialect/Flow/IR/FlowOps.h"
 #include "iree/compiler/Dialect/HAL/Target/SPIRVCommon/SPIRVTarget.h"
@@ -128,9 +127,11 @@ class VulkanSPIRVTargetBackend : public SPIRVTargetBackend {
     ModuleOp innerModuleOp = targetOp.getInnerModule();
     auto spvModuleOp = *innerModuleOp.getOps<spirv::ModuleOp>().begin();
 
+    FlatbufferBuilder builder;
+    iree_SpirVExecutableDef_start_as_root(builder);
+
     // Serialize the spirv::ModuleOp into the binary that we will embed in the
     // final flatbuffer.
-    FlatbufferBuilder builder;
     SmallVector<uint32_t, 256> spvBinary;
     if (failed(spirv::serialize(spvModuleOp, spvBinary)) || spvBinary.empty()) {
       return targetOp.emitError() << "failed to serialize spv.module";
@@ -142,31 +143,22 @@ class VulkanSPIRVTargetBackend : public SPIRVTargetBackend {
     // list of entry point names here that are then passed in
     // VkShaderModuleCreateInfo.
     SmallVector<StringRef, 8> entryPointNames;
-    if (auto scheduleAttr = innerModuleOp->getAttrOfType<ArrayAttr>(
-            iree_compiler::getEntryPointScheduleAttrName())) {
-      // We have multiple entry points in this module. Make sure the order
-      // specified in the schedule attribute is respected.
-      for (Attribute entryPoint : scheduleAttr) {
-        entryPointNames.push_back(
-            entryPoint.cast<FlatSymbolRefAttr>().getValue());
-      }
-    } else {
-      spvModuleOp.walk([&](spirv::EntryPointOp entryPointOp) {
-        entryPointNames.push_back(entryPointOp.fn());
-      });
-    }
+    spvModuleOp.walk([&](spirv::EntryPointOp entryPointOp) {
+      entryPointNames.push_back(entryPointOp.fn());
+    });
     auto entryPointsRef = builder.createStringVec(entryPointNames);
 
-    iree_SpirVExecutableDef_start_as_root(builder);
     iree_SpirVExecutableDef_entry_points_add(builder, entryPointsRef);
     iree_SpirVExecutableDef_code_add(builder, spvCodeRef);
     iree_SpirVExecutableDef_end_as_root(builder);
 
     // Add the binary data to the target executable.
-    executableBuilder.create<IREE::HAL::ExecutableBinaryOp>(
+    auto binaryOp = executableBuilder.create<IREE::HAL::ExecutableBinaryOp>(
         targetOp.getLoc(), targetOp.sym_name(),
-        static_cast<uint32_t>(IREE::HAL::ExecutableFormat::SpirV),
+        executableBuilder.getStringAttr("SPVE"),
         builder.getBufferAttr(executableBuilder.getContext()));
+    binaryOp.mime_typeAttr(
+        executableBuilder.getStringAttr("application/x-flatbuffers"));
 
     return success();
   }

@@ -41,6 +41,12 @@ iree_flatbuffer_c_library(
 )
 
 iree_flatbuffer_c_library(
+    name = "rocm_executable_def_c_fbs",
+    srcs = ["rocm_executable_def.fbs"],
+    flatcc_args = FLATCC_ARGS,
+)
+
+iree_flatbuffer_c_library(
     name = "dylib_executable_def_c_fbs",
     srcs = ["dylib_executable_def.fbs"],
     flatcc_args = FLATCC_ARGS,
@@ -58,12 +64,6 @@ iree_flatbuffer_c_library(
     flatcc_args = FLATCC_ARGS,
 )
 
-iree_flatbuffer_c_library(
-    name = "vmla_executable_def_c_fbs",
-    srcs = ["vmla_executable_def.fbs"],
-    flatcc_args = FLATCC_ARGS,
-)
-
 iree_build_test(
     name = "schema_build_test",
     targets = [
@@ -71,6 +71,5 @@ iree_build_test(
         ":dylib_executable_def_c_fbs",
         ":metal_executable_def_c_fbs",
         ":spirv_executable_def_c_fbs",
-        ":vmla_executable_def_c_fbs",
     ],
 )

@@ -27,13 +27,8 @@ iree_e2e_cartesian_product_test_suite(
     "tf"
     "non_streaming"
     "svdf;svdf_resnet;ds_cnn;gru;lstm;cnn_stride;cnn;tc_resnet;crnn;dnn;att_rnn;att_mh_rnn;mobilenet;mobilenet_v2;xception;inception;inception_resnet;ds_tc_resnet"
-    "tf;tflite;iree_vmla;iree_llvmaot;iree_vulkan"
+    "tf;tflite;iree_llvmaot;iree_vulkan"
   FAILING_CONFIGURATIONS
-    ",,,att_mh_rnn,iree_vmla"
-    ",,,att_rnn,iree_vmla"
-    ",,,crnn,iree_vmla"
-    ",,,gru,iree_vmla"
-    ",,,lstm,iree_vmla"
     ",,,att_mh_rnn,iree_vulkan"
     ",,,att_rnn,iree_vulkan"
     ",,,gru,iree_vulkan"
@@ -62,7 +57,7 @@ iree_e2e_cartesian_product_test_suite(
     "tf"
     "internal_streaming"
     "svdf;svdf_resnet;ds_cnn;gru;lstm;cnn_stride;cnn;tc_resnet;crnn;dnn;att_rnn;att_mh_rnn;mobilenet;mobilenet_v2;xception;inception;inception_resnet;ds_tc_resnet"
-    "tf;tflite;iree_vmla;iree_llvmaot;iree_vulkan"
+    "tf;tflite;iree_llvmaot;iree_vulkan"
   FAILING_CONFIGURATIONS
     ",,,,tflite"
     ",,,att_mh_rnn,"
@@ -75,6 +70,7 @@ iree_e2e_cartesian_product_test_suite(
     ",,,svdf_resnet,"
     ",,,tc_resnet,"
     ",,,xception,"
+    ",,,crnn,iree_vulkan"
   LABELS
     "nokokoro"
 )
@@ -93,11 +89,10 @@ iree_e2e_cartesian_product_test_suite(
     "tf"
     "external_streaming"
     "svdf;svdf_resnet;ds_cnn;gru;lstm;cnn_stride;cnn;tc_resnet;crnn;dnn;att_rnn;att_mh_rnn;mobilenet;mobilenet_v2;xception;inception;inception_resnet;ds_tc_resnet"
-    "tf;tflite;iree_vmla;iree_llvmaot;iree_vulkan"
+    "tf;tflite;iree_llvmaot;iree_vulkan"
   FAILING_CONFIGURATIONS
     ",,,,tf"
     ",,,,tflite"
-    ",,,,iree_vmla"
     ",,,,iree_llvmaot"
     ",,,,iree_vulkan"
     ",,,att_mh_rnn,"

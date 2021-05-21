@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("//build_tools/bazel:tblgen.bzl", "gentbl_cc_library")
 load("//iree:build_defs.oss.bzl", "iree_cmake_extra_content")
 
 package(
@@ -20,46 +21,55 @@ package(
     licenses = ["notice"],  # Apache 2.0
 )
 
+gentbl_cc_library(
+    name = "Passes_inc_gen",
+    tbl_outs = [
+        (
+            ["-gen-pass-decls"],
+            "Passes.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Passes.td",
+    td_srcs = [
+        "@llvm-project//mlir:PassBaseTdFiles",
+    ],
+)
+
 cc_library(
     name = "Transforms",
     srcs = [
         "ConvertToFlowTensorOps.cpp",
         "DeduplicateExecutables.cpp",
         "DestructiveUpdateUtils.cpp",
-        "DispatchConfig.cpp",
         "DispatchLinalgOnTensors.cpp",
-        "DispatchabilityAnalysis.cpp",
         "ExpandVariableDynamicDims.cpp",
         "ExportBenchmarkFuncs.cpp",
-        "FoldCompatibleDispatchRegions.cpp",
         "FormStreams.cpp",
         "HLOToHLOPreprocessing.cpp",
         "HoistUnstreamableOps.cpp",
-        "IdentifyDispatchRegions2.cpp",
         "InjectDispatchTracing.cpp",
         "LegalizeInputTypes.cpp",
         "OutlineDispatchRegions.cpp",
-        "OutlineDispatchRegions2.cpp",
         "OutlineLargeConstants.cpp",
+        "PassDetail.h",
         "Passes.cpp",
         "PrePostPartitioningConversion.cpp",
         "StripAndSplatConstantVariables.cpp",
     ],
     hdrs = [
         "DestructiveUpdateUtils.h",
-        "DispatchConfig.h",
         "Passes.h",
+        "Passes.h.inc",
     ],
     deps = [
-        "//iree/compiler/Conversion/HLOToHLO",
-        "//iree/compiler/Conversion/HLOToLinalg",
+        ":Passes_inc_gen",
         "//iree/compiler/Conversion/HLOToLinalg:HLOToLinalgOnTensors",
-        "//iree/compiler/Dialect/Flow/Analysis",
+        "//iree/compiler/Conversion/LinalgToLinalg",
         "//iree/compiler/Dialect/Flow/Conversion",
         "//iree/compiler/Dialect/Flow/Conversion/HLOToFlow",
         "//iree/compiler/Dialect/Flow/Conversion/StandardToFlow",
         "//iree/compiler/Dialect/Flow/IR",
-        "//iree/compiler/Dialect/Flow/Utils",
         "//iree/compiler/Dialect/HAL/IR",
         "//iree/compiler/Dialect/IREE/IR",
         "//iree/compiler/Dialect/Shape/Conversion",

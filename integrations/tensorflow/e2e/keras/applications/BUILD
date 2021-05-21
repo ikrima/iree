@@ -34,13 +34,13 @@ DOC = """
 applications_test_manual is for manual testing of all keras vision models.
 Test will run only manually with all parameters specified manually, for example:
 bazel run -c opt integrations/tensorflow/e2e/keras/applications:applications_test_manual -- \
---target_backends=tf,iree_vmla \
+--target_backends=tf,iree_llvmaot \
 --data=imagenet \
 --url=https://storage.googleapis.com/iree_models/ \
 --model=ResNet50
 
 Command arguments description:
---target_backends: can be combination of these: tf,iree_vmla
+--target_backends: can be combination of these: tf,iree_llvmaot
 --data: can be 'imagenet' or 'cifar10'.
     imagenet - input image size (1, 224, 224, 3)
     cifar10 - input image size (1, 32, 32, 3) - it is used for quick tests
@@ -102,11 +102,19 @@ KERAS_APPLICATIONS_MODELS = [
     "ResNet50V2",
     "VGG16",
     "VGG19",
+    "Xception",
 ]
 
 iree_e2e_cartesian_product_test_suite(
     name = "large_cifar10_tests",
     size = "large",
+    failing_configurations = [
+        # Frequently OOMs
+        {
+            "target_backends": "tflite",
+            "model": "VGG19",
+        },
+    ],
     matrix = {
         "src": "applications_test.py",
         "reference_backend": "tf",
@@ -122,7 +130,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -141,30 +148,6 @@ iree_e2e_cartesian_product_test_suite(
 iree_e2e_cartesian_product_test_suite(
     name = "enormous_cifar10_tests",
     size = "enormous",
-    failing_configurations = [
-        {
-            # Failing on vmla with negative inputs.
-            "model": [
-                "NASNetLarge",
-                "NASNetMobile",
-            ],
-            "target_backends": "iree_vmla",
-        },
-        {
-            # Failing on llvm and vulkan:
-            "model": [
-                "NASNetLarge",
-                "NASNetMobile",
-                "ResNet50V2",
-                "ResNet101V2",
-                "ResNet152V2",
-            ],
-            "target_backends": [
-                "iree_llvmaot",
-                "iree_vulkan",
-            ],
-        },
-    ],
     matrix = {
         "src": "applications_test.py",
         "reference_backend": "tf",
@@ -184,7 +167,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -223,7 +205,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -251,37 +232,18 @@ iree_e2e_cartesian_product_test_suite(
     name = "imagenet_non_hermetic_tests",
     size = "enormous",
     failing_configurations = [
+        # TODO(b/186579218): Fix linalg-on-tensors failures in these.
         {
-            # Failing on vmla with negative inputs.
-            "model": [
-                "NASNetLarge",
-                "NASNetMobile",
-            ],
-            "target_backends": "iree_vmla",
-        },
-        {
-            # Failing vulkan:
-            "model": [
-                "InceptionResNetV2",
-                "InceptionV3",
-            ],
-            "target_backends": [
-                "iree_vulkan",
-            ],
-        },
-        {
-            # Failing llvm and vulkan:
-            "model": [
-                "NASNetLarge",
-                "NASNetMobile",
-                "ResNet50V2",
-                "ResNet101V2",
-                "ResNet152V2",
-                "Xception",
-            ],
             "target_backends": [
                 "iree_llvmaot",
                 "iree_vulkan",
+            ],
+            "model": [
+                "InceptionResNetV2",
+                "InceptionV3",
+                "NASNetLarge",
+                "NASNetMobile",
+                "ResNet152V2",
             ],
         },
     ],
@@ -294,7 +256,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],

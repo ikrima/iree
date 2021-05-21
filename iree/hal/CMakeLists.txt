@@ -12,7 +12,7 @@ iree_add_all_subdirs()
 
 iree_cc_library(
   NAME
-    api
+    hal
   HDRS
     "api.h"
   SRCS
@@ -22,8 +22,8 @@ iree_cc_library(
     "buffer.c"
     "buffer.h"
     "buffer_heap.c"
+    "buffer_heap_impl.h"
     "buffer_view.c"
-    "buffer_view.cc"
     "buffer_view.h"
     "command_buffer.c"
     "command_buffer.h"
@@ -50,18 +50,13 @@ iree_cc_library(
     "resource.h"
     "semaphore.c"
     "semaphore.h"
-    "string_util.cc"
+    "string_util.c"
     "string_util.h"
   DEPS
-    absl::inlined_vector
-    absl::span
-    absl::strings
-    half::includes
-    iree::base::api
+    iree::base
     iree::base::core_headers
     iree::base::internal
-    iree::base::synchronization
-    iree::base::threading
+    iree::base::internal::synchronization
     iree::base::tracing
   PUBLIC
 )
@@ -72,8 +67,8 @@ iree_cc_test(
   SRCS
     "string_util_test.cc"
   DEPS
-    ::api
-    absl::inlined_vector
+    ::hal
+    absl::span
     absl::strings
     iree::base::core_headers
     iree::base::status

@@ -12,18 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <cstdint>
-
-#include "iree/compiler/Conversion/Common/LaunchConfig.h"
-#include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/Operation.h"
-#include "mlir/IR/Value.h"
+#include "iree/compiler/Dialect/HAL/IR/LoweringConfig.h"
+#include "mlir/IR/BuiltinOps.h"
 
 namespace mlir {
 namespace iree_compiler {
 
-enum class TilingLevel {
+enum class TilingLevel : unsigned {
   // Tile linalg operations to workgroup threads.
   WorkGroupTiles = 0,
   // Tile linalg operation on workgroup thread into L1 block tiles.
@@ -33,15 +28,8 @@ enum class TilingLevel {
   NumTileLevels = 3
 };
 
-struct TileSizeFn {
-  template <TilingLevel tilingLevel>
-  static llvm::SmallVector<Value, 4> get(OpBuilder &builder,
-                                         Operation *operation);
-};
-
-Optional<LaunchConfig> initCPULaunchConfig(
-    MLIRContext *context, const linalg::LinalgDependenceGraph &dependenceGraph,
-    ArrayRef<linalg::LinalgOp> linalgOps);
+FailureOr<IREE::HAL::DispatchLoweringPassPipeline> initCPULaunchConfig(
+    ModuleOp moduleOp);
 
 }  // namespace iree_compiler
 }  // namespace mlir

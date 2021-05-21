@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "iree/compiler/Dialect/Flow/Conversion/TypeConverter.h"
+#include "iree/compiler/Dialect/Flow/Transforms/PassDetail.h"
 #include "iree/compiler/Dialect/Flow/Transforms/Passes.h"
 #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
@@ -85,9 +86,9 @@ LogicalResult convertOperation(Operation *oldOp,
                                FlowTypeConverter &typeConverter,
                                BlockAndValueMapping &mapping,
                                OpBuilder &builder) {
-  if (llvm::isa<mlir::linalg::LinalgOp>(oldOp)) {
-    // Currently assumes linalg ops have legal types.
-    // TODO: rewrite to generic and back.
+  if (isa<linalg::LinalgDialect>(oldOp->getDialect())) {
+    // Currently we assume all Linalg ops only contain valid types.
+    // TODO: Support converting Linalg types when unsupported.
     builder.clone(*oldOp, mapping);
     return success();
   }
@@ -191,7 +192,7 @@ LogicalResult convertRegion(Region &oldRegion, Region &newRegion,
 }  // namespace
 
 class LegalizeInputTypesPass
-    : public PassWrapper<LegalizeInputTypesPass, OperationPass<ModuleOp>> {
+    : public LegalizeInputTypesBase<LegalizeInputTypesPass> {
  public:
   void runOnOperation() override {
     auto moduleOp = getOperation();
@@ -237,10 +238,6 @@ class LegalizeInputTypesPass
 std::unique_ptr<OperationPass<ModuleOp>> createLegalizeInputTypesPass() {
   return std::make_unique<LegalizeInputTypesPass>();
 }
-
-static PassRegistration<LegalizeInputTypesPass> pass(
-    "iree-flow-legalize-input-types",
-    "Legalizes input types to ones supported by the IREE flow dialect");
 
 }  // namespace Flow
 }  // namespace IREE

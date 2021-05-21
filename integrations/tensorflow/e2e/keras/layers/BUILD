@@ -134,9 +134,7 @@ FAILING_STATIC = [
         "layer": [
             "AveragePooling3D",
             "Conv3DTranspose",
-            "Conv3D",
             "ConvLSTM2D",
-            "LayerNormalization",
             "Softmax",
             "MaxPool3D",
             "ZeroPadding3D",
@@ -150,34 +148,22 @@ FAILING_STATIC = [
             "GRU",
             "LSTM",  # Failing unless 'return_sequences = True'
             "LayerNormalization",
-            "LeakyReLU",
             "LocallyConnected2D",  # TODO(#4065): VMLA raises INVALID_ARGUMENT errors after DeviceQueue failure.
             "MultiHeadAttention",
             "UpSampling2D",
         ],
         "target_backends": [
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
     },
     {
-        # Failing on VMLA
-        "layer": [
-            "Conv3DTranspose",
-            "Conv3D",
-        ],
-        "target_backends": "iree_vmla",
-    },
-    {
         # Failing on LLVM and Vulkan
         "layer": [
-            "Lambda",
-            "Masking",
-            "MaxPool1D",
-            "MaxPool2D",
-            "MaxPool3D",
             "AveragePooling3D",
+            "Masking",
+            "MaxPool3D",
+            "LocallyConnected1D",  # TODO(GH-5310): Enable the test.
         ],
         "target_backends": [
             "iree_llvmaot",
@@ -189,7 +175,11 @@ FAILING_STATIC = [
         "layer": [
             "AveragePooling1D",
             "AveragePooling2D",
-            "ThresholdedReLU",
+            "Lambda",
+            "MaxPool1D",
+            "MaxPool2D",
+            "Conv3D",  #TODO(GH-5150): Enable the test.
+            "Conv3DTranspose",  #TODO(GH-5150): Enable the test.
         ],
         "target_backends": "iree_vulkan",
     },
@@ -208,7 +198,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -265,7 +254,6 @@ FAILING_FULL_API = [
         # keep sorted
         "layer": [
             "AveragePooling3D",
-            "Conv2DTranspose",
             "Conv3D",
             "Conv3DTranspose",
             "ConvLSTM2D",
@@ -274,7 +262,6 @@ FAILING_FULL_API = [
             "LSTM",
             "LocallyConnected1D",
             "LocallyConnected2D",
-            "MaxPool1D",
             "MaxPool3D",
             "SeparableConv1D",  # Failing on Kokoro.
             "SeparableConv2D",
@@ -294,14 +281,9 @@ FAILING_FULL_API = [
             "SimpleRNN",
         ],
         "target_backends": [
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
-    },
-    {
-        "layer": "Conv3D",
-        "target_backends": "iree_vmla",
     },
     {
         # Failing on LLVM and Vulakn
@@ -311,12 +293,23 @@ FAILING_FULL_API = [
             "AveragePooling3D",
             "Conv1DTranspose",
             "Conv2DTranspose",
+            "Conv3D",  #TODO(GH-5150): Enable the test.
             "MaxPool1D",
             "MaxPool2D",
             "MaxPool3D",
         ],
         "target_backends": [
             "iree_llvmaot",
+            "iree_vulkan",
+        ],
+    },
+    {
+        # Failing on Vulakn
+        "layer": [
+            "MaxPool1D",
+            "MaxPool2D",
+        ],
+        "target_backends": [
             "iree_vulkan",
         ],
     },
@@ -336,7 +329,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -413,7 +405,6 @@ FAILING_DYNAMIC = [
             "MaxPool2D",
             "MaxPool3D",
             "MultiHeadAttention",
-            "PReLU",
             "RepeatVector",
             "Reshape",
             "SeparableConv1D",
@@ -428,7 +419,6 @@ FAILING_DYNAMIC = [
             "ZeroPadding3D",
         ],
         "target_backends": [
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -444,14 +434,11 @@ FAILING_DYNAMIC = [
             "GlobalAveragePooling1D",
             "GlobalAveragePooling2D",
             "GlobalAveragePooling3D",
-            "GlobalMaxPool1D",
-            "GlobalMaxPool2D",
-            "GlobalMaxPool3D",
             "Lambda",
             "Maximum",
             "Minimum",
             "Multiply",
-            "Permute",
+            "PReLU",
             "ReLU",
             "Softmax",
             "Subtract",
@@ -463,7 +450,13 @@ FAILING_DYNAMIC = [
     },
     {
         # Failing on Vulkan
-        "layer": "Embedding",
+        "layer": [
+            "Embedding",
+            "GlobalMaxPool1D",
+            "GlobalMaxPool2D",
+            "GlobalMaxPool3D",
+            "Permute",
+        ],
         "target_backends": "iree_vulkan",
     },
 ]
@@ -481,7 +474,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -551,7 +543,6 @@ FAILING_TRAINING = [
             "SpatialDropout3D",
         ],
         "target_backends": [
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],
@@ -571,7 +562,6 @@ iree_e2e_cartesian_product_test_suite(
         "target_backends": [
             "tf",
             "tflite",
-            "iree_vmla",
             "iree_llvmaot",
             "iree_vulkan",
         ],

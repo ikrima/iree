@@ -38,12 +38,6 @@ def configure_iree_submodule_deps(iree_repo_alias = "@", iree_path = "./"):
 
     maybe(
         native.local_repository,
-        name = "com_google_ruy",
-        path = paths.join(iree_path, "third_party/ruy"),
-    )
-
-    maybe(
-        native.local_repository,
         name = "com_google_googletest",
         path = paths.join(iree_path, "third_party/googletest"),
     )
@@ -105,20 +99,6 @@ def configure_iree_submodule_deps(iree_repo_alias = "@", iree_path = "./"):
 
     maybe(
         native.new_local_repository,
-        name = "pffft",
-        build_file = iree_repo_alias + "//:build_tools/third_party/pffft/BUILD.overlay",
-        path = paths.join(iree_path, "third_party/pffft"),
-    )
-
-    maybe(
-        native.new_local_repository,
-        name = "half",
-        build_file = iree_repo_alias + "//:build_tools/third_party/half/BUILD.overlay",
-        path = paths.join(iree_path, "third_party/half"),
-    )
-
-    maybe(
-        native.new_local_repository,
         name = "spirv_cross",
         build_file = iree_repo_alias + "//:build_tools/third_party/spirv_cross/BUILD.overlay",
         path = paths.join(iree_path, "third_party/spirv_cross"),
@@ -126,7 +106,7 @@ def configure_iree_submodule_deps(iree_repo_alias = "@", iree_path = "./"):
 
     maybe(
         native.new_local_repository,
-        name = "cuda_headers",
-        build_file = iree_repo_alias + "//:build_tools/third_party/cuda_headers/BUILD.overlay",
-        path = paths.join(iree_path, "third_party/cuda_headers"),
+        name = "cuda",
+        build_file = iree_repo_alias + "//:build_tools/third_party/cuda/BUILD.overlay",
+        path = paths.join(iree_path, "third_party/cuda"),
     )

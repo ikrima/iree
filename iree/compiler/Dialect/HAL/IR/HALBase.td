@@ -15,36 +15,7 @@
 #ifndef IREE_DIALECT_HAL_BASE
 #define IREE_DIALECT_HAL_BASE
 
-include "iree/compiler/Dialect/IREE/IR/IREEBase.td"
-
-//===----------------------------------------------------------------------===//
-// IREE HAL (Hardware Abstraction Layer) dialect
-//===----------------------------------------------------------------------===//
-
-def HAL_Dialect : Dialect {
-  let name = "hal";
-  let cppNamespace = "::mlir::iree_compiler::IREE::HAL";
-
-  let summary = [{
-    A dialect representing operations against the IREE HAL.
-  }];
-  let description = [{
-    This can be thought of as a Vulkan-like model with all of the graphics bits
-    chopped out.
-
-    The type set is limited to those that can be represented in the IREE HAL
-    design: buffers and views, synchronization primitives like semaphores, and
-    and command buffers. The intent is that if a device could implement the HAL
-    interface the sequencer ops could run on that device, such as being able to
-    run on a GPU via indirect command buffers.
-
-    Though this is mostly a 1:1 mapping to the iree::hal API there are some
-    methods omitted as they are not likely to be needed in IR. It's assumed that
-    either sequencer interfaces will encapsulate the logic (such as device
-    resolution) or that certain features are unsafe to expose to user-defined
-    input.
-  }];
-}
+include "iree/compiler/Dialect/HAL/IR/HALDialect.td"
 
 //===----------------------------------------------------------------------===//
 // HAL enums
@@ -77,7 +48,7 @@ def HAL_MemoryTypeBitfieldAttr :
       HAL_MemoryType_HostCached,
       HAL_MemoryType_HostLocal,
       HAL_MemoryType_DeviceVisible,
-      HAL_MemoryType_DeviceLocal
+      HAL_MemoryType_DeviceLocal,
     ]> {
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
@@ -97,7 +68,7 @@ def HAL_MemoryAccessBitfieldAttr :
       HAL_MemoryAccess_Discard,
       HAL_MemoryAccess_DiscardWrite,
       HAL_MemoryAccess_MayAlias,
-      HAL_MemoryAccess_All
+      HAL_MemoryAccess_All,
     ]> {
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
@@ -115,17 +86,19 @@ def HAL_BufferUsageBitfieldAttr :
       HAL_BufferUsage_Transfer,
       HAL_BufferUsage_Mapping,
       HAL_BufferUsage_Dispatch,
-      HAL_BufferUsage_All
+      HAL_BufferUsage_All,
     ]> {
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
 
 def HAL_CommandBufferMode_None : BitEnumAttrCase<"None", 0x0000>;
 def HAL_CommandBufferMode_OneShot : BitEnumAttrCase<"OneShot", 0x0001>;
+def HAL_CommandBufferMode_AllowInlineExecution : BitEnumAttrCase<"AllowInlineExecution", 0x0010>;
 def HAL_CommandBufferModeBitfieldAttr :
     BitEnumAttr<"CommandBufferModeBitfield", "valid CommandBufferMode", [
       HAL_CommandBufferMode_None,
-      HAL_CommandBufferMode_OneShot
+      HAL_CommandBufferMode_OneShot,
+      HAL_CommandBufferMode_AllowInlineExecution,
     ]> {
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
@@ -137,7 +110,7 @@ def HAL_CommandCategoryBitfieldAttr :
     BitEnumAttr<"CommandCategoryBitfield", "valid CommandCategory", [
       HAL_CommandCategory_None,
       HAL_CommandCategory_Transfer,
-      HAL_CommandCategory_Dispatch
+      HAL_CommandCategory_Dispatch,
     ]> {
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
@@ -223,42 +196,6 @@ def HAL_AccessScopeBitfieldAttr :
     ]> {
   let cppNamespace = "mlir::iree_compiler::IREE::HAL";
 }
-
-// Values are FourCC codes.
-// See iree/hal/executable_format.h for more info. Keep these in sync with the
-// codes there.
-// https://ubershmekel.github.io/fourcc-to-text/ can be used to generate the
-// integer values for inclusion here.
-def HAL_EF_Unspecified : I32EnumAttrCase<"Unspecified", 538976288>;
-def HAL_EF_MlirText : I32EnumAttrCase<"MlirText", 1296845138>;
-def HAL_EF_IreeBytecode : I32EnumAttrCase<"IreeBytecode", 1230128453>;
-def HAL_EF_VMLA : I32EnumAttrCase<"VMLA", 1447906369>;
-def HAL_EF_SpirV : I32EnumAttrCase<"SpirV", 1397773893>;
-def HAL_EF_Metal : I32EnumAttrCase<"Metal", 1297370181>;
-def HAL_EF_LLVM : I32EnumAttrCase<"LLVM", 1280071245>;
-def HAL_EF_DyLib : I32EnumAttrCase<"DyLib", 1145850178>;
-def HAL_EF_CUDA : I32EnumAttrCase<"CUDA", 1129661505>;
-def HAL_EF_WASM : I32EnumAttrCase<"WASM", 1463898957>;
-def HAL_ExecutableFormatAttr :
-    I32EnumAttr<"ExecutableFormat", "IREE HAL Executable format", [
-      HAL_EF_Unspecified,
-      HAL_EF_MlirText,
-      HAL_EF_IreeBytecode,
-      HAL_EF_VMLA,
-      HAL_EF_SpirV,
-      HAL_EF_Metal,
-      HAL_EF_DyLib,
-      HAL_EF_CUDA,
-      HAL_EF_WASM,
-    ]> {
-  let returnType = "IREE::HAL::ExecutableFormat";
-  let convertFromStorage = "static_cast<IREE::HAL::ExecutableFormat>($_self.getInt())";
-  let cppNamespace = "::mlir::iree_compiler::IREE::HAL";
-}
-
-def HAL_ExecutableFormatArrayAttr : TypedArrayAttrBase<
-    HAL_ExecutableFormatAttr,
-    "HAL executable format array attribute">;
 
 //===----------------------------------------------------------------------===//
 // HAL types
@@ -449,6 +386,7 @@ def HAL_IndexArrayAttr : TypedArrayAttrBase<HAL_IndexAttr,
 def HAL_Dim : TypeAlias<Index>;
 def HAL_Dims : Variadic<HAL_Dim>;
 def HAL_Shape : Variadic<HAL_Dim>;
+def HAL_ShapeDynamicDims : Variadic<HAL_Dim>;
 
 // TODO(benvanik): assert rank 3
 def HAL_WorkgroupSizeAttr : TypedArrayAttrBase<
@@ -456,11 +394,6 @@ def HAL_WorkgroupSizeAttr : TypedArrayAttrBase<
     "index array attribute"> {
   let constBuilderCall = "$_builder.getIndexArrayAttr($0)";
 }
-
-def HAL_HostBuffer : AnyTypeOf<[
-  ByteBufferType,
-  MutableByteBufferType,
-]>;
 
 def HAL_CommandQueueAffinityAttr : SignlessIntElementsAttr<32> {
   // TODO(b/143184519): add typeDescription support to other things.
@@ -527,6 +460,46 @@ def HAL_DescriptorSetLayoutBindingAttr :
 def HAL_DescriptorSetLayoutBindingArrayAttr : TypedArrayAttrBase<
     HAL_DescriptorSetLayoutBindingAttr,
     "HAL descriptor set layout binding array attribute">;
+
+// TODO(benvanik): drop this when we have a HAL dispatch abstraction.
+def HAL_ExConstantStorageAttr :
+  IREE_StructAttr<"ex.constant_storage",
+                  "ExConstantStorageAttr",
+                  HAL_Dialect, [
+    IREE_StructFieldAttr<"binding", StrAttr>,
+    IREE_StructFieldAttr<"storage", StrAttr>,
+    IREE_StructFieldAttr<"offset", IndexAttr>,
+    IREE_StructFieldAttr<"length", IndexAttr>,
+  ]> {
+  let cppNamespace = "mlir::iree_compiler::IREE::HAL";
+}
+def HAL_ExPushConstantAttr :
+  IREE_StructAttr<"ex.push_constant",
+                  "ExPushConstantAttr",
+                  HAL_Dialect, [
+    IREE_StructFieldAttr<"ordinal", IndexAttr>,
+    IREE_StructFieldAttr<"operand", IndexAttr>,
+  ]> {
+  let cppNamespace = "mlir::iree_compiler::IREE::HAL";
+}
+def HAL_ExOperandBufferAttr :
+  IREE_StructAttr<"ex.operand_buffer",
+                  "ExOperandBufferAttr",
+                  HAL_Dialect, [
+    IREE_StructFieldAttr<"binding", StrAttr>,
+    IREE_StructFieldAttr<"operand", IndexAttr>,
+  ]> {
+  let cppNamespace = "mlir::iree_compiler::IREE::HAL";
+}
+def HAL_ExResultBufferAttr :
+  IREE_StructAttr<"ex.result_buffer",
+                  "ExResultBufferAttr",
+                  HAL_Dialect, [
+    IREE_StructFieldAttr<"binding", StrAttr>,
+    IREE_StructFieldAttr<"result", IndexAttr>,
+  ]> {
+  let cppNamespace = "mlir::iree_compiler::IREE::HAL";
+}
 
 //===----------------------------------------------------------------------===//
 // Expression matching attributes

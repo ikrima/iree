@@ -16,47 +16,17 @@
 #define IREE_VM_BUILTIN_TYPES_H_
 
 #include "iree/base/api.h"
-#include "iree/vm/ref.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif  // __cplusplus
 
-// The built-in constant buffer type.
-// This simply points at a span of memory. The memory could be owned (in which
-// case a destroy function must be provided) or unowned (NULL destroy function).
-typedef struct {
-  iree_vm_ref_object_t ref_object;
-  iree_const_byte_span_t data;
-  iree_vm_ref_destroy_t destroy;
-} iree_vm_ro_byte_buffer_t;
-
-// Returns the a string view referencing the given |value| buffer.
-static inline iree_string_view_t iree_vm_ro_byte_buffer_as_string(
-    const iree_vm_ro_byte_buffer_t* value) {
-  return value ? iree_make_string_view((const char*)value->data.data,
-                                       value->data.data_length)
-               : iree_string_view_empty();
-}
-
-// The built-in mutable buffer type.
-// This simply points at a span of memory. The memory could be owned (in which
-// case a destroy function must be provided) or unowned (NULL destroy function).
-typedef struct {
-  iree_vm_ref_object_t ref_object;
-  iree_byte_span_t data;
-  iree_vm_ref_destroy_t destroy;
-} iree_vm_rw_byte_buffer_t;
-
 // Registers the builtin VM types. This must be called on startup. Safe to call
 // multiple times.
-IREE_API_EXPORT iree_status_t IREE_API_CALL iree_vm_register_builtin_types();
+IREE_API_EXPORT iree_status_t iree_vm_register_builtin_types(void);
 
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
-
-IREE_VM_DECLARE_TYPE_ADAPTERS(iree_vm_ro_byte_buffer, iree_vm_ro_byte_buffer_t);
-IREE_VM_DECLARE_TYPE_ADAPTERS(iree_vm_rw_byte_buffer, iree_vm_rw_byte_buffer_t);
 
 #endif  // IREE_VM_BUILTIN_TYPES_H_

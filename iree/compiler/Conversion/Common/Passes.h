@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -45,17 +46,35 @@ void addLinalgBufferizePasses(
 std::unique_ptr<OperationPass<FuncOp>> createLinalgBufferizePass(
     WorkgroupMemoryAllocationFn allocationFn = nullptr);
 
-/// Pass to rewrite Linalg on tensors destructive updates into updates through
-/// memory.
-std::unique_ptr<OperationPass<FuncOp>>
-createLinalgRewriteDestructiveUpdatesPass();
-
 /// Pass to optimize vector transfer_read and transfer_write.
 std::unique_ptr<FunctionPass> createVectorTransferOptimizationPass();
 
-// Pass to perform canonicalizations/cleanups related to HAL interface/buffer
-// allocations and view operations.
+/// An ad-hoc pass to canonicalize selected loop carried dependencies on
+/// scf.for.
+std::unique_ptr<FunctionPass> createForOpCanonicalizationPass();
+
+/// Pass to perform canonicalizations/cleanups related to HAL interface/buffer
+/// allocations and view operations.
 std::unique_ptr<FunctionPass> createBufferAllocViewCleanUpPass();
+
+/// Flattens n-D MemRef subspan ops to 1-D MemRef and folds the byte offsets on
+/// subspan ops to the consumer load/store ops, in preparation for lowering to
+/// backends that require linearized access.
+std::unique_ptr<OperationPass<ModuleOp>> createFlattenMemRefSubspanPass();
+
+/// Create a pass to convert a model using f32 type to the equivalent one
+/// using 16.
+std::unique_ptr<OperationPass<ModuleOp>> createDemoteF32ToF16Pass();
+
+/// Sets the number of workgroups to use for each entry point in the dispatch
+/// region.
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
+createSetNumWorkgroupsPass(ArrayRef<int64_t> workgroupSize = {});
+
+/// After running the upstream TensorConstantBufferize pass, remove tensor_loads
+/// introduced for use only in tensor_extract. These can be folded to use a load
+/// of the created memref object that holds the constant values.
+std::unique_ptr<OperationPass<>> createFoldTensorExtractOpPass();
 
 }  // namespace iree_compiler
 }  // namespace mlir

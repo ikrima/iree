@@ -20,11 +20,17 @@ if(POLICY CMP0092)
 endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-project(iree CXX C)
+project(iree ASM C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 14)
 set(IREE_IDE_FOLDER IREE)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+if(${MSVC})
+  enable_language(ASM_MASM)
+else()
+  enable_language(ASM)
+endif()
 
 #-------------------------------------------------------------------------------
 # Project component configuration
@@ -38,7 +44,9 @@ option(IREE_BUILD_COMPILER "Builds the IREE compiler." ON)
 option(IREE_BUILD_TESTS "Builds IREE unit tests." ON)
 option(IREE_BUILD_DOCS "Builds IREE docs." OFF)
 option(IREE_BUILD_SAMPLES "Builds IREE sample projects." ON)
+option(IREE_BUILD_EMBEDDING_SAMPLES "Builds IREE embedding sample projects. The compiler needs to be available." OFF)
 
+option(IREE_BUILD_TENSORFLOW_ALL "Builds all TensorFlow compiler frontends." OFF)
 option(IREE_BUILD_TENSORFLOW_COMPILER "Builds TensorFlow compiler frontend." OFF)
 option(IREE_BUILD_TFLITE_COMPILER "Builds the TFLite compiler frontend." OFF)
 option(IREE_BUILD_XLA_COMPILER "Builds TensorFlow XLA compiler frontend." OFF)
@@ -57,13 +65,15 @@ set(IREE_RELEASE_REVISION "HEAD" CACHE STRING "Version control revision informat
 # Note that this is a normal CMake variable used to gate build features (not
 # a cache variable that is user-settable).
 set(IREE_ENABLE_TENSORFLOW OFF)
-if(${IREE_BUILD_TENSORFLOW_COMPILER} OR
+if(${IREE_BUILD_TENSORFLOW_ALL} OR
+   ${IREE_BUILD_TENSORFLOW_COMPILER} OR
    ${IREE_BUILD_TFLITE_COMPILER} OR
    ${IREE_BUILD_XLA_COMPILER})
   set(IREE_ENABLE_TENSORFLOW ON)
 endif()
 
 option(IREE_BUILD_BINDINGS_TFLITE "Builds the IREE TFLite C API compatibility shim" ON)
+option(IREE_BUILD_BINDINGS_TFLITE_JAVA "Builds the IREE TFLite Java bindings with the C API compatibility shim" ON)
 
 # Default python bindings to enabled for some features.
 if(${IREE_ENABLE_TENSORFLOW})
@@ -76,15 +86,15 @@ endif()
 # Experimental project flags
 #-------------------------------------------------------------------------------
 
-option(IREE_BUILD_EXPERIMENTAL_MODEL_BUILDER "Builds experimental Model-Builder sub-project." OFF)
 option(IREE_BUILD_EXPERIMENTAL_REMOTING "Builds experimental remoting support." OFF)
 option(IREE_BUILD_EXPERIMENTAL_JAVA_BINDINGS "Builds the experimental java bindings." OFF)
+option(IREE_BUILD_EXPERIMENTAL_ROCM "Builds the experimental ROCM Backend." OFF)
 
 #-------------------------------------------------------------------------------
 # Derived flags based on primary options
 #-------------------------------------------------------------------------------
 
-if(${IREE_BUILD_SAMPLES} OR ${IREE_BUILD_EXPERIMENTAL_MODEL_BUILDER})
+if(${IREE_BUILD_SAMPLES})
   set(IREE_BUILD_COMPILER ON CACHE BOOL "Build the IREE compiler for sample projects." FORCE)
 endif()
 
@@ -115,7 +125,7 @@ endif()
 set(IREE_ALL_HAL_DRIVERS
   Cuda
   DyLib
-  VMLA
+  VMVX
   Vulkan
 )
 
@@ -152,12 +162,13 @@ set(IREE_ALL_TARGET_BACKENDS
   DYLIB-LLVM-AOT
   WASM-LLVM-AOT
   Metal-SPIRV
+  ROCM
   Vulkan-SPIRV
-  VMLA
+  VMVX
 )
 
-if( IREE_TARGET_BACKENDS_TO_BUILD STREQUAL "all" )
-  set( IREE_TARGET_BACKENDS_TO_BUILD ${IREE_ALL_TARGET_BACKENDS} )
+if(IREE_TARGET_BACKENDS_TO_BUILD STREQUAL "all")
+  set(IREE_TARGET_BACKENDS_TO_BUILD ${IREE_ALL_TARGET_BACKENDS})
 endif()
 message(STATUS "Building target backends: ${IREE_TARGET_BACKENDS_TO_BUILD}")
 
@@ -211,7 +222,7 @@ include(iree_cc_library)
 include(iree_cc_test)
 include(iree_tablegen_library)
 include(iree_tablegen_doc)
-include(iree_cc_embed_data)
+include(iree_c_embed_data)
 include(iree_bytecode_module)
 include(iree_c_module)
 include(iree_python)
@@ -290,11 +301,6 @@ endfunction()
 function(add_iree_mlir_src_dep llvm_monorepo_path)
   # Stash cmake build type in case LLVM messes with it.
   set(_CMAKE_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
-
-  # experimental model builder uses vulkan runner.
-  if(${IREE_BUILD_EXPERIMENTAL_MODEL_BUILDER})
-    set(MLIR_VULKAN_RUNNER_ENABLED ON)
-  endif()
 
   add_subdirectory("${llvm_monorepo_path}/llvm" "third_party/llvm-project/llvm" EXCLUDE_FROM_ALL)
 
@@ -379,21 +385,17 @@ include(external_cc_library)
 include(flatbuffer_c_library)
 
 add_subdirectory(third_party/benchmark EXCLUDE_FROM_ALL)
-add_subdirectory(build_tools/third_party/cuda_headers EXCLUDE_FROM_ALL)
+add_subdirectory(build_tools/third_party/cuda EXCLUDE_FROM_ALL)
 add_subdirectory(build_tools/third_party/flatcc EXCLUDE_FROM_ALL)
-add_subdirectory(build_tools/third_party/half EXCLUDE_FROM_ALL)
-add_subdirectory(build_tools/third_party/pffft EXCLUDE_FROM_ALL)
 add_subdirectory(build_tools/third_party/renderdoc_api EXCLUDE_FROM_ALL)
 add_subdirectory(build_tools/third_party/vulkan_memory_allocator EXCLUDE_FROM_ALL)
-add_subdirectory(build_tools/third_party/wasm-micro-runtime EXCLUDE_FROM_ALL)
+add_subdirectory(build_tools/third_party/stblib EXCLUDE_FROM_ALL)
 
 add_subdirectory(third_party/cpuinfo EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/googletest EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/abseil-cpp EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/flatcc EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/vulkan_headers EXCLUDE_FROM_ALL)
-# ruy must come after cpuinfo so it uses already-defined targets.
-add_subdirectory(third_party/ruy EXCLUDE_FROM_ALL)
 
 # TODO(scotttodd): Iterate some more and find a better place for this.
 if (NOT CMAKE_CROSSCOMPILING)
@@ -439,11 +441,21 @@ add_subdirectory(build_tools/embed_data/)
 add_subdirectory(iree/base)
 add_subdirectory(iree/hal)
 add_subdirectory(iree/modules)
+add_subdirectory(iree/runtime)
 add_subdirectory(iree/schemas)
 add_subdirectory(iree/task)
 add_subdirectory(iree/testing)
 add_subdirectory(iree/test)
 add_subdirectory(iree/vm)
+if(${IREE_BUILD_EXPERIMENTAL_ROCM})
+  add_subdirectory(build_tools/third_party/rocm EXCLUDE_FROM_ALL)
+  add_subdirectory(experimental/rocm)
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_BINARY_DIR}/iree/lib/cmake/lld")
+  list(APPEND LLD_INCLUDE_DIRS
+      ${CMAKE_CURRENT_SOURCE_DIR}/iree/third_party/llvm-project/lld/include
+      ${CMAKE_CURRENT_BINARY_DIR}/iree/third_party/llvm-project/llvm/tools/lld/include
+  )
+endif()
 
 if(${IREE_BUILD_COMPILER})
   add_subdirectory(iree/compiler)
@@ -465,8 +477,8 @@ if(${IREE_BUILD_SAMPLES})
   add_subdirectory(iree/samples)
 endif()
 
-if(${IREE_BUILD_EXPERIMENTAL_MODEL_BUILDER})
-  add_subdirectory(experimental/ModelBuilder)
+if(${IREE_BUILD_EMBEDDING_SAMPLES} AND NOT ${IREE_BUILD_SAMPLES})
+  add_subdirectory(iree/samples/simple_embedding)
 endif()
 
 if(${IREE_BUILD_EXPERIMENTAL_REMOTING})

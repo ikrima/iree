@@ -22,7 +22,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "iree/compiler/Conversion/CodegenUtils/MarkerUtils.h"
-#include "iree/compiler/Conversion/LinalgToSPIRV/CooperativeMatrixAnalysis.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "iree/compiler/Dialect/IREE/IR/IREEOps.h"
 #include "llvm/ADT/DenseMapInfo.h"
@@ -32,6 +31,7 @@
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRV.h"
 #include "mlir/Conversion/SCFToSPIRV/SCFToSPIRV.h"
 #include "mlir/Conversion/StandardToSPIRV/StandardToSPIRV.h"
+#include "mlir/Conversion/TosaToStandard/TosaToStandard.h"
 #include "mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h"
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -52,82 +52,8 @@ namespace mlir {
 namespace iree_compiler {
 namespace {
 //===----------------------------------------------------------------------===//
-// Resource and push constant variable utilities
+// Resource utilities
 //===----------------------------------------------------------------------===//
-// TODO(antiagainst): move these utilities to MLIR core.
-
-/// Returns the pointer type for the push constant storage containing
-/// `elementCount` 32-bit integer values.
-spirv::PointerType getPushConstantStorageType(unsigned elementCount,
-                                              Builder &builder) {
-  auto arrayType = spirv::ArrayType::get(
-      SPIRVTypeConverter::getIndexType(builder.getContext()), elementCount,
-      /*stride=*/4);
-  auto structType = spirv::StructType::get({arrayType}, /*offsetInfo=*/0);
-  return spirv::PointerType::get(structType, spirv::StorageClass::PushConstant);
-}
-
-/// Returns the push constant varible containing `elementCount` 32-bit integer
-/// values in `body`. Returns null op if such an op does not exit.
-spirv::GlobalVariableOp getPushConstantVariable(Block &body,
-                                                unsigned elementCount) {
-  for (auto varOp : body.getOps<spirv::GlobalVariableOp>()) {
-    auto ptrType = varOp.type().cast<spirv::PointerType>();
-    // Note that Vulkan requires "There must be no more than one push constant
-    // block statically used per shader entry point." So we should always reuse
-    // the existing one.
-    if (ptrType.getStorageClass() == spirv::StorageClass::PushConstant) {
-      auto numElements = ptrType.getPointeeType()
-                             .cast<spirv::StructType>()
-                             .getElementType(0)
-                             .cast<spirv::ArrayType>()
-                             .getNumElements();
-      if (numElements == elementCount) return varOp;
-    }
-  }
-  return nullptr;
-}
-
-/// Gets or inserts a global variable for push constant storage containing
-/// `elementCount` 32-bit integer values in `block`.
-spirv::GlobalVariableOp getOrInsertPushConstantVariable(Location loc,
-                                                        Block &block,
-                                                        unsigned elementCount,
-                                                        OpBuilder &b) {
-  if (auto varOp = getPushConstantVariable(block, elementCount)) return varOp;
-
-  auto builder = OpBuilder::atBlockBegin(&block, b.getListener());
-  auto type = getPushConstantStorageType(elementCount, builder);
-  StringRef name = "__push_constant_var__";
-  return builder.create<spirv::GlobalVariableOp>(loc, type, name,
-                                                 /*initializer=*/nullptr);
-}
-
-/// Gets the value at the given `offset` of the push constant storage. A global
-/// variable will be created for the push constant storage if not existing. Load
-/// ops will be created via the given `builder` to load values from the push
-/// constant.
-Value getPushConstantValue(Operation *op, unsigned elementCount,
-                           unsigned offset, OpBuilder &builder) {
-  Location loc = op->getLoc();
-  Operation *parent = SymbolTable::getNearestSymbolTable(op->getParentOp());
-  if (!parent) {
-    op->emitError("expected operation to be within a module-like op");
-    return nullptr;
-  }
-
-  spirv::GlobalVariableOp varOp = getOrInsertPushConstantVariable(
-      loc, parent->getRegion(0).front(), elementCount, builder);
-
-  auto i32Type = SPIRVTypeConverter::getIndexType(builder.getContext());
-  Value zeroOp = spirv::ConstantOp::getZero(i32Type, loc, builder);
-  Value offsetOp = builder.create<spirv::ConstantOp>(
-      loc, i32Type, builder.getI32IntegerAttr(offset));
-  auto addrOp = builder.create<spirv::AddressOfOp>(loc, varOp);
-  auto acOp = builder.create<spirv::AccessChainOp>(
-      loc, addrOp, llvm::makeArrayRef({zeroOp, offsetOp}));
-  return builder.create<spirv::LoadOp>(loc, acOp);
-}
 
 /// Inserts a resource evariable of the given `type` into `block` and bind
 /// it to `set` and `binding`. `id` uniquely identifies the inserted variable.
@@ -145,11 +71,6 @@ spirv::GlobalVariableOp insertResourceVariable(Location loc, Type type,
 
 /// Returns the IREE::HAL::InterfaceBindingOp from an interface op.
 IREE::HAL::InterfaceBindingOp getBindingOp(Operation *op) {
-  if (auto placeholderOp = dyn_cast<IREE::PlaceholderOp>(op)) {
-    return cast<IREE::HAL::InterfaceBindingOp>(
-        SymbolTable::lookupNearestSymbolFrom(
-            op, op->getAttrOfType<SymbolRefAttr>("binding")));
-  }
   if (auto bindingSubspanOp =
           dyn_cast<IREE::HAL::InterfaceBindingSubspanOp>(op)) {
     return bindingSubspanOp.queryBindingOp();
@@ -157,8 +78,8 @@ IREE::HAL::InterfaceBindingOp getBindingOp(Operation *op) {
   llvm_unreachable("unknown interface binding op");
 }
 
-/// Returns the (set, binding) pair for the given placeholder op.
-std::pair<int32_t, int32_t> getPlaceholderSetAndBinding(Operation *op) {
+/// Returns the (set, binding) pair for the given interface op.
+std::pair<int32_t, int32_t> getInterfaceSetAndBinding(Operation *op) {
   IREE::HAL::InterfaceBindingOp bindingOp = getBindingOp(op);
   return {bindingOp.set().getSExtValue(), bindingOp.binding().getSExtValue()};
 }
@@ -168,15 +89,15 @@ llvm::DenseSet<Operation *> getAliasedResources(ModuleOp module) {
   llvm::DenseSet<Operation *> aliasedResources;
 
   for (FuncOp func : module.getOps<FuncOp>()) {
-    // Collect all placeholder ops and their (set, binding) pairs in this
+    // Collect all interface ops and their (set, binding) pairs in this
     // function.
-    SmallVector<Operation *, 4> placeholderOps;
+    SmallVector<Operation *, 4> interfaceOps;
     SmallVector<std::pair<uint32_t, uint32_t>, 4> setBindings;
     llvm::DenseMap<std::pair<uint32_t, uint32_t>, unsigned> setBindingCount;
     func.walk([&](Operation *op) {
-      if (isa<IREE::PlaceholderOp, IREE::HAL::InterfaceBindingSubspanOp>(op)) {
-        placeholderOps.emplace_back(op);
-        setBindings.emplace_back(getPlaceholderSetAndBinding(op));
+      if (isa<IREE::HAL::InterfaceBindingSubspanOp>(op)) {
+        interfaceOps.emplace_back(op);
+        setBindings.emplace_back(getInterfaceSetAndBinding(op));
         ++setBindingCount[setBindings.back()];
       }
     });
@@ -184,9 +105,9 @@ llvm::DenseSet<Operation *> getAliasedResources(ModuleOp module) {
     // Perform analysis to determine whether we need to mark the resource as
     // alias. This should happen when we have multiple resources binding to the
     // same (set, binding) pair and they are used in the same function.
-    for (unsigned i = 0; i < placeholderOps.size(); ++i) {
+    for (unsigned i = 0; i < interfaceOps.size(); ++i) {
       if (setBindingCount[setBindings[i]] > 1) {
-        aliasedResources.insert(placeholderOps[i]);
+        aliasedResources.insert(interfaceOps[i]);
       }
     }
   }
@@ -231,9 +152,9 @@ struct HALInterfaceWorkgroupIdAndCountConverter final
   }
 };
 
-/// A pattern to convert iree.placeholdder/hal.interface.binding.subspan into a
-/// sequence of SPIR-V ops to get the address to a global variable representing
-/// the resource buffer.
+/// A pattern to convert hal.interface.binding.subspan into a sequence of SPIR-V
+/// ops to get the address to a global variable representing the resource
+/// buffer.
 template <typename InterfaceOpTy>
 struct InterfaceOpConverter final : public OpConversionPattern<InterfaceOpTy> {
   InterfaceOpConverter(TypeConverter &typeConverter, MLIRContext *context,
@@ -255,8 +176,8 @@ struct InterfaceOpConverter final : public OpConversionPattern<InterfaceOpTy> {
     }
     auto bindingOp = getBindingOp(interfaceOp.getOperation());
 
-    // We always create a new resource variable for the placeholder and use the
-    // placeholder op's pointer address as the `id`.
+    // We always create a new resource variable for the interface and use the
+    // interface op's pointer address as the `id`.
     spirv::GlobalVariableOp varOp = insertResourceVariable(
         interfaceOp.getLoc(), convertedType,
         reinterpret_cast<uint64_t>(interfaceOp.getOperation()),
@@ -284,174 +205,22 @@ struct FoldAsNoOp final : public OpConversionPattern<OpTy> {
   }
 };
 
-/// Translates vector.transfer_read with less than 4 scalars into reading each
-/// scalar and then compose the vector.
-///
-/// This is a very specific pattern for handling corner cases and boundary
-/// cases. For example, in vision models we can have the initial image with
-/// three channels. We cannot perform the native load4 there; by performing
-/// scalar read we lose some benefits of load4 but we can still make sure the
-/// overall vectorization does not fail.
-struct ScalarizeVectorTransferRead final
-    : public OpConversionPattern<vector::TransferReadOp> {
+/// Removes unrealized_conversion_cast ops introduced during progressive
+/// lowering when possible.
+struct RemoveIdentityConversionCast final
+    : public OpConversionPattern<UnrealizedConversionCastOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
-      vector::TransferReadOp readOp, ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const override;
-};
-
-/// Base class for lowering to SPIR-V cooperative matrix ops.
-template <typename SourceOp>
-class CoopMatOpLowering : public OpConversionPattern<SourceOp> {
- public:
-  CoopMatOpLowering(MLIRContext *context, SPIRVTypeConverter &converter,
-                    // Dedicated extensions are typically faster; so give it a
-                    // higher benefit so it prevails by default.
-                    PatternBenefit benefit = 5)
-      : OpConversionPattern<SourceOp>(context, benefit), converter(converter) {}
-
- protected:
-  // TODO: We explicitly keep a reference of the type converter instead of
-  // passing it to OpConversionPattern during construction. This effectively
-  // bypasses the dialect conversion framework's automation over type
-  // conversion. This is needed for now because upstream SPIRVTypeConverter does
-  // not support cooperative matrix well yet so the framework won't know how to
-  // generate cooperative matrix. We are manually constructing the cooperative
-  // matrix in patterns. This should be fixed when we upstream all cooperative
-  // matrix related code.
-  SPIRVTypeConverter &converter;
-};
-
-/// Convert subgroup level vector transfert to SPIR-V cooperative
-/// matrix load/store if those are supported.
-/// TODO(thomasraoux): Move to MLIR core once this is stable.
-template <typename OpTy>
-class TransferToCoopMatLoadStore final : public CoopMatOpLowering<OpTy> {
- public:
-  TransferToCoopMatLoadStore(
-      MLIRContext *context, SPIRVTypeConverter &converter,
-      const CooperativeMatrixAnalysis &cooperativeMatrixAnalysis)
-      : CoopMatOpLowering<OpTy>(context, converter),
-        cooperativeMatrixAnalysis(cooperativeMatrixAnalysis) {}
-
-  LogicalResult matchAndRewrite(
-      OpTy op, ArrayRef<Value> operands,
+      UnrealizedConversionCastOp op, ArrayRef<Value> operands,
       ConversionPatternRewriter &rewriter) const override {
-    if (!cooperativeMatrixAnalysis.usesCooperativeMatrixType(op))
-      return failure();
-    auto loc = op.getLoc();
-    auto memrefType = op.getShapedType().template dyn_cast<MemRefType>();
-    if (!memrefType) return failure();
-    auto vecType = op.getVectorType();
-    if (vecType.getRank() != 2) return failure();
-    // TODO(thomasraoux): use coloumn major operand when TransfertRead +
-    // TransposeOp.
-    if (!op.permutation_map().isMinorIdentity()) return failure();
-    if (op.in_bounds() &&
-        llvm::any_of(op.in_bounds()->template cast<ArrayAttr>(),
-                     [](mlir::Attribute dimInBounds) {
-                       return !dimInBounds.cast<BoolAttr>().getValue();
-                     }))
-      return failure();
-    auto matType = spirv::CooperativeMatrixNVType::get(
-        vecType.getElementType(), spirv::Scope::Subgroup, vecType.getDimSize(0),
-        vecType.getDimSize(1));
-    SmallVector<Value, 4> remappedIndices;
-    for (auto i : op.indices())
-      remappedIndices.push_back(rewriter.getRemappedValue(i));
-    Value ptr = spirv::getElementPtr(
-        CoopMatOpLowering<OpTy>::converter, memrefType,
-        rewriter.getRemappedValue(op.source()), remappedIndices, loc, rewriter);
-    int64_t offset = 0;
-    SmallVector<int64_t, 2> strides;
-    (void)getStridesAndOffset(memrefType, strides, offset);
-    auto stride = strides[0];
-    if (BaseMemRefType::isDynamicStrideOrOffset(stride)) return failure();
-    auto int32Type = rewriter.getI32Type();
-    auto strideValue = rewriter.create<spirv::ConstantOp>(
-        loc, int32Type, IntegerAttr::get(int32Type, stride));
-    auto coloumnMajor = rewriter.create<spirv::ConstantOp>(
-        loc, rewriter.getI1Type(), rewriter.getBoolAttr(false));
-    replaceTransferOp(op, loc, matType, ptr, strideValue, coloumnMajor,
-                      rewriter);
-    return success();
+    if (op->getNumOperands() == 1 && op->getNumResults() == 1 &&
+        operands.front().getType() == op->getResultTypes().front()) {
+      rewriter.replaceOp(op, operands);
+      return success();
+    }
+
+    return failure();
   }
-
- private:
-  /// Helper to generate the right load/store instruction and replace the
-  /// transfer op.
-  void replaceTransferOp(OpTy op, Location loc, Type matType, Value ptr,
-                         Value strideValue, Value coloumnMajor,
-                         ConversionPatternRewriter &rewriter) const;
-  const CooperativeMatrixAnalysis &cooperativeMatrixAnalysis;
-};
-
-template <>
-void TransferToCoopMatLoadStore<vector::TransferReadOp>::replaceTransferOp(
-    vector::TransferReadOp op, Location loc, Type matType, Value ptr,
-    Value strideValue, Value coloumnMajor,
-    ConversionPatternRewriter &rewriter) const {
-  Value load = rewriter.create<spirv::CooperativeMatrixLoadNVOp>(
-      loc, matType, ptr, strideValue, coloumnMajor, spirv::MemoryAccessAttr());
-  rewriter.replaceOp(op, load);
-}
-
-template <>
-void TransferToCoopMatLoadStore<vector::TransferWriteOp>::replaceTransferOp(
-    vector::TransferWriteOp op, Location loc, Type matType, Value ptr,
-    Value strideValue, Value coloumnMajor,
-    ConversionPatternRewriter &rewriter) const {
-  rewriter.create<spirv::CooperativeMatrixStoreNVOp>(
-      loc, ptr, rewriter.getRemappedValue(op.vector()), strideValue,
-      coloumnMajor, spirv::MemoryAccessAttr());
-  rewriter.eraseOp(op);
-}
-
-/// Convert subgroup level vector contract to SPIR-V cooperative
-/// matrix matmuladd.
-class VectorContractToCoopMatmul final
-    : public CoopMatOpLowering<vector::ContractionOp> {
- public:
-  VectorContractToCoopMatmul(
-      MLIRContext *context, SPIRVTypeConverter &converter,
-      const CooperativeMatrixAnalysis &cooperativeMatrixAnalysis)
-      : CoopMatOpLowering<vector::ContractionOp>(context, converter),
-        cooperativeMatrixAnalysis(cooperativeMatrixAnalysis) {}
-
-  LogicalResult matchAndRewrite(
-      vector::ContractionOp contractOp, ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const override {
-    if (!cooperativeMatrixAnalysis.usesCooperativeMatrixType(contractOp))
-      return failure();
-    auto loc = contractOp.getLoc();
-    // Check that all the operands are cooperative matrix.
-    vector::ContractionOp::Adaptor adaptor(operands);
-    auto loadA = adaptor.lhs();
-    auto loadB = adaptor.rhs();
-    auto loadC = adaptor.acc();
-    if (!loadA.getType().isa<spirv::CooperativeMatrixNVType>() ||
-        !loadB.getType().isa<spirv::CooperativeMatrixNVType>() ||
-        !loadC.getType().isa<spirv::CooperativeMatrixNVType>())
-      return failure();
-    if (llvm::size(contractOp.masks()) != 0) return failure();
-    // Check that this is a matmul operation.
-    auto iteratorTypes = contractOp.iterator_types().getValue();
-    if (!isParallelIterator(iteratorTypes[0]) ||
-        !isParallelIterator(iteratorTypes[1]) ||
-        !isReductionIterator(iteratorTypes[2]))
-      return failure();
-    // Coloumn major matmul should have been lowered to Transpose+contract
-    // by this point. Transpose can be handled by load/stoore operations.
-    if (!isRowMajorMatmul(contractOp.indexing_maps())) return failure();
-
-    Value matmul = rewriter.create<spirv::CooperativeMatrixMulAddNVOp>(
-        loc, loadC.getType(), loadA, loadB, loadC);
-    rewriter.replaceOp(contractOp, matmul);
-    return success();
-  }
-
- private:
-  const CooperativeMatrixAnalysis &cooperativeMatrixAnalysis;
 };
 
 /// A pass to perform the SPIR-V conversion.
@@ -492,45 +261,11 @@ LogicalResult HALInterfaceLoadConstantConverter::matchAndRewrite(
 
   // The following function generates SPIR-V ops with i32 types. So it does type
   // "conversion" (index -> i32) implicitly.
-  auto value = getPushConstantValue(loadOp, elementCount, offset, rewriter);
+  auto value =
+      spirv::getPushConstantValue(loadOp, elementCount, offset, rewriter);
 
   rewriter.replaceOp(loadOp, value);
   return success();
-}
-
-LogicalResult ScalarizeVectorTransferRead::matchAndRewrite(
-    vector::TransferReadOp readOp, ArrayRef<Value> operands,
-    ConversionPatternRewriter &rewriter) const {
-  VectorType vectorType = readOp.getType();
-  Type scalarType = vectorType.getElementType();
-  if (vectorType.getRank() != 1 || vectorType.getDimSize(0) >= 4)
-    return failure();
-
-  Location loc = readOp.getLoc();
-  vector::TransferReadOp::Adaptor adaptor(operands);
-
-  SmallVector<Value, 4> scalars;
-  SmallVector<Value, 4> indices(adaptor.indices().begin(),
-                                adaptor.indices().end());
-  for (int i = 0; i < vectorType.getDimSize(0); ++i) {
-    indices.back() = rewriter.createOrFold<ConstantIndexOp>(loc, i);
-    scalars.push_back(rewriter.create<memref::LoadOp>(
-        loc, scalarType, readOp.source(), indices));
-  }
-
-  rewriter.replaceOpWithNewOp<spirv::CompositeConstructOp>(readOp, vectorType,
-                                                           scalars);
-  return success();
-}
-
-static void populateVectorToSPIRVPatterns(
-    MLIRContext *context, SPIRVTypeConverter &converter,
-    OwningRewritePatternList &patterns,
-    const CooperativeMatrixAnalysis &cooperativeMatrixAnalysis) {
-  patterns.insert<TransferToCoopMatLoadStore<vector::TransferReadOp>,
-                  TransferToCoopMatLoadStore<vector::TransferWriteOp>,
-                  VectorContractToCoopMatmul>(context, converter,
-                                              cooperativeMatrixAnalysis);
 }
 
 void ConvertToSPIRVPass::runOnOperation() {
@@ -546,6 +281,16 @@ void ConvertToSPIRVPass::runOnOperation() {
   populateGPUToSPIRVPatterns(typeConverter, patterns);
   // Pull in SCF patterns to convert control flow ops.
   populateSCFToSPIRVPatterns(typeConverter, scfToSPIRVContext, patterns);
+
+  // Use the default 64-bit lowering for TOSA's ApplyScale operator:
+  //   This lowering widens integer types to 64-bit an performs the non-fused
+  //   operations, specifically multiply, add, and shift. Bit-widening
+  //   is used to guarantee higher-order bits are not truncated during the
+  //   multiply or add.
+  //
+  // TODO(antiagainst): Use a lowering that uses specific SPIRV intrinsics.
+  tosa::populateTosaRescaleToStandardConversionPatterns(&patterns);
+
   // Pull in standard patterns to convert arithmetic ops and others.
   populateStandardToSPIRVPatterns(typeConverter, patterns);
   // Pull in standard patterns to convert tensor operations to SPIR-V. These are
@@ -560,31 +305,28 @@ void ConvertToSPIRVPass::runOnOperation() {
   mlir::populateVectorToSPIRVPatterns(typeConverter, patterns);
   // Pull in builtin func to spv.func conversion.
   populateBuiltinFuncToSPIRVPatterns(typeConverter, patterns);
-  auto &cooperativeMatrixAnalysis = getAnalysis<CooperativeMatrixAnalysis>();
-  populateVectorToSPIRVPatterns(context, typeConverter, patterns,
-                                cooperativeMatrixAnalysis);
   patterns.insert<
       HALInterfaceLoadConstantConverter,
       HALInterfaceWorkgroupIdAndCountConverter<
           IREE::HAL::InterfaceWorkgroupIDOp, spirv::BuiltIn::WorkgroupId>,
       HALInterfaceWorkgroupIdAndCountConverter<
-          IREE::HAL::InterfaceWorkgroupCountOp, spirv::BuiltIn::NumWorkgroups>,
-      ScalarizeVectorTransferRead>(typeConverter, context);
+          IREE::HAL::InterfaceWorkgroupCountOp, spirv::BuiltIn::NumWorkgroups>>(
+      typeConverter, context);
   auto aliasedResources = getAliasedResources(moduleOp);
-  patterns.insert<InterfaceOpConverter<IREE::PlaceholderOp>,
-                  InterfaceOpConverter<IREE::HAL::InterfaceBindingSubspanOp>>(
+  patterns.insert<InterfaceOpConverter<IREE::HAL::InterfaceBindingSubspanOp>>(
       typeConverter, context, aliasedResources);
   /// Fold operations as no-ops
   /// - linalg.reshape becomes a no-op since all memrefs are linearized in
-  ///   SPIR-V
+  ///   SPIR-V.
   /// - tensor_to_memref can become a no-op since tensors are lowered to
-  ///   !spv.array
+  ///   !spv.array.
+  /// - unrealized_conversion_cast with the same source and target type.
   patterns
-      .insert<FoldAsNoOp<linalg::ReshapeOp>, FoldAsNoOp<memref::BufferCastOp>>(
-          typeConverter, context);
+      .insert<FoldAsNoOp<linalg::ReshapeOp>, FoldAsNoOp<memref::BufferCastOp>,
+              RemoveIdentityConversionCast>(typeConverter, context);
 
   std::unique_ptr<ConversionTarget> target =
-      spirv::SPIRVConversionTarget::get(targetAttr);
+      SPIRVConversionTarget::get(targetAttr);
   // Disallow all other ops.
   target->markUnknownOpDynamicallyLegal([](Operation *) { return false; });
   SmallVector<FuncOp, 1> functions;

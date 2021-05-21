@@ -293,8 +293,8 @@ iree_select_compiler_opts(IREE_DEFAULT_COPTS
 #   https://github.com/google/iree/issues/4665.
 #   https://discourse.cmake.org/t/how-to-fix-build-warning-d9025-overriding-gr-with-gr/878
 #   https://gitlab.kitware.com/cmake/cmake/-/issues/20610
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
-  string(REPLACE "/GR" "" CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
+if(CMAKE_CXX_FLAGS AND "${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
+  string(REPLACE "/GR" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
 if(NOT ANDROID)
@@ -306,6 +306,14 @@ else()
   # Android provides its own pthreads support with no linking required.
 endif()
 
+if(ANDROID)
+  # logging.h on Android needs llog to link in Android logging.
+  iree_select_compiler_opts(_IREE_LOGGING_LINKOPTS
+    CLANG_OR_GCC
+      "-llog"
+  )
+endif()
+
 iree_select_compiler_opts(IREE_DEFAULT_LINKOPTS
   ALL
     # TODO(benvanik): remove the ABSL usage here; we aren't abseil.
@@ -313,7 +321,9 @@ iree_select_compiler_opts(IREE_DEFAULT_LINKOPTS
   CLANG_OR_GCC
     # Required by all modern software, effectively:
     "-ldl"
+    "-lm"
     ${_IREE_PTHREADS_LINKOPTS}
+    ${_IREE_LOGGING_LINKOPTS}
 )
 
 # Add to LINKOPTS on a binary to configure it for X/Wayland/Windows/etc
@@ -341,12 +351,18 @@ if(${IREE_SIZE_OPTIMIZED})
       "/Gy"
       "/DNDEBUG"
       "/DIREE_STATUS_MODE=0"
-      "/PDB"
+      "/DIREE_FLAGS_ENABLE_CLI=0"
+      "/DIREE_HAL_MODULE_STRING_UTIL_ENABLE=0"
+      "/DIREE_VM_EXT_I64_ENABLE=0"
+      "/DIREE_VM_EXT_F32_ENABLE=0"
       "/Os"
       "/Oy"
+      "/Zi"
+      "/c"
   )
   iree_select_compiler_opts(IREE_SIZE_OPTIMIZED_DEFAULT_LINKOPTS
     MSVC_OR_CLANG_CL
+      "-DEBUG:FULL"
       "-LTCG"
       "-opt:ref,icf"
   )
@@ -427,7 +443,7 @@ set(LLVM_APPEND_VC_REV OFF CACHE BOOL "" FORCE)
 set(LLVM_ENABLE_IDE ON CACHE BOOL "" FORCE)
 
 # TODO(ataei): Use optional build time targets selection for LLVMAOT.
-set(LLVM_TARGETS_TO_BUILD "WebAssembly;X86;ARM;AArch64;RISCV;NVPTX"
+set(LLVM_TARGETS_TO_BUILD "WebAssembly;X86;ARM;AArch64;RISCV;NVPTX;AMDGPU"
     CACHE STRING "" FORCE)
 
 set(LLVM_ENABLE_PROJECTS "mlir" CACHE STRING "" FORCE)

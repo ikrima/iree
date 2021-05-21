@@ -16,10 +16,9 @@
 # Each test file should have a name matching the corresponding XLA HLO op and test only the
 # functionality of that op (though may make use of other ops where necessary). Tests should be
 # written using the IREE Check framework and should always pass on the reference VMLA backend.
-# See https://google.github.io/iree/TestingGuide#iree-core-end-to-end-tests.
+# See https://github.com/google/iree/blob/main/docs/developers/developing_iree/testing_guide.md#iree-core-end-to-end-tests.
 
 load("//build_tools/bazel:iree_check_test.bzl", "iree_check_single_backend_test_suite")
-load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -27,7 +26,7 @@ package(
     licenses = ["notice"],  # Apache 2.0
 )
 
-DYLIB_AND_VULKAN_CHECK_TESTS = [
+CHECK_TESTS = [
     "abs.mlir",
     "add.mlir",
     "batch_norm_inference.mlir",
@@ -44,6 +43,7 @@ DYLIB_AND_VULKAN_CHECK_TESTS = [
     "divide.mlir",
     "dot.mlir",
     "dot_general.mlir",
+    "dynamic_slice.mlir",
     "exponential.mlir",
     "exponential_minus_one.mlir",
     "floor.mlir",
@@ -74,116 +74,56 @@ DYLIB_AND_VULKAN_CHECK_TESTS = [
 ]
 
 iree_check_single_backend_test_suite(
-    name = "check_vmla_vmla",
-    srcs = enforce_glob(
-        [
-            "abs.mlir",
-            "add.mlir",
-            "batch_norm_inference.mlir",
-            "broadcast.mlir",
-            "broadcast_add.mlir",
-            "broadcast_in_dim.mlir",
-            "clamp.mlir",
-            "compare.mlir",
-            "concatenate.mlir",
-            "constant.mlir",
-            "convert.mlir",
-            "convolution.mlir",
-            "cosine.mlir",
-            "divide.mlir",
-            "dot.mlir",
-            "dot_general.mlir",
-            "exponential.mlir",
-            "exponential_minus_one.mlir",
-            "finite.mlir",
-            "floor.mlir",
-            "gather.mlir",
-            "iota.mlir",
-            "log.mlir",
-            "log_plus_one.mlir",
-            "maximum.mlir",
-            "minimum.mlir",
-            "multiply.mlir",
-            "negate.mlir",
-            "pad.mlir",
-            "reduce.mlir",
-            "reduce_window.mlir",
-            "remainder.mlir",
-            "reshape.mlir",
-            "reverse.mlir",
-            "round.mlir",
-            "rsqrt.mlir",
-            "select.mlir",
-            "sine.mlir",
-            "slice.mlir",
-            "sort.mlir",
-            "sqrt.mlir",
-            "subtract.mlir",
-            "tanh.mlir",
-            "torch_index_select.mlir",
-            "transpose.mlir",
-            "while.mlir",
-        ],
-        include = ["*.mlir"],
-    ),
-    driver = "vmla",
-    target_backend = "vmla",
-)
-
-iree_check_single_backend_test_suite(
-    name = "check_vulkan-spirv_vulkan",
-    srcs = DYLIB_AND_VULKAN_CHECK_TESTS,
-    driver = "vulkan",
-    target_backend = "vulkan-spirv",
-)
-
-iree_check_single_backend_test_suite(
-    name = "check_dylib-llvm-aot_dylib",
-    srcs = DYLIB_AND_VULKAN_CHECK_TESTS,
-    driver = "dylib",
-    target_backend = "dylib-llvm-aot",
-)
-
-iree_check_single_backend_test_suite(
-    name = "check_linalg_on_tensors_dylib-llvm-aot_dylib",
-    srcs = DYLIB_AND_VULKAN_CHECK_TESTS,
-    compiler_flags = [
-        "-iree-flow-dispatch-linalg-on-tensors",
-        "-iree-codegen-llvm-experimental-linalg-on-tensors",
-    ],
-    driver = "dylib",
-    target_backend = "dylib-llvm-aot",
-)
-
-iree_check_single_backend_test_suite(
-    name = "check_linalg_on_tensors_vulkan-spirv_vulkan",
-    srcs = DYLIB_AND_VULKAN_CHECK_TESTS,
-    compiler_flags = [
-        "-iree-flow-dispatch-linalg-on-tensors",
-        "-iree-codegen-spirv-experimental-linalg-on-tensors",
-    ],
-    driver = "vulkan",
-    target_backend = "vulkan-spirv",
-)
-
-iree_check_single_backend_test_suite(
-    name = "check_linalg_on_tensors_cuda",
+    name = "check_cuda",
     srcs = [
+        "abs.mlir",
         "add.mlir",
+        "batch_norm_inference.mlir",
         "broadcast.mlir",
+        "broadcast_add.mlir",
         "broadcast_in_dim.mlir",
         "clamp.mlir",
         "compare.mlir",
+        #"concatenate.mlir",
         "constant.mlir",
+        "convert.mlir",
+        "convolution.mlir",
+        "cosine.mlir",
         "divide.mlir",
+        #"dot.mlir",
+        #"dot_general.mlir",
+        "dynamic_slice.mlir",
+        "exponential.mlir",
+        "exponential_minus_one.mlir",
+        "fft.mlir",
+        "finite.mlir",
+        "floor.mlir",
+        "gather.mlir",
         "iota.mlir",
+        "log.mlir",
+        "log_plus_one.mlir",
+        "maximum.mlir",
+        "minimum.mlir",
         "multiply.mlir",
         "negate.mlir",
+        "pad.mlir",
+        #"reduce.mlir",
+        #"reduce_window.mlir",
+        #"remainder.mlir", frem has a bug in LLVM PTX backend for negative values.
+        "reshape.mlir",
+        "reverse.mlir",
+        #"round.mlir",
+        "rsqrt.mlir",
         "select.mlir",
+        "sine.mlir",
+        "slice.mlir",
+        #"sort.mlir",
+        "sqrt.mlir",
         "subtract.mlir",
-    ],
-    compiler_flags = [
-        "-iree-flow-dispatch-linalg-on-tensors",
+        "tanh.mlir",
+        "torch_index_select.mlir",
+        "transpose.mlir",
+        "while.mlir",
     ],
     driver = "cuda",
     tags = [
@@ -197,11 +137,32 @@ iree_check_single_backend_test_suite(
     target_backend = "cuda",
 )
 
+iree_check_single_backend_test_suite(
+    name = "check_dylib-llvm-aot_dylib",
+    srcs = CHECK_TESTS + ["fft.mlir"],  # TODO(hanchung): clean this up, like VMLA test suite.
+    driver = "dylib",
+    target_backend = "dylib-llvm-aot",
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_vmvx_vmvx",
+    srcs = CHECK_TESTS + ["fft.mlir"],  # TODO(hanchung): clean this up, like VMLA test suite.
+    driver = "vmvx",
+    target_backend = "vmvx",
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_vulkan-spirv_vulkan",
+    srcs = CHECK_TESTS,
+    driver = "vulkan",
+    target_backend = "vulkan-spirv",
+)
+
 test_suite(
     name = "check",
     tests = [
         ":check_dylib-llvm-aot_dylib",
-        ":check_vmla_vmla",
+        ":check_vmvx_vmvx",
         ":check_vulkan-spirv_vulkan",
     ],
 )

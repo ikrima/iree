@@ -26,7 +26,7 @@ package(
 
 CHECK_FRAMEWORK_TESTS = [
     "bert_encoder_unrolled_fake_weights.mlir",
-    "mobilenetv2_fake_weights.mlir",
+    "mobilenetv3_fake_weights.mlir",
 ]
 
 iree_lit_test_suite(
@@ -57,35 +57,23 @@ iree_lit_test_suite(
 )
 
 iree_check_single_backend_test_suite(
-    name = "check_vmla_vmla",
+    name = "check_linalg_on_tensors_dylib-llvm-aot_dylib",
     srcs = CHECK_FRAMEWORK_TESTS,
-    driver = "vmla",
-    target_backend = "vmla",
+    driver = "dylib",
+    target_backend = "dylib-llvm-aot",
 )
+
+# TODO(#5880): VMVX is not yet fast enough to run the larger model tests.
+# iree_check_single_backend_test_suite(
+#     name = "check_vmvx_vmvx",
+#     srcs = CHECK_FRAMEWORK_TESTS,
+#     driver = "vmvx",
+#     target_backend = "vmvx",
+# )
 
 iree_check_single_backend_test_suite(
     name = "check_linalg_on_tensors_vulkan-spirv_vulkan",
-    # TODO(#5268) Add bert_encoder to this list once the issue is
-    # fixed.
-    srcs = ["mobilenetv2_fake_weights.mlir"],
-    compiler_flags = [
-        "-iree-flow-dispatch-linalg-on-tensors",
-        "-iree-flow-inline-constants-max-byte-length=2048",
-        "-iree-codegen-spirv-experimental-linalg-on-tensors",
-        "-iree-spirv-enable-vectorization",
-    ],
+    srcs = CHECK_FRAMEWORK_TESTS,
     driver = "vulkan",
     target_backend = "vulkan-spirv",
-)
-
-iree_check_single_backend_test_suite(
-    name = "check_linalg_on_tensors_dylib-llvm-aot_dylib",
-    srcs = CHECK_FRAMEWORK_TESTS,
-    compiler_flags = [
-        "-iree-flow-dispatch-linalg-on-tensors",
-        "-iree-flow-inline-constants-max-byte-length=2048",
-        "-iree-codegen-llvm-experimental-linalg-on-tensors",
-    ],
-    driver = "dylib",
-    target_backend = "dylib-llvm-aot",
 )

@@ -28,6 +28,7 @@
 #include "mlir/Conversion/SCFToStandard/SCFToStandard.h"
 #include "mlir/Conversion/StandardToLLVM/ConvertStandardToLLVM.h"
 #include "mlir/Conversion/StandardToLLVM/ConvertStandardToLLVMPass.h"
+#include "mlir/Conversion/TosaToStandard/TosaToStandard.h"
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
 #include "mlir/Conversion/VectorToSCF/VectorToSCF.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -36,6 +37,7 @@
 #include "mlir/Dialect/Math/Transforms/Passes.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/Dialect/StandardOps/Transforms/Passes.h"
+#include "mlir/Dialect/Tosa/IR/TosaOps.h"
 #include "mlir/Dialect/Vector/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -342,7 +344,7 @@ class ConvertHALEntryPointFuncOp : public ConvertToLLVMPattern {
     SmallVector<NamedAttribute, 4> funcAttrs;
     for (auto attr : stdFuncOp->getAttrs()) {
       if (attr.first == SymbolTable::getSymbolAttrName() ||
-          attr.first == mlir::impl::getTypeAttrName()) {
+          attr.first == mlir::function_like_impl::getTypeAttrName()) {
         continue;
       }
       funcAttrs.push_back(attr);
@@ -513,33 +515,6 @@ class ConvertHALInterfaceBindingSubspanOp : public ConvertToLLVMPattern {
   }
 };
 
-/// DEPRECATED: delete this as soon as linalg on buffers and iree.placeholder
-/// are gone.
-class ConvertLegacyPlaceholderOp : public ConvertToLLVMPattern {
- public:
-  explicit ConvertLegacyPlaceholderOp(MLIRContext *context,
-                                      LLVMTypeConverter &converter)
-      : ConvertToLLVMPattern(IREE::PlaceholderOp::getOperationName(), context,
-                             converter) {}
-
-  LogicalResult matchAndRewrite(
-      Operation *op, ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const override {
-    auto llvmFuncOp = op->getParentOfType<LLVM::LLVMFuncOp>();
-    if (!llvmFuncOp) return failure();
-    HALDispatchABI abi(llvmFuncOp, getTypeConverter());
-    auto interfaceBindingOp = cast<IREE::HAL::InterfaceBindingOp>(
-        SymbolTable::lookupNearestSymbolFrom(
-            op, op->getAttrOfType<SymbolRefAttr>("binding")));
-    MemRefType memRefType = op->getResult(0).getType().cast<MemRefType>();
-    auto memRefDesc = abi.loadBinding(
-        op->getLoc(), interfaceBindingOp.binding().getZExtValue(),
-        /*baseOffset=*/{}, memRefType, rewriter);
-    rewriter.replaceOp(op, {memRefDesc});
-    return success();
-  }
-};
-
 class RemoveHALInterfaceOpPattern : public ConvertToLLVMPattern {
  public:
   explicit RemoveHALInterfaceOpPattern(MLIRContext *context,
@@ -648,6 +623,7 @@ void ConvertToLLVMPass::runOnOperation() {
     vector::populateVectorToVectorCanonicalizationPatterns(patterns);
     vector::populateVectorSlicesLoweringPatterns(patterns);
     vector::populateVectorContractLoweringPatterns(patterns);
+    vector::populateVectorTransposeLoweringPatterns(patterns);
     (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns));
   }
   {
@@ -673,9 +649,20 @@ void ConvertToLLVMPass::runOnOperation() {
   });
 
   OwningRewritePatternList patterns(&getContext());
+
+  // Use the default 64-bit lowering for TOSA's ApplyScale operator:
+  //   This lowering widens integer types to 64-bit an performs the non-fused
+  //   operations, specifically multiply, add, and shift. Bit-widening
+  //   is used to guarantee higher-order bits are not truncated during the
+  //   multiply or add.
+  //
+  // TODO(bjacob): Use a lowering that uses specific ARM/X86 intrinsics.
+  tosa::populateTosaRescaleToStandardConversionPatterns(&patterns);
+
   populateAffineToStdConversionPatterns(patterns);
   populateLoopToStdConversionPatterns(patterns);
   populateExpandTanhPattern(patterns);
+
   populateStdToLLVMConversionPatterns(converter, patterns);
   populateVectorToSCFConversionPatterns(patterns);
   populateVectorToLLVMMatrixConversionPatterns(converter, patterns);
@@ -690,7 +677,6 @@ void ConvertToLLVMPass::runOnOperation() {
     ConvertHALInterfaceWorkgroupCountOp,
     ConvertHALInterfaceLoadConstant,
     ConvertHALInterfaceBindingSubspanOp,
-    ConvertLegacyPlaceholderOp,
     RemoveHALInterfaceOpPattern,
     ConvertTieShapePattern,
     RemoveMakeRankedShape
@@ -703,7 +689,8 @@ void ConvertToLLVMPass::runOnOperation() {
   target.addLegalOp<ModuleOp, IREE::HAL::InterfaceOp,
                     IREE::HAL::InterfaceBindingOp, IREE::HAL::InterfaceEndOp>();
   target.addIllegalDialect<ShapeDialect, StandardOpsDialect, IREEDialect,
-                           IREE::HAL::HALDialect, math::MathDialect>();
+                           IREE::HAL::HALDialect, math::MathDialect,
+                           tosa::TosaDialect>();
 
   // Don't apply patterns to private function (e.g num_workgroups func).
   target.addDynamicallyLegalOp<FuncOp>([&](FuncOp funcOp) {

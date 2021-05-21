@@ -128,6 +128,27 @@ class ConvertShapeOfOp : public OpConversionPattern<shape::ShapeOfOp> {
   }
 };
 
+class ConvertTensorExtract : public OpConversionPattern<tensor::ExtractOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      tensor::ExtractOp op, ArrayRef<Value> rawOperands,
+      ConversionPatternRewriter &rewriter) const override {
+    tensor::ExtractOpAdaptor operands(rawOperands);
+    if (!operands.tensor().getType().isa<RankedShapeType>()) {
+      return rewriter.notifyMatchFailure(op, "not acting on a ranked shape");
+    }
+    auto dim = operands.indices().front();
+    auto dimConstOp = dyn_cast_or_null<ConstantIndexOp>(dim.getDefiningOp());
+    if (!dimConstOp) {
+      return rewriter.notifyMatchFailure(op, "extract index not constant");
+    }
+    rewriter.replaceOpWithNewOp<Shape::RankedDimOp>(
+        op, rewriter.getIndexType(), operands.tensor(),
+        dimConstOp.value().cast<IntegerAttr>());
+    return success();
+  }
+};
+
 class ConvertGetExtent : public OpConversionPattern<shape::GetExtentOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -214,13 +235,20 @@ class ConvertBroadcastOp : public OpConversionPattern<shape::BroadcastOp> {
                                        rhsType.getAllDims(), resultShape);
     auto resultType = RankedShapeType::get(resultShape, rewriter.getContext());
     auto iota = llvm::to_vector<4>(llvm::seq<int64_t>(0, rhsType.getRank()));
-    rewriter.replaceOpWithNewOp<RankedBroadcastShapeOp>(
+    Value broadcasted = rewriter.replaceOpWithNewOp<RankedBroadcastShapeOp>(
         op, resultType, lhs, rhs,
         /*lhs_broadcast_dimensions=*/
         rewriter.getI64TensorAttr(makeArrayRef(iota).drop_front(
             rhsType.getRank() - lhsType.getRank())),
         /*rhs_broadcast_dimensions=*/
         rewriter.getI64TensorAttr(iota));
+
+    // For FromExtentTensorOp users, just forward the RankedShapeType result.
+    for (Operation *user : op.getResult().getUsers()) {
+      if (isa<Shape::FromExtentTensorOp>(user)) {
+        rewriter.replaceOp(user, ValueRange{broadcasted});
+      }
+    }
     return success();
   }
 };
@@ -249,6 +277,25 @@ class ConvertToExtentTensorOp
     rewriter.replaceOpWithNewOp<Shape::ToExtentTensorOp>(op, op.getType(),
                                                          operands[0]);
     return success();
+  }
+};
+
+class ConvertFromExtentTensorOp
+    : public OpConversionPattern<shape::FromExtentTensorOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      shape::FromExtentTensorOp op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const override {
+    if (operands.front().getType().isa<RankedTensorType>()) {
+      rewriter.replaceOpWithNewOp<Shape::FromExtentTensorOp>(op,
+                                                             operands.front());
+      return success();
+    }
+    if (operands.front().getType().isa<RankedShapeType>()) {
+      rewriter.replaceOp(op, operands.front());
+      return success();
+    }
+    return failure();
   }
 };
 
@@ -287,8 +334,10 @@ class ConvertShapeToShapex
     OwningRewritePatternList patterns(&getContext());
     patterns.insert<ConvertConstShapeOp>(context);
     patterns.insert<ConvertShapeOfOp>(context);
+    patterns.insert<ConvertTensorExtract>(context);
     patterns.insert<ConvertGetExtent>(context);
     patterns.insert<ConvertFromExtents>(context);
+    patterns.insert<ConvertFromExtentTensorOp>(context);
     patterns.insert<ConvertSplitAtOp>(context);
     patterns.insert<ConvertBroadcastOp>(context);
     patterns.insert<ConvertConcatOp>(context);

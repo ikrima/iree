@@ -18,6 +18,7 @@
 #include "iree/compiler/Dialect/HAL/Conversion/HALToVM/ConvertHALToVM.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "iree/compiler/Dialect/HAL/IR/HALTypes.h"
+#include "iree/compiler/Dialect/HAL/IR/LoweringConfig.h"
 #include "iree/compiler/Dialect/HAL/hal.imports.h"
 #include "iree/compiler/Dialect/IREE/IR/IREEDialect.h"
 #include "iree/compiler/Dialect/VM/Conversion/ConversionDialectInterface.h"
@@ -45,6 +46,7 @@ struct HALInlinerInterface : public DialectInlinerInterface {
     // Sure!
     return true;
   }
+
   bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
                        BlockAndValueMapping &valueMapping) const final {
     // Sure!
@@ -63,9 +65,9 @@ class HALToVMConversionInterface : public VMConversionDialectInterface {
   using VMConversionDialectInterface::VMConversionDialectInterface;
 
   OwningModuleRef parseVMImportModule() const override {
-    return mlir::parseSourceString(
-        StringRef(hal_imports_create()->data, hal_imports_create()->size),
-        getDialect()->getContext());
+    return mlir::parseSourceString(StringRef(iree_hal_imports_create()->data,
+                                             iree_hal_imports_create()->size),
+                                   getDialect()->getContext());
   }
 
   void populateVMConversionPatterns(
@@ -86,13 +88,24 @@ class HALToVMConversionInterface : public VMConversionDialectInterface {
   }
 };
 
+class LoweringConfigAsmDialectInterface : public OpAsmDialectInterface {
+  using OpAsmDialectInterface::OpAsmDialectInterface;
+
+  LogicalResult getAlias(Attribute attr, raw_ostream &os) const override {
+    if (attr.isa<LoweringConfig>()) {
+      os << "config";
+      return success();
+    }
+    return failure();
+  }
+};
+
 }  // namespace
 
 HALDialect::HALDialect(MLIRContext *context)
     : Dialect(getDialectNamespace(), context, TypeID::get<HALDialect>()) {
   context->loadDialect<IREEDialect>();
 
-  addInterfaces<HALInlinerInterface, HALToVMConversionInterface>();
   registerAttributes();
   registerTypes();
 
@@ -100,6 +113,8 @@ HALDialect::HALDialect(MLIRContext *context)
   addOperations<
 #include "iree/compiler/Dialect/HAL/IR/HALOps.cpp.inc"
       >();
+  addInterfaces<HALInlinerInterface, HALToVMConversionInterface,
+                LoweringConfigAsmDialectInterface>();
 }
 
 //===----------------------------------------------------------------------===//
@@ -127,6 +142,15 @@ Attribute HALDialect::parseAttribute(DialectAsmParser &parser,
   } else if (attrKind == DeviceMatchMemoryModelAttr::getKindName()) {
     return DeviceMatchMemoryModelAttr::parse(parser);
   }
+  if (attrKind == ExConstantStorageAttr::getKindName()) {
+    return ExConstantStorageAttr::parse(parser);
+  } else if (attrKind == ExPushConstantAttr::getKindName()) {
+    return ExPushConstantAttr::parse(parser);
+  } else if (attrKind == ExOperandBufferAttr::getKindName()) {
+    return ExOperandBufferAttr::parse(parser);
+  } else if (attrKind == ExResultBufferAttr::getKindName()) {
+    return ExResultBufferAttr::parse(parser);
+  }
   parser.emitError(parser.getNameLoc())
       << "unknown HAL attribute: " << attrKind;
   return {};
@@ -135,8 +159,13 @@ Attribute HALDialect::parseAttribute(DialectAsmParser &parser,
 void HALDialect::printAttribute(Attribute attr, DialectAsmPrinter &p) const {
   TypeSwitch<Attribute>(attr)
       .Case<BufferConstraintsAttr, ByteRangeAttr,
-            DescriptorSetLayoutBindingAttr, MatchAlwaysAttr, MatchAnyAttr,
-            MatchAllAttr, DeviceMatchIDAttr, DeviceMatchMemoryModelAttr>(
+            DescriptorSetLayoutBindingAttr,
+            //
+            ExConstantStorageAttr, ExPushConstantAttr, ExOperandBufferAttr,
+            ExResultBufferAttr,
+            //
+            MatchAlwaysAttr, MatchAnyAttr, MatchAllAttr, DeviceMatchIDAttr,
+            DeviceMatchMemoryModelAttr>(
           [&](auto typedAttr) { typedAttr.print(p); })
       .Default(
           [](Attribute) { llvm_unreachable("unhandled HAL attribute kind"); });

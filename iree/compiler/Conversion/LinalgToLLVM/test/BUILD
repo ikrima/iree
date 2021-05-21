@@ -27,16 +27,14 @@ iree_lit_test_suite(
     name = "lit",
     srcs = enforce_glob(
         [
-            "conv_img2col.mlir",
             "hal_interface_bindings.mlir",
             "hal_interface_constants.mlir",
             "hal_interface_workgroup_info.mlir",
-            "fold_tensor_extract_op.mlir",
             "linalg_vectorize.mlir",
             "materialize_launch_configuration.mlir",
             "matmul_vectorization.mlir",
+            "pad_linalg_workgroup_tiles.mlir",
             "plan_conv_loop_order.mlir",
-            "tile_and_distribute.mlir",
             "unfused_fma.mlir",
         ],
         include = ["*.mlir"],

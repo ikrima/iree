@@ -125,7 +125,7 @@ class TargetBackend {
   // Returns a name for the backend used to differentiate between other targets.
   virtual std::string name() const = 0;
   // Returns a filter pattern for the backend as expected to be matched with a
-  // call to matchPattern. For example, 'vulkan-v1.1' or 'vmla*'.
+  // call to matchPattern. For example, 'vulkan-v1.1' or 'vmvx*'.
   virtual std::string filter_pattern() const = 0;
 
   // Queries for compile-time known buffer constraints.
@@ -245,8 +245,7 @@ class TargetBackend {
   //     hal.executable.target @target, filter="target-backend" {
   //       hal.executable.entry_point @main attributes {
   //         interface = @main_io,
-  //         ordinal = 0 : index,
-  //         signature = (tensor<4xf32>) -> tensor<4xf32>
+  //         ordinal = 0 : index
   //       }
   //       module { ... }
   //     }
@@ -279,8 +278,8 @@ class TargetBackend {
   //
   // Sample output structure:
   //   hal.executable @linked_executable {
-  //     hal.interface @legacy_io_0 { ... }
-  //     hal.interface @legacy_io_1 { ... }
+  //     hal.interface @io_0 { ... }
+  //     hal.interface @io_1 { ... }
   //     hal.executable.target @target, filter="target-backend" {
   //       hal.executable.entry_point @main_dispatch_0 attributes { ... }
   //       hal.executable.entry_point @main_dispatch_1 attributes { ... }
@@ -294,7 +293,7 @@ class TargetBackend {
   //   }
   //   // Other targets within executables are not modified
   //   hal.executable @main_dispatch_0 {
-  //     hal.interface @legacy_io { ... }
+  //     hal.interface @io { ... }
   //     hal.executable.target @other, filter="other" {
   //       hal.executable.entry_point @main_dispatch_0 attributes { ... }
   //       module { ... }

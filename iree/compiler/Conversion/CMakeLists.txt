@@ -16,11 +16,12 @@ iree_cc_library(
   HDRS
     "init_conversions.h"
   DEPS
-    iree::compiler::Conversion::HLOToLinalg
     iree::compiler::Conversion::LinalgToLLVM
-    iree::compiler::Conversion::LinalgToNVVM
+    iree::compiler::Conversion::LinalgToLLVMGPU
+    iree::compiler::Conversion::LinalgToLinalg
     iree::compiler::Conversion::LinalgToSPIRV
     iree::compiler::Conversion::LinalgToVector
+    iree::compiler::Conversion::VectorToLLVM
   PUBLIC
 )
 

@@ -14,7 +14,7 @@
 
 # Generates source files with embedded file contents.
 
-load(":build_defs.bzl", "cc_embed_data")
+load(":build_defs.bzl", "c_embed_data")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -23,43 +23,40 @@ package(
 )
 
 cc_binary(
-    name = "generate_cc_embed_data",
-    srcs = ["generate_cc_embed_data_main.cc"],
+    name = "generate_embed_data",
+    srcs = ["generate_embed_data_main.cc"],
     deps = [
         "@com_google_absl//absl/flags:flag",
         "@com_google_absl//absl/flags:parse",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/time",
     ],
 )
 
-cc_embed_data(
+c_embed_data(
     name = "testembed1",
     # do not sort
     srcs = [
-        "file1.txt",
-        "data/file2.txt",
+        "file1.bin",
+        "data/file2.bin",
     ],
-    cc_file_output = "testembed1.cc",
-    cpp_namespace = "foobar",
+    c_file_output = "testembed1.c",
     flatten = True,
     h_file_output = "testembed1.h",
 )
 
-cc_embed_data(
+c_embed_data(
     name = "testembed2",
     srcs = [
-        "data/file3.txt",
+        "data/file3.bin",
     ],
-    cc_file_output = "testembed2.cc",
-    cpp_namespace = "foobar",
+    c_file_output = "testembed2.c",
     flatten = True,
     h_file_output = "testembed2.h",
 )
 
 cc_test(
-    name = "cc_embed_data_test",
-    srcs = ["cc_embed_data_test.cc"],
+    name = "c_embed_data_test",
+    srcs = ["c_embed_data_test.cc"],
     deps = [
         ":testembed1",
         ":testembed2",

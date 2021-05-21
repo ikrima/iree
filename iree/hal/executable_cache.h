@@ -33,17 +33,6 @@ typedef struct iree_hal_device_s iree_hal_device_t;
 // Types and Enums
 //===----------------------------------------------------------------------===//
 
-// TODO(benvanik): eliminate fourccs and just use strings.
-// An identifier for executable formats used to query support.
-typedef uint32_t iree_hal_executable_format_t;
-
-// Constructs an iree_hal_executable_format_t 4cc at compile-time.
-static inline iree_hal_executable_format_t iree_hal_make_executable_format(
-    char const four_cc[5]) {
-  return (four_cc[0] << 24) | (four_cc[1] << 16) | (four_cc[2] << 8) |
-         four_cc[3];
-}
-
 // Defines how the executable cache performs preparation.
 enum iree_hal_executable_caching_mode_e {
   // Allows the cache to reference the provided executable_data after it has
@@ -82,6 +71,11 @@ enum iree_hal_executable_caching_mode_e {
   // Device must support the IREE_HAL_DEVICE_FEATURE_SUPPORTS_PROFILING feature
   // and executables must support the ExecutableFeature::kProfiling feature.
   IREE_HAL_EXECUTABLE_CACHING_MODE_ENABLE_PROFILING = 1u << 5,
+  // Disables verification of executable layouts and modes.
+  // This is useful when debugging with partial information but should never
+  // be enabled for real usage as the verification is the best way to catch
+  // API misuse.
+  IREE_HAL_EXECUTABLE_CACHING_MODE_DISABLE_VERIFICATION = 1u << 6,
 };
 typedef uint32_t iree_hal_executable_caching_mode_t;
 
@@ -93,7 +87,7 @@ typedef struct {
   iree_hal_executable_caching_mode_t caching_mode;
 
   // Indicates the format of the data in |executable_data|.
-  iree_hal_executable_format_t executable_format;
+  iree_string_view_t executable_format;
 
   // Opaque compiler-generated executable data.
   // By default the memory storing the executable data is owned by the caller
@@ -142,25 +136,25 @@ typedef struct iree_hal_executable_cache_s iree_hal_executable_cache_t;
 // Creates an executable cache using the given identifier.
 // The identifier is provided to the backing cache API as way to partition
 // caches between different groups of executables (from different modules, etc).
-IREE_API_EXPORT iree_status_t IREE_API_CALL iree_hal_executable_cache_create(
+IREE_API_EXPORT iree_status_t iree_hal_executable_cache_create(
     iree_hal_device_t* device, iree_string_view_t identifier,
     iree_hal_executable_cache_t** out_executable_cache);
 
 // Retains the given |executable_cache| for the caller.
-IREE_API_EXPORT void IREE_API_CALL
-iree_hal_executable_cache_retain(iree_hal_executable_cache_t* executable_cache);
+IREE_API_EXPORT void iree_hal_executable_cache_retain(
+    iree_hal_executable_cache_t* executable_cache);
 
 // Releases the given |executable_cache| from the caller.
-IREE_API_EXPORT void IREE_API_CALL iree_hal_executable_cache_release(
+IREE_API_EXPORT void iree_hal_executable_cache_release(
     iree_hal_executable_cache_t* executable_cache);
 
 // Returns true if the executable cache can prepare the given executable input
 // format. Preparation may still fail if the particular version or features
 // required by the executable are not supported.
-IREE_API_EXPORT bool IREE_API_CALL iree_hal_executable_cache_can_prepare_format(
+IREE_API_EXPORT bool iree_hal_executable_cache_can_prepare_format(
     iree_hal_executable_cache_t* executable_cache,
     iree_hal_executable_caching_mode_t caching_mode,
-    iree_hal_executable_format_t executable_format);
+    iree_string_view_t executable_format);
 
 // Prepares the executable defined by |executable_spec| for use.
 // The provided |executable_data| (in a format defined by |executable_format|)
@@ -175,8 +169,7 @@ IREE_API_EXPORT bool IREE_API_CALL iree_hal_executable_cache_can_prepare_format(
 // (such as when JITing/etc). As the cache is internally synchronized callers
 // can issue preparation requests from multiple threads - even for the same
 // executables - and calls will block until preparation completes.
-IREE_API_EXPORT iree_status_t IREE_API_CALL
-iree_hal_executable_cache_prepare_executable(
+IREE_API_EXPORT iree_status_t iree_hal_executable_cache_prepare_executable(
     iree_hal_executable_cache_t* executable_cache,
     const iree_hal_executable_spec_t* executable_spec,
     iree_hal_executable_t** out_executable);
@@ -194,7 +187,7 @@ typedef struct {
   bool(IREE_API_PTR* can_prepare_format)(
       iree_hal_executable_cache_t* executable_cache,
       iree_hal_executable_caching_mode_t caching_mode,
-      iree_hal_executable_format_t executable_format);
+      iree_string_view_t executable_format);
 
   iree_status_t(IREE_API_PTR* prepare_executable)(
       iree_hal_executable_cache_t* executable_cache,
@@ -202,7 +195,7 @@ typedef struct {
       iree_hal_executable_t** out_executable);
 } iree_hal_executable_cache_vtable_t;
 
-IREE_API_EXPORT void IREE_API_CALL iree_hal_executable_cache_destroy(
+IREE_API_EXPORT void iree_hal_executable_cache_destroy(
     iree_hal_executable_cache_t* executable_cache);
 
 #ifdef __cplusplus

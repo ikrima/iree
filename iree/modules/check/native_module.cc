@@ -19,16 +19,15 @@
 #include <cstdio>
 #include <cstring>
 #include <sstream>
+#include <vector>
 
-#include "absl/container/inlined_vector.h"
-#include "absl/strings/str_cat.h"
 #include "iree/base/api.h"
+#include "iree/base/internal/math.h"
 #include "iree/base/status.h"
 #include "iree/hal/api.h"
 #include "iree/modules/hal/hal_module.h"
 #include "iree/testing/gtest.h"
 #include "iree/vm/native_module_cc.h"
-#include "third_party/half/half.hpp"
 
 //===----------------------------------------------------------------------===//
 // VM module interface implementation
@@ -71,7 +70,7 @@ bool EqByteSpan(iree_byte_span_t lhs_bytes, iree_byte_span_t rhs_bytes) {
   return AbslSpan<uint8_t>(lhs_bytes) == AbslSpan<uint8_t>(rhs_bytes);
 }
 
-static constexpr float floatPrecisionThreshold = 0.0001f;
+static constexpr float kF32PrecisionThreshold = 0.0001f;
 
 template <typename T>
 bool AlmostEqByteSpan(iree_byte_span_t lhs_bytes, iree_byte_span_t rhs_bytes) {
@@ -79,12 +78,14 @@ bool AlmostEqByteSpan(iree_byte_span_t lhs_bytes, iree_byte_span_t rhs_bytes) {
   auto rhs_span = AbslSpan<T>(rhs_bytes);
   assert(lhs_span.size() == rhs_span.size());
   for (int i = 0; i < lhs_span.size(); ++i) {
-    if (fabs(lhs_span[i] - rhs_span[i]) > floatPrecisionThreshold) {
+    if (fabs(lhs_span[i] - rhs_span[i]) > kF32PrecisionThreshold) {
       return false;
     }
   }
   return true;
 }
+
+static constexpr float kF16PrecisionThreshold = 0.001f;
 
 bool AlmostEqByteSpanF16(iree_byte_span_t lhs_bytes,
                          iree_byte_span_t rhs_bytes) {
@@ -92,9 +93,8 @@ bool AlmostEqByteSpanF16(iree_byte_span_t lhs_bytes,
   auto rhs_span = AbslSpan<uint16_t>(rhs_bytes);
   assert(lhs_span.size() == rhs_span.size());
   for (int i = 0; i < lhs_span.size(); ++i) {
-    if (fabs(half_float::detail::half2float<float>(lhs_span[i]) -
-             half_float::detail::half2float<float>(rhs_span[i])) >
-        floatPrecisionThreshold) {
+    if (fabs(iree_math_f16_to_f32(lhs_span[i]) -
+             iree_math_f16_to_f32(rhs_span[i])) > kF16PrecisionThreshold) {
       return false;
     }
   }
@@ -201,10 +201,11 @@ class CheckModuleState final {
     iree_hal_element_type_t element_type =
         iree_hal_buffer_view_element_type(view);
     iree_hal_buffer_t* buf = iree_hal_buffer_view_buffer(view);
+    iree_device_size_t size = iree_hal_buffer_view_byte_length(view);
     iree_hal_buffer_mapping_t mapped_memory;
-    IREE_RETURN_IF_ERROR(iree_hal_buffer_map_range(
-        buf, IREE_HAL_MEMORY_ACCESS_READ,
-        /*byte_offset=*/0, IREE_WHOLE_BUFFER, &mapped_memory));
+    IREE_RETURN_IF_ERROR(
+        iree_hal_buffer_map_range(buf, IREE_HAL_MEMORY_ACCESS_READ,
+                                  /*byte_offset=*/0, size, &mapped_memory));
     IREE_RETURN_IF_ERROR(
         ::iree::ExpectAllTrue(mapped_memory.contents, element_type));
     iree_hal_buffer_unmap_range(&mapped_memory);
@@ -215,15 +216,22 @@ class CheckModuleState final {
                   vm::ref<iree_hal_buffer_view_t> rhs_ref) {
     auto* lhs = lhs_ref.get();
     auto* rhs = rhs_ref.get();
-    size_t lhs_rank = iree_hal_buffer_view_shape_rank(lhs);
-    absl::InlinedVector<int32_t, 6> lhs_shape(lhs_rank);
-    IREE_RETURN_IF_ERROR(
-        iree_hal_buffer_view_shape(lhs, lhs_rank, lhs_shape.data(), nullptr));
 
+    iree_device_size_t lhs_size = iree_hal_buffer_view_byte_length(lhs);
+    size_t lhs_rank = iree_hal_buffer_view_shape_rank(lhs);
+    std::vector<iree_hal_dim_t> lhs_shape(lhs_rank);
+    if (lhs_rank > 0) {
+      IREE_RETURN_IF_ERROR(
+          iree_hal_buffer_view_shape(lhs, lhs_rank, lhs_shape.data(), nullptr));
+    }
+
+    iree_device_size_t rhs_size = iree_hal_buffer_view_byte_length(rhs);
     size_t rhs_rank = iree_hal_buffer_view_shape_rank(rhs);
-    absl::InlinedVector<int32_t, 6> rhs_shape(rhs_rank);
-    IREE_RETURN_IF_ERROR(
-        iree_hal_buffer_view_shape(rhs, rhs_rank, rhs_shape.data(), nullptr));
+    std::vector<iree_hal_dim_t> rhs_shape(rhs_rank);
+    if (rhs_rank > 0) {
+      IREE_RETURN_IF_ERROR(
+          iree_hal_buffer_view_shape(rhs, rhs_rank, rhs_shape.data(), nullptr));
+    }
 
     iree_hal_element_type_t lhs_element_type =
         iree_hal_buffer_view_element_type(lhs);
@@ -234,12 +242,12 @@ class CheckModuleState final {
     iree_hal_buffer_mapping_t lhs_mapped_memory;
     IREE_RETURN_IF_ERROR(iree_hal_buffer_map_range(
         lhs_buf, IREE_HAL_MEMORY_ACCESS_READ,
-        /*byte_offset=*/0, IREE_WHOLE_BUFFER, &lhs_mapped_memory));
+        /*byte_offset=*/0, lhs_size, &lhs_mapped_memory));
     iree_hal_buffer_t* rhs_buf = iree_hal_buffer_view_buffer(rhs);
     iree_hal_buffer_mapping_t rhs_mapped_memory;
     IREE_RETURN_IF_ERROR(iree_hal_buffer_map_range(
         rhs_buf, IREE_HAL_MEMORY_ACCESS_READ,
-        /*byte_offset=*/0, IREE_WHOLE_BUFFER, &rhs_mapped_memory));
+        /*byte_offset=*/0, rhs_size, &rhs_mapped_memory));
 
     bool element_types_eq = lhs_element_type == rhs_element_type;
     bool shape_eq = lhs_shape == rhs_shape;
@@ -284,15 +292,22 @@ class CheckModuleState final {
                         vm::ref<iree_hal_buffer_view_t> rhs_ref) {
     auto* lhs = lhs_ref.get();
     auto* rhs = rhs_ref.get();
-    size_t lhs_rank = iree_hal_buffer_view_shape_rank(lhs);
-    absl::InlinedVector<int32_t, 6> lhs_shape(lhs_rank);
-    IREE_RETURN_IF_ERROR(
-        iree_hal_buffer_view_shape(lhs, lhs_rank, lhs_shape.data(), nullptr));
 
+    iree_device_size_t lhs_size = iree_hal_buffer_view_byte_length(lhs);
+    size_t lhs_rank = iree_hal_buffer_view_shape_rank(lhs);
+    std::vector<iree_hal_dim_t> lhs_shape(lhs_rank);
+    if (lhs_rank > 0) {
+      IREE_RETURN_IF_ERROR(
+          iree_hal_buffer_view_shape(lhs, lhs_rank, lhs_shape.data(), nullptr));
+    }
+
+    iree_device_size_t rhs_size = iree_hal_buffer_view_byte_length(rhs);
     size_t rhs_rank = iree_hal_buffer_view_shape_rank(rhs);
-    absl::InlinedVector<int32_t, 6> rhs_shape(rhs_rank);
-    IREE_RETURN_IF_ERROR(
-        iree_hal_buffer_view_shape(rhs, rhs_rank, rhs_shape.data(), nullptr));
+    std::vector<iree_hal_dim_t> rhs_shape(rhs_rank);
+    if (rhs_rank > 0) {
+      IREE_RETURN_IF_ERROR(
+          iree_hal_buffer_view_shape(rhs, rhs_rank, rhs_shape.data(), nullptr));
+    }
 
     iree_hal_element_type_t lhs_element_type =
         iree_hal_buffer_view_element_type(lhs);
@@ -303,12 +318,12 @@ class CheckModuleState final {
     iree_hal_buffer_mapping_t lhs_mapped_memory;
     IREE_RETURN_IF_ERROR(iree_hal_buffer_map_range(
         lhs_buf, IREE_HAL_MEMORY_ACCESS_READ,
-        /*byte_offset=*/0, IREE_WHOLE_BUFFER, &lhs_mapped_memory));
+        /*byte_offset=*/0, lhs_size, &lhs_mapped_memory));
     iree_hal_buffer_t* rhs_buf = iree_hal_buffer_view_buffer(rhs);
     iree_hal_buffer_mapping_t rhs_mapped_memory;
     IREE_RETURN_IF_ERROR(iree_hal_buffer_map_range(
         rhs_buf, IREE_HAL_MEMORY_ACCESS_READ,
-        /*byte_offset=*/0, IREE_WHOLE_BUFFER, &rhs_mapped_memory));
+        /*byte_offset=*/0, rhs_size, &rhs_mapped_memory));
 
     bool element_types_eq = lhs_element_type == rhs_element_type;
     bool shape_eq = lhs_shape == rhs_shape;

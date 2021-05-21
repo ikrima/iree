@@ -19,6 +19,7 @@
 #include "iree/compiler/Dialect/HAL/IR/HALDialect.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "iree/compiler/Dialect/Shape/Transforms/Passes.h"
+#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Transforms/Passes.h"
 
@@ -44,7 +45,10 @@ struct TransformOptions : public PassPipelineOptions<TransformOptions> {
 static llvm::cl::opt<unsigned> benchmarkDispatchRepeatCount{
     "iree-hal-benchmark-dispatch-repeat-count",
     llvm::cl::desc(
-        "The number of times to repeat each hal.command_buffer.dispatch op."),
+        "The number of times to repeat each hal.command_buffer.dispatch op. "
+        "(Not that this simply duplicates the dispatch op and inserts "
+        "barriers. It's meant for command buffers having linear dispatch "
+        "structures.)"),
     llvm::cl::init(1)};
 
 }  // namespace
@@ -84,6 +88,13 @@ void buildHALTransformPassPipeline(OpPassManager &passManager,
 
   passManager.addNestedPass<FuncOp>(createCanonicalizerPass());
   passManager.addNestedPass<FuncOp>(createCSEPass());
+
+  // Pack transient allocations in the program that were materialized during
+  // stream conversion.
+  //
+  // NOTE: this works best if canonicalization/CSE has run such that the packed
+  // sizes are as much as possible available as constants.
+  passManager.addNestedPass<FuncOp>(createPackAllocationsPass(targetOptions));
 
   // For each exported function, processes the reflection metadata and
   // generates public ABI wrappers for various calling conventions.

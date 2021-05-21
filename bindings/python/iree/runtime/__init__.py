@@ -24,10 +24,12 @@ from . import binding
 # FunctionAbi imports
 from .binding import FunctionAbi
 # Hal imports
-from .binding import BufferUsage, HalBuffer, HalDevice, HalDriver, MemoryAccess, MemoryType, Shape
+from .binding import BufferUsage, HalBuffer, HalDevice, HalDriver, HalElementType, MemoryAccess, MemoryType, Shape
 # HostTypeFactory imports
 from .binding import HostTypeFactory
 # Vm imports
 from .binding import create_hal_module, Linkage, VmVariantList, VmFunction, VmInstance, VmContext, VmModule
 # SystemApi
 from .system_api import *
+# Function
+from .function import *

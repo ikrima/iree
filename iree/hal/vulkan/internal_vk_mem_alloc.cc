@@ -15,23 +15,15 @@
 // Only compile if an external implementation has not been otherwise linked.
 #if !defined(VULKAN_MEMORY_ALLOCATOR_EXTERNAL_IMPL)
 
-#include "absl/container/flat_hash_map.h"
+#include "iree/base/internal/synchronization.h"
 #include "iree/base/logging.h"
-#include "iree/base/synchronization.h"
 
-// Use absl::flat_hash_map instead of std::unordered_map.
-#define VmaPair std::pair
-#define VMA_MAP_TYPE(KeyT, ValueT)                                        \
-  absl::flat_hash_map<KeyT, ValueT, std::hash<KeyT>, std::equal_to<KeyT>, \
-                      VmaStlAllocator<std::pair<KeyT, ValueT> > >
-
-// Use IREE_CHECK for assertions.
-#define VMA_ASSERT IREE_CHECK
+#define VMA_ASSERT IREE_DCHECK
 #define VMA_HEAVY_ASSERT IREE_DCHECK
 
 // Use IREE_LOG for logging.
 #ifndef NDEBUG
-#define VMA_DEBUG_LOG(...) ABSL_RAW_LOG(INFO, __VA_ARGS__)
+#define VMA_DEBUG_LOG(...) _IREE_LOG_INFO << __VA_ARGS__
 #else
 #define VMA_DEBUG_LOG(...)
 #endif  // !NDEBUG

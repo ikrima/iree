@@ -23,8 +23,8 @@ package(
 
 iree_cmake_extra_content(
     content = """
-if(NOT "${IREE_TARGET_BACKEND_VMLA}" OR
-   NOT "${IREE_HAL_DRIVER_VMLA}")
+if(NOT "${IREE_TARGET_BACKEND_VMVX}" OR
+   NOT "${IREE_HAL_DRIVER_VMVX}")
   return()
 endif()
 """,
@@ -33,8 +33,11 @@ endif()
 iree_bytecode_module(
     name = "custom_modules_test_module",
     src = "custom_modules_test.mlir",
-    cc_namespace = "iree::samples::custom_modules",
-    flags = ["-iree-mlir-to-vm-bytecode-module"],
+    c_identifier = "iree_samples_custom_modules_test_module",
+    flags = [
+        "-iree-mlir-to-vm-bytecode-module",
+        "-iree-hal-target-backends=dylib-llvm-aot",
+    ],
     translate_tool = "//iree/samples/custom_modules/dialect:custom-translate",
 )
 
@@ -42,19 +45,18 @@ cc_test(
     name = "custom_modules_test",
     srcs = ["custom_modules_test.cc"],
     deps = [
-        ":custom_modules_test_module_cc",
+        ":custom_modules_test_module_c",
         ":native_module",
-        "//iree/base:api",
+        "//iree/base",
         "//iree/base:logging",
-        "//iree/hal:api",
-        "//iree/hal/vmla/registration",
+        "//iree/hal",
+        "//iree/hal/vmvx/registration",
         "//iree/modules/hal",
         "//iree/testing:gtest",
         "//iree/testing:gtest_main",
         "//iree/vm",
         "//iree/vm:bytecode_module",
         "//iree/vm:cc",
-        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -63,8 +65,8 @@ cc_library(
     srcs = ["native_module.cc"],
     hdrs = ["native_module.h"],
     deps = [
-        "//iree/base:api",
-        "//iree/hal:api",
+        "//iree/base",
+        "//iree/hal",
         "//iree/modules/hal",
         "//iree/vm",
         "//iree/vm:cc",

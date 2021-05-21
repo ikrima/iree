@@ -19,15 +19,18 @@
 #include "iree/testing/gtest.h"
 #include "iree/vm/api.h"
 #include "iree/vm/test/emitc/arithmetic_ops.h"
+#include "iree/vm/test/emitc/arithmetic_ops_f32.h"
 #include "iree/vm/test/emitc/arithmetic_ops_i64.h"
 #include "iree/vm/test/emitc/assignment_ops.h"
 #include "iree/vm/test/emitc/assignment_ops_i64.h"
 #include "iree/vm/test/emitc/comparison_ops.h"
+#include "iree/vm/test/emitc/comparison_ops_f32.h"
 #include "iree/vm/test/emitc/comparison_ops_i64.h"
 #include "iree/vm/test/emitc/control_flow_ops.h"
 #include "iree/vm/test/emitc/conversion_ops.h"
 #include "iree/vm/test/emitc/conversion_ops_i64.h"
 #include "iree/vm/test/emitc/global_ops.h"
+#include "iree/vm/test/emitc/list_ops.h"
 #include "iree/vm/test/emitc/shift_ops.h"
 #include "iree/vm/test/emitc/shift_ops_i64.h"
 
@@ -48,7 +51,8 @@ struct ModuleDescription {
 };
 
 std::ostream& operator<<(std::ostream& os, const TestParams& params) {
-  return os << absl::StrReplaceAll(params.local_name, {{":", "_"}, {".", "_"}});
+  std::string qualified_name = params.module_name + "." + params.local_name;
+  return os << absl::StrReplaceAll(qualified_name, {{":", "_"}, {".", "_"}});
 }
 
 std::vector<TestParams> GetModuleTestParams() {
@@ -57,15 +61,18 @@ std::vector<TestParams> GetModuleTestParams() {
   // TODO(simon-camp): get these automatically
   std::vector<ModuleDescription> modules = {
       {arithmetic_ops_descriptor_, arithmetic_ops_create},
+      {arithmetic_ops_f32_descriptor_, arithmetic_ops_f32_create},
       {arithmetic_ops_i64_descriptor_, arithmetic_ops_i64_create},
       {assignment_ops_descriptor_, assignment_ops_create},
       {assignment_ops_i64_descriptor_, assignment_ops_i64_create},
       {comparison_ops_descriptor_, comparison_ops_create},
+      {comparison_ops_f32_descriptor_, comparison_ops_f32_create},
       {comparison_ops_i64_descriptor_, comparison_ops_i64_create},
       {control_flow_ops_descriptor_, control_flow_ops_create},
       {conversion_ops_descriptor_, conversion_ops_create},
       {conversion_ops_i64_descriptor_, conversion_ops_i64_create},
       {global_ops_descriptor_, global_ops_create},
+      {list_ops_descriptor_, list_ops_create},
       {shift_ops_descriptor_, shift_ops_create},
       {shift_ops_i64_descriptor_, shift_ops_i64_create}};
 
@@ -130,7 +137,6 @@ class VMCModuleTest : public ::testing::Test,
 
   iree_vm_instance_t* instance_ = nullptr;
   iree_vm_context_t* context_ = nullptr;
-  iree_vm_module_t* bytecode_module_ = nullptr;
 };
 
 TEST_P(VMCModuleTest, Check) {

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//build_tools/embed_data:build_defs.bzl", "cc_embed_data")
-load("//build_tools/bazel:tblgen.bzl", "gentbl")
+load("//build_tools/embed_data:build_defs.bzl", "c_embed_data")
+load("//build_tools/bazel:tblgen.bzl", "gentbl_cc_library")
 load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
 
 package(
@@ -58,11 +58,17 @@ cc_library(
     ],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "custom_ops_gen",
     tbl_outs = [
-        ("-gen-op-decls", "custom_ops.h.inc"),
-        ("-gen-op-defs", "custom_ops.cc.inc"),
+        (
+            ["-gen-op-decls"],
+            "custom_ops.h.inc",
+        ),
+        (
+            ["-gen-op-defs"],
+            "custom_ops.cc.inc",
+        ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "custom_ops.td",
@@ -74,13 +80,13 @@ gentbl(
     ],
 )
 
-cc_embed_data(
+c_embed_data(
     name = "custom_imports",
     srcs = ["custom.imports.mlir"],
-    cc_file_output = "custom.imports.cc",
-    cpp_namespace = "mlir::iree_compiler::IREE::Custom",
+    c_file_output = "custom.imports.c",
     flatten = True,
     h_file_output = "custom.imports.h",
+    identifier = "iree_custom_imports",
 )
 
 cc_library(

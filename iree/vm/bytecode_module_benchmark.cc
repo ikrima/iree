@@ -13,15 +13,14 @@
 // limitations under the License.
 
 #include <array>
+#include <vector>
 
-#include "absl/container/inlined_vector.h"
-#include "absl/strings/string_view.h"
 #include "benchmark/benchmark.h"
 #include "iree/base/api.h"
 #include "iree/base/logging.h"
 #include "iree/vm/api.h"
 #include "iree/vm/bytecode_module.h"
-#include "iree/vm/bytecode_module_benchmark_module.h"
+#include "iree/vm/bytecode_module_benchmark_module_c.h"
 
 namespace {
 
@@ -76,8 +75,8 @@ static iree_status_t native_import_module_create(
 
 // Benchmarks the given exported function, optionally passing in arguments.
 static iree_status_t RunFunction(benchmark::State& state,
-                                 absl::string_view function_name,
-                                 absl::Span<const int32_t> i32_args,
+                                 iree_string_view_t function_name,
+                                 std::vector<int32_t> i32_args,
                                  int result_count, int64_t batch_size = 1) {
   iree_vm_instance_t* instance = NULL;
   IREE_CHECK_OK(iree_vm_instance_create(iree_allocator_system(), &instance));
@@ -87,7 +86,7 @@ static iree_status_t RunFunction(benchmark::State& state,
       native_import_module_create(iree_allocator_system(), &import_module));
 
   const auto* module_file_toc =
-      iree::vm::bytecode_module_benchmark_module_create();
+      iree_vm_bytecode_module_benchmark_module_create();
   iree_vm_module_t* bytecode_module = nullptr;
   IREE_CHECK_OK(iree_vm_bytecode_module_create(
       iree_const_byte_span_t{
@@ -102,10 +101,8 @@ static iree_status_t RunFunction(benchmark::State& state,
       &context));
 
   iree_vm_function_t function;
-  IREE_CHECK_OK(iree_vm_context_resolve_function(
-      context,
-      iree_make_string_view(function_name.data(), function_name.size()),
-      &function));
+  IREE_CHECK_OK(
+      iree_vm_context_resolve_function(context, function_name, &function));
 
   iree_vm_function_call_t call;
   memset(&call, 0, sizeof(call));
@@ -141,14 +138,13 @@ static iree_status_t RunFunction(benchmark::State& state,
 static void BM_ModuleCreate(benchmark::State& state) {
   while (state.KeepRunning()) {
     const auto* module_file_toc =
-        iree::vm::bytecode_module_benchmark_module_create();
+        iree_vm_bytecode_module_benchmark_module_create();
     iree_vm_module_t* module = nullptr;
     IREE_CHECK_OK(iree_vm_bytecode_module_create(
         iree_const_byte_span_t{
             reinterpret_cast<const uint8_t*>(module_file_toc->data),
             module_file_toc->size},
-        iree_allocator_null(), iree_allocator_system(), &module))
-        << "Bytecode module failed to load";
+        iree_allocator_null(), iree_allocator_system(), &module));
 
     // Just testing creation and verification here!
     benchmark::DoNotOptimize(module);
@@ -160,14 +156,13 @@ BENCHMARK(BM_ModuleCreate);
 
 static void BM_ModuleCreateState(benchmark::State& state) {
   const auto* module_file_toc =
-      iree::vm::bytecode_module_benchmark_module_create();
+      iree_vm_bytecode_module_benchmark_module_create();
   iree_vm_module_t* module = nullptr;
   IREE_CHECK_OK(iree_vm_bytecode_module_create(
       iree_const_byte_span_t{
           reinterpret_cast<const uint8_t*>(module_file_toc->data),
           module_file_toc->size},
-      iree_allocator_null(), iree_allocator_system(), &module))
-      << "Bytecode module failed to load";
+      iree_allocator_null(), iree_allocator_system(), &module));
 
   while (state.KeepRunning()) {
     iree_vm_module_state_t* module_state;
@@ -187,14 +182,13 @@ BENCHMARK(BM_ModuleCreateState);
 static void BM_FullModuleInit(benchmark::State& state) {
   while (state.KeepRunning()) {
     const auto* module_file_toc =
-        iree::vm::bytecode_module_benchmark_module_create();
+        iree_vm_bytecode_module_benchmark_module_create();
     iree_vm_module_t* module = nullptr;
     IREE_CHECK_OK(iree_vm_bytecode_module_create(
         iree_const_byte_span_t{
             reinterpret_cast<const uint8_t*>(module_file_toc->data),
             module_file_toc->size},
-        iree_allocator_null(), iree_allocator_system(), &module))
-        << "Bytecode module failed to load";
+        iree_allocator_null(), iree_allocator_system(), &module));
 
     iree_vm_module_state_t* module_state;
     module->alloc_state(module->self, iree_allocator_system(), &module_state);
@@ -207,7 +201,7 @@ static void BM_FullModuleInit(benchmark::State& state) {
 }
 BENCHMARK(BM_FullModuleInit);
 
-ABSL_ATTRIBUTE_NOINLINE static int empty_fn() {
+IREE_ATTRIBUTE_NOINLINE static int empty_fn(void) {
   int ret = 1;
   benchmark::DoNotOptimize(ret);
   return ret;
@@ -223,12 +217,13 @@ static void BM_EmptyFuncReference(benchmark::State& state) {
 BENCHMARK(BM_EmptyFuncReference);
 
 static void BM_EmptyFuncBytecode(benchmark::State& state) {
-  IREE_CHECK_OK(RunFunction(state, "bytecode_module_benchmark.empty_func", {},
-                            /*result_count=*/0));
+  IREE_CHECK_OK(RunFunction(
+      state, iree_make_cstring_view("bytecode_module_benchmark.empty_func"), {},
+      /*result_count=*/0));
 }
 BENCHMARK(BM_EmptyFuncBytecode);
 
-ABSL_ATTRIBUTE_NOINLINE static int add_fn(int value) {
+IREE_ATTRIBUTE_NOINLINE static int add_fn(int value) {
   benchmark::DoNotOptimize(value += value);
   return value;
 }
@@ -262,18 +257,22 @@ static void BM_CallInternalFuncReference(benchmark::State& state) {
 BENCHMARK(BM_CallInternalFuncReference);
 
 static void BM_CallInternalFuncBytecode(benchmark::State& state) {
-  IREE_CHECK_OK(
-      RunFunction(state, "bytecode_module_benchmark.call_internal_func", {100},
-                  /*result_count=*/1,
-                  /*batch_size=*/20));
+  IREE_CHECK_OK(RunFunction(
+      state,
+      iree_make_cstring_view("bytecode_module_benchmark.call_internal_func"),
+      {100},
+      /*result_count=*/1,
+      /*batch_size=*/20));
 }
 BENCHMARK(BM_CallInternalFuncBytecode);
 
 static void BM_CallImportedFuncBytecode(benchmark::State& state) {
-  IREE_CHECK_OK(
-      RunFunction(state, "bytecode_module_benchmark.call_imported_func", {100},
-                  /*result_count=*/1,
-                  /*batch_size=*/20));
+  IREE_CHECK_OK(RunFunction(
+      state,
+      iree_make_cstring_view("bytecode_module_benchmark.call_imported_func"),
+      {100},
+      /*result_count=*/1,
+      /*batch_size=*/20));
 }
 BENCHMARK(BM_CallImportedFuncBytecode);
 
@@ -298,11 +297,59 @@ static void BM_LoopSumReference(benchmark::State& state) {
 BENCHMARK(BM_LoopSumReference)->Arg(100000);
 
 static void BM_LoopSumBytecode(benchmark::State& state) {
-  IREE_CHECK_OK(RunFunction(state, "bytecode_module_benchmark.loop_sum",
-                            {static_cast<int32_t>(state.range(0))},
-                            /*result_count=*/1,
-                            /*batch_size=*/state.range(0)));
+  IREE_CHECK_OK(RunFunction(
+      state, iree_make_cstring_view("bytecode_module_benchmark.loop_sum"),
+      {static_cast<int32_t>(state.range(0))},
+      /*result_count=*/1,
+      /*batch_size=*/state.range(0)));
 }
 BENCHMARK(BM_LoopSumBytecode)->Arg(100000);
+
+static void BM_BufferReduceReference(benchmark::State& state) {
+  static auto work = +[](int32_t* buffer, int i, int sum) {
+    int new_sum = buffer[i] + sum;
+    benchmark::DoNotOptimize(new_sum);
+    return new_sum;
+  };
+  static auto loop = +[](int32_t* buffer, int count) {
+    int sum = 0;
+    for (int i = 0; i < count; ++i) {
+      benchmark::DoNotOptimize(sum = work(buffer, i, sum));
+    }
+    return sum;
+  };
+  while (state.KeepRunningBatch(state.range(0))) {
+    int32_t* buffer = (int32_t*)malloc(state.range(0) * 4);
+    for (int i = 0; i < state.range(0); ++i) {
+      buffer[i] = 1;
+    }
+    int ret = loop(buffer, static_cast<int>(state.range(0)));
+    benchmark::DoNotOptimize(ret);
+    benchmark::ClobberMemory();
+    free(buffer);
+  }
+}
+BENCHMARK(BM_BufferReduceReference)->Arg(100000);
+
+static void BM_BufferReduceBytecode(benchmark::State& state) {
+  IREE_CHECK_OK(RunFunction(
+      state, iree_make_cstring_view("bytecode_module_benchmark.buffer_reduce"),
+      {static_cast<int32_t>(state.range(0))},
+      /*result_count=*/1,
+      /*batch_size=*/state.range(0)));
+}
+BENCHMARK(BM_BufferReduceBytecode)->Arg(100000);
+
+// NOTE: unrolled 8x, requires %count to be % 8 = 0.
+static void BM_BufferReduceBytecodeUnrolled(benchmark::State& state) {
+  IREE_CHECK_OK(
+      RunFunction(state,
+                  iree_make_cstring_view(
+                      "bytecode_module_benchmark.buffer_reduce_unrolled"),
+                  {static_cast<int32_t>(state.range(0))},
+                  /*result_count=*/1,
+                  /*batch_size=*/state.range(0)));
+}
+BENCHMARK(BM_BufferReduceBytecodeUnrolled)->Arg(100000);
 
 }  // namespace

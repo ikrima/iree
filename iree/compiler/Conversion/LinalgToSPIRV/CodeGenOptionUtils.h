@@ -26,6 +26,7 @@
 #define IREE_COMPILER_CONVERSION_LINALGTOSPIRV_CODEGENOPTIONUTILS_H_
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace mlir {
 namespace iree_compiler {
@@ -33,11 +34,10 @@ namespace iree_compiler {
 // Options that can be used to configure SPIR-V code generation.
 struct SPIRVCodegenOptions {
   llvm::SmallVector<unsigned, 3> workgroupSize = {};
-  llvm::SmallVector<unsigned, 3> tileSizes = {};
-  bool enableVectorization = false;
+  llvm::SmallVector<unsigned, 3> workgroupTileSizes = {};
+  llvm::SmallVector<unsigned, 3> invocationTileSizes = {};
+
   bool useWorkgroupMemory = false;
-  bool vectorizeMemref = false;
-  bool usingLinalgOnTensors = false;
 };
 
 // Returns SPIR-V CodeGen options from command-line options.

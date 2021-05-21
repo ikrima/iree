@@ -88,6 +88,7 @@ function(iree_check_test)
         "${_RULE_SRC}"
       FLAGS
         "-iree-mlir-to-vm-bytecode-module"
+        "-mlir-print-op-on-diagnostic=false"
         "--iree-hal-target-backends=${_RULE_TARGET_BACKEND}"
         "--iree-llvm-target-triple=${_TARGET_TRIPLE}"
         ${_RULE_COMPILER_FLAGS}
@@ -101,6 +102,7 @@ function(iree_check_test)
         "${_RULE_SRC}"
       FLAGS
         "-iree-mlir-to-vm-bytecode-module"
+        "-mlir-print-op-on-diagnostic=false"
         "--iree-hal-target-backends=${_RULE_TARGET_BACKEND}"
         ${_RULE_COMPILER_FLAGS}
       TESTONLY
@@ -298,8 +300,8 @@ function(iree_check_test_suite)
   )
 
   if(NOT DEFINED _RULE_TARGET_BACKENDS AND NOT DEFINED _RULE_DRIVERS)
-    set(_RULE_TARGET_BACKENDS "vmla" "vulkan-spirv" "dylib-llvm-aot")
-    set(_RULE_DRIVERS "vmla" "vulkan" "dylib")
+    set(_RULE_TARGET_BACKENDS "vmvx" "vulkan-spirv" "dylib-llvm-aot")
+    set(_RULE_DRIVERS "vmvx" "vulkan" "dylib")
   endif()
 
   list(LENGTH _RULE_TARGET_BACKENDS _TARGET_BACKEND_COUNT)

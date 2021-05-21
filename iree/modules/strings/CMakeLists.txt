@@ -21,13 +21,11 @@ iree_cc_library(
     "api.cc"
     "strings_module.cc"
   DEPS
-    absl::inlined_vector
     absl::span
-    absl::strings
     benchmark
-    iree::base::api
+    iree::base
     iree::base::logging
-    iree::hal::api
+    iree::hal
     iree::modules::hal
     iree::vm
     iree::vm::cc
@@ -45,14 +43,13 @@ iree_cc_test(
     "strings_module_test.cc"
   DEPS
     ::strings_module
-    ::strings_module_test_module_cc
-    absl::inlined_vector
-    absl::strings
+    ::strings_module_test_module_c
+    absl::span
     benchmark
-    iree::base::api
+    iree::base
     iree::base::logging
-    iree::hal::api
-    iree::hal::vmla::registration
+    iree::hal
+    iree::hal::vmvx::registration
     iree::modules::hal
     iree::testing::gtest
     iree::testing::gtest_main
@@ -66,10 +63,11 @@ iree_bytecode_module(
     strings_module_test_module
   SRC
     "strings_module_test.mlir"
-  CC_NAMESPACE
-    "iree::strings_module_test"
+  C_IDENTIFIER
+    "iree_strings_module_test_module"
   FLAGS
     "-iree-mlir-to-vm-bytecode-module"
+    "-iree-hal-target-backends=dylib-llvm-aot"
   TESTONLY
   PUBLIC
 )

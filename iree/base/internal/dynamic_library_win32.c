@@ -15,10 +15,10 @@
 #include <stdio.h>
 
 #include "iree/base/internal/atomics.h"
+#include "iree/base/internal/call_once.h"
 #include "iree/base/internal/dynamic_library.h"
 #include "iree/base/internal/file_path.h"
 #include "iree/base/target_platform.h"
-#include "iree/base/threading.h"
 #include "iree/base/tracing.h"
 
 #if defined(IREE_PLATFORM_WINDOWS)
@@ -30,8 +30,8 @@
 #define IREE_HAVE_DYNAMIC_LIBRARY_PDB_SUPPORT 1
 #pragma warning(disable : 4091)
 #include <dbghelp.h>
-void IREEDbgHelpLock();
-void IREEDbgHelpUnlock();
+void IREEDbgHelpLock(void);
+void IREEDbgHelpUnlock(void);
 #endif  // TRACY_ENABLE
 
 struct iree_dynamic_library_s {
@@ -383,8 +383,7 @@ iree_status_t iree_dynamic_library_attach_symbols_from_memory(
   IREE_ASSERT_ARGUMENT(library);
   IREE_TRACE_ZONE_BEGIN(z0);
 
-  if (library->temp_file_count + 1 >=
-      IREE_ARRAYSIZE(library->temp_file_paths)) {
+  if (library->temp_file_count + 1 > IREE_ARRAYSIZE(library->temp_file_paths)) {
     return iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
                             "too many temp files attached");
   }

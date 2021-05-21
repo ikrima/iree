@@ -119,6 +119,7 @@ int main(int argc, char **argv) {
   // Register any command line options.
   registerAsmPrinterCLOptions();
   registerMLIRContextCLOptions();
+  registerDefaultTimingManagerCLOptions();
   cl::ParseCommandLineOptions(argc, argv);
 
   DialectRegistry registry;
@@ -178,6 +179,9 @@ int main(int argc, char **argv) {
   context.appendDialectRegistry(registry);
   context.loadAllAvailableDialects();
 
+  llvm::SourceMgr sourceMgr;
+  mlir::SourceMgrDiagnosticHandler sourceMgrHandler(sourceMgr, &context);
+
   auto status =
       ConvertHloToMlirHlo(module.get(), hloProto.mutable_hlo_module());
   if (!status.ok()) {
@@ -186,7 +190,7 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  // Find the entry function an annotate it as exported.
+  // Find the entry function and annotate it as exported.
   // Note that the XLA importer always produced an MLIR module with a @main
   // function.
   std::string entryName = "main";
@@ -207,28 +211,34 @@ int main(int argc, char **argv) {
       return failure();
     }
     OpPrintingFlags printFlags;
-    printFlags.enableDebugInfo();
-    printFlags.printGenericOpForm();
     module->print(outputFile->os(), printFlags);
     outputFile->os() << "\n";
     outputFile->keep();
     return success();
   };
 
-  // Save temp output.
-  if (!saveTempIreeImport.empty()) {
-    if (failed(saveToFile(saveTempIreeImport))) return 10;
-  }
-
   // Run passes.
   PassManager pm(&context, PassManager::Nesting::Implicit);
   applyPassManagerCLOptions(pm);
+  applyDefaultTimingPassManagerCLOptions(pm);
 
   iree_integrations::TF::buildMHLOImportPassPipeline(pm);
+
+  // Note that we emit the ABI last since any needed function-level
+  // transformations (i.e. de-tupling, etc) should have been done.
+  // TODO: Uncomment this to enable IREE native bindings.
+  // pm.addNestedPass<FuncOp>(
+  //     iree_integrations::TF::createEmitDefaultIREEABIPass());
+
   if (failed(pm.run(*module))) {
     llvm::errs()
         << "Running iree-xla-import pass pipeline failed (see diagnostics)\n";
     return 2;
+  }
+
+  // Save temp output.
+  if (!saveTempIreeImport.empty()) {
+    if (failed(saveToFile(saveTempIreeImport))) return 10;
   }
 
   // Save output.

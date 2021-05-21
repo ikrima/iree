@@ -56,7 +56,10 @@ struct ListTypeStorage : public TypeStorage {
 
 // static
 bool ListType::isCompatible(Type type) {
-  if (type.isa<RefType>()) {
+  if (type.isa<OpaqueType>()) {
+    // Allow all types (variant).
+    return true;
+  } else if (type.isa<RefType>()) {
     // Allow all ref types.
     return true;
   } else if (type.isIntOrFloat()) {
@@ -193,7 +196,8 @@ void VMDialect::registerAttributes() {
   addAttributes<IREE::VM::OrdinalCountsAttr>();
 }
 void VMDialect::registerTypes() {
-  addTypes<IREE::VM::ListType, IREE::VM::OpaqueType, IREE::VM::RefType>();
+  addTypes<IREE::VM::BufferType, IREE::VM::ListType, IREE::VM::OpaqueType,
+           IREE::VM::RefType>();
 }
 
 }  // namespace VM

@@ -14,8 +14,8 @@
 
 iree_add_all_subdirs()
 
-# Doesn't use bazel_to_cmake because IREE_HAL_DRIVER_VMLA filtering is custom logic
-if(${IREE_HAL_DRIVER_VMLA})
+# Doesn't use bazel_to_cmake because IREE_HAL_DRIVER_VMVX filtering is custom logic
+if(${IREE_HAL_DRIVER_VMVX})
   iree_cc_test(
     NAME
       check_test
@@ -23,13 +23,13 @@ if(${IREE_HAL_DRIVER_VMLA})
       "check_test.cc"
     DEPS
       ::native_module
-      absl::strings
-      half::includes
-      iree::base::api
+      absl::span
+      iree::base
+      iree::base::internal
       iree::base::logging
       iree::base::status
-      iree::hal::api
-      iree::hal::vmla::registration
+      iree::hal
+      iree::hal::vmvx::registration
       iree::modules::hal
       iree::testing::gtest
       iree::testing::gtest_main
@@ -48,12 +48,10 @@ iree_cc_library(
   SRCS
     "native_module.cc"
   DEPS
-    absl::inlined_vector
-    absl::strings
-    half::includes
-    iree::base::api
+    iree::base
+    iree::base::internal
     iree::base::status
-    iree::hal::api
+    iree::hal
     iree::modules::hal
     iree::testing::gtest
     iree::vm

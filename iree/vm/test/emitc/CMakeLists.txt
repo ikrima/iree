@@ -29,17 +29,20 @@ iree_cc_test(
     iree::testing::gtest_main
     iree::vm::cc
     iree::vm::ops
-    iree::vm::shims
+    iree::vm::shims_emitc
     ::arithmetic_ops
+    ::arithmetic_ops_f32
     ::arithmetic_ops_i64
     ::assignment_ops
     ::assignment_ops_i64
     ::comparison_ops
+    ::comparison_ops_f32
     ::comparison_ops_i64
     ::control_flow_ops
     ::conversion_ops
     ::conversion_ops_i64
     ::global_ops
+    ::list_ops
     ::shift_ops
     ::shift_ops_i64
 )
@@ -51,6 +54,15 @@ iree_c_module(
     "../arithmetic_ops.mlir"
   H_FILE_OUTPUT
     "arithmetic_ops.h"
+)
+
+iree_c_module(
+  NAME
+    arithmetic_ops_f32
+  SRC
+    "../arithmetic_ops_f32.mlir"
+  H_FILE_OUTPUT
+    "arithmetic_ops_f32.h"
 )
 
 iree_c_module(
@@ -87,6 +99,15 @@ iree_c_module(
     "../comparison_ops.mlir"
   H_FILE_OUTPUT
     "comparison_ops.h"
+)
+
+iree_c_module(
+  NAME
+    comparison_ops_f32
+  SRC
+    "../comparison_ops_f32.mlir"
+  H_FILE_OUTPUT
+    "comparison_ops_f32.h"
 )
 
 iree_c_module(
@@ -132,6 +153,15 @@ iree_c_module(
     "../global_ops.mlir"
   H_FILE_OUTPUT
     "global_ops.h"
+)
+
+iree_c_module(
+  NAME
+    list_ops
+  SRC
+    "../list_ops.mlir"
+  H_FILE_OUTPUT
+    "list_ops.h"
 )
 
 iree_c_module(

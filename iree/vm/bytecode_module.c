@@ -28,38 +28,48 @@ static bool iree_vm_flatbuffer_strcmp(flatbuffers_string_t lhs,
   return x != 0 ? x : lhs_size < rhs.size ? -1 : lhs_size > rhs.size;
 }
 
-// Returns true if the given |type_def| is valid, meaning that the type it was
-// resolved from is registered or known to the system as a builtin.
-static bool iree_vm_type_def_is_valid(iree_vm_type_def_t type_def) {
-  return type_def.value_type != IREE_VM_VALUE_TYPE_NONE ||
-         type_def.ref_type != IREE_VM_REF_TYPE_NULL;
-}
-
 // Resolves a type through either builtin rules or the ref registered types.
-static iree_vm_type_def_t iree_vm_bytecode_module_resolve_type(
-    iree_vm_TypeDef_table_t type_def) {
-  iree_vm_type_def_t result;
-  memset(&result, 0, sizeof(result));
+static bool iree_vm_bytecode_module_resolve_type(
+    iree_vm_TypeDef_table_t type_def, iree_vm_type_def_t* out_type) {
+  memset(out_type, 0, sizeof(*out_type));
   flatbuffers_string_t full_name = iree_vm_TypeDef_full_name(type_def);
   if (!flatbuffers_string_len(full_name)) {
-    return result;
+    return false;
   } else if (iree_vm_flatbuffer_strcmp(full_name,
                                        iree_make_cstring_view("i8")) == 0) {
-    result.value_type = IREE_VM_VALUE_TYPE_I8;
+    out_type->value_type = IREE_VM_VALUE_TYPE_I8;
+    return true;
   } else if (iree_vm_flatbuffer_strcmp(full_name,
                                        iree_make_cstring_view("i16")) == 0) {
-    result.value_type = IREE_VM_VALUE_TYPE_I16;
+    out_type->value_type = IREE_VM_VALUE_TYPE_I16;
+    return true;
   } else if (iree_vm_flatbuffer_strcmp(full_name,
                                        iree_make_cstring_view("i32")) == 0) {
-    result.value_type = IREE_VM_VALUE_TYPE_I32;
+    out_type->value_type = IREE_VM_VALUE_TYPE_I32;
+    return true;
   } else if (iree_vm_flatbuffer_strcmp(full_name,
                                        iree_make_cstring_view("i64")) == 0) {
-    result.value_type = IREE_VM_VALUE_TYPE_I64;
+    out_type->value_type = IREE_VM_VALUE_TYPE_I64;
+    return true;
+  } else if (iree_vm_flatbuffer_strcmp(full_name,
+                                       iree_make_cstring_view("f32")) == 0) {
+    out_type->value_type = IREE_VM_VALUE_TYPE_F32;
+    return true;
+  } else if (iree_vm_flatbuffer_strcmp(full_name,
+                                       iree_make_cstring_view("f64")) == 0) {
+    out_type->value_type = IREE_VM_VALUE_TYPE_F64;
+    return true;
+  } else if (iree_vm_flatbuffer_strcmp(
+                 full_name, iree_make_cstring_view("!vm.opaque")) == 0) {
+    out_type->value_type = IREE_VM_VALUE_TYPE_NONE;
+    out_type->ref_type = IREE_VM_REF_TYPE_NULL;
+    return true;
   } else if (full_name[0] == '!') {
     // Note that we drop the ! prefix:
     iree_string_view_t type_name = {full_name + 1,
                                     flatbuffers_string_len(full_name) - 1};
-    if (strncmp(type_name.data, "vm.list<", strlen("vm.list<")) == 0) {
+    if (iree_string_view_starts_with(type_name,
+                                     iree_make_cstring_view("vm.list"))) {
       // This is a !vm.list<...> type. We don't actually care about the type as
       // we allow list types to be widened. Rewrite to just vm.list as that's
       // all we have registered.
@@ -68,10 +78,11 @@ static iree_vm_type_def_t iree_vm_bytecode_module_resolve_type(
     const iree_vm_ref_type_descriptor_t* type_descriptor =
         iree_vm_ref_lookup_registered_type(type_name);
     if (type_descriptor) {
-      result.ref_type = type_descriptor->type;
+      out_type->ref_type = type_descriptor->type;
     }
+    return true;
   }
-  return result;
+  return false;
 }
 
 // Resolves all types through either builtin rules or the ref registered types.
@@ -80,18 +91,18 @@ static iree_vm_type_def_t iree_vm_bytecode_module_resolve_type(
 static iree_status_t iree_vm_bytecode_module_resolve_types(
     iree_vm_TypeDef_vec_t type_defs, iree_vm_type_def_t* type_table) {
   IREE_TRACE_ZONE_BEGIN(z0);
+  iree_status_t status = iree_ok_status();
   for (size_t i = 0; i < iree_vm_TypeDef_vec_len(type_defs); ++i) {
     iree_vm_TypeDef_table_t type_def = iree_vm_TypeDef_vec_at(type_defs, i);
-    type_table[i] = iree_vm_bytecode_module_resolve_type(type_def);
-    if (!iree_vm_type_def_is_valid(type_table[i])) {
-      IREE_TRACE_ZONE_END(z0);
-      return iree_make_status(IREE_STATUS_NOT_FOUND,
-                              "no type registered with name '%s'",
-                              iree_vm_TypeDef_full_name(type_def));
+    if (!iree_vm_bytecode_module_resolve_type(type_def, &type_table[i])) {
+      status = iree_make_status(IREE_STATUS_NOT_FOUND,
+                                "no type registered with name '%s'",
+                                iree_vm_TypeDef_full_name(type_def));
+      break;
     }
   }
   IREE_TRACE_ZONE_END(z0);
-  return iree_ok_status();
+  return status;
 }
 
 // Verifies the structure of the flatbuffer so that we can avoid doing so during
@@ -512,32 +523,32 @@ static iree_host_size_t iree_vm_bytecode_module_layout_state(
 
   uint8_t* base_ptr = (uint8_t*)state;
   iree_host_size_t offset =
-      iree_align(sizeof(iree_vm_bytecode_module_state_t), 16);
+      iree_host_align(sizeof(iree_vm_bytecode_module_state_t), 16);
 
   if (state) {
     state->rwdata_storage =
         iree_make_byte_span(base_ptr + offset, rwdata_storage_capacity);
   }
-  offset += iree_align(rwdata_storage_capacity, 16);
+  offset += iree_host_align(rwdata_storage_capacity, 16);
 
   if (state) {
     state->global_ref_count = global_ref_count;
     state->global_ref_table = (iree_vm_ref_t*)(base_ptr + offset);
   }
-  offset += iree_align(global_ref_count * sizeof(iree_vm_ref_t), 16);
+  offset += iree_host_align(global_ref_count * sizeof(iree_vm_ref_t), 16);
 
   if (state) {
     state->rodata_ref_count = rodata_ref_count;
-    state->rodata_ref_table = (iree_vm_ro_byte_buffer_t*)(base_ptr + offset);
+    state->rodata_ref_table = (iree_vm_buffer_t*)(base_ptr + offset);
   }
-  offset += iree_align(rodata_ref_count * sizeof(iree_vm_ro_byte_buffer_t), 16);
+  offset += iree_host_align(rodata_ref_count * sizeof(iree_vm_buffer_t), 16);
 
   if (state) {
     state->import_count = import_function_count;
     state->import_table = (iree_vm_bytecode_import_t*)(base_ptr + offset);
   }
   offset +=
-      iree_align(import_function_count * sizeof(*state->import_table), 16);
+      iree_host_align(import_function_count * sizeof(*state->import_table), 16);
 
   return offset;
 }
@@ -572,11 +583,13 @@ static iree_status_t iree_vm_bytecode_module_alloc_state(
   for (int i = 0; i < state->rodata_ref_count; ++i) {
     iree_vm_RodataSegmentDef_table_t segment =
         iree_vm_RodataSegmentDef_vec_at(rodata_segments, i);
-    iree_vm_ro_byte_buffer_t* ref = &state->rodata_ref_table[i];
-    iree_atomic_ref_count_init(&ref->ref_object.counter);
-    ref->data.data = iree_vm_RodataSegmentDef_data(segment);
-    ref->data.data_length =
-        flatbuffers_uint8_vec_len(iree_vm_RodataSegmentDef_data(segment));
+    iree_vm_buffer_t* ref = &state->rodata_ref_table[i];
+    iree_vm_buffer_initialize(
+        IREE_VM_BUFFER_ACCESS_ORIGIN_MODULE,
+        iree_make_byte_span(
+            (uint8_t*)iree_vm_RodataSegmentDef_data(segment),
+            flatbuffers_uint8_vec_len(iree_vm_RodataSegmentDef_data(segment))),
+        iree_allocator_null(), ref);
   }
 
   *out_module_state = (iree_vm_module_state_t*)state;
@@ -595,6 +608,12 @@ static void iree_vm_bytecode_module_free_state(
   // Release remaining global references.
   for (int i = 0; i < state->global_ref_count; ++i) {
     iree_vm_ref_release(&state->global_ref_table[i]);
+  }
+
+  // Ensure all rodata references are unused and deinitialized.
+  for (int i = 0; i < state->rodata_ref_count; ++i) {
+    iree_vm_buffer_t* ref = &state->rodata_ref_table[i];
+    iree_vm_buffer_deinitialize(ref);
   }
 
   iree_allocator_free(state->allocator, module_state);
@@ -713,7 +732,7 @@ static iree_status_t iree_vm_bytecode_module_begin_call(
   return status;
 }
 
-IREE_API_EXPORT iree_status_t IREE_API_CALL iree_vm_bytecode_module_create(
+IREE_API_EXPORT iree_status_t iree_vm_bytecode_module_create(
     iree_const_byte_span_t flatbuffer_data,
     iree_allocator_t flatbuffer_allocator, iree_allocator_t allocator,
     iree_vm_module_t** out_module) {

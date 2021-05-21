@@ -27,6 +27,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
+#include "mlir/Dialect/StandardOps/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -349,11 +350,6 @@ void VariableStoreIndirectOp::getCanonicalizationPatterns(
 // Dispatch ops
 //===----------------------------------------------------------------------===//
 
-void DispatchRegionOp::getCanonicalizationPatterns(
-    OwningRewritePatternList &results, MLIRContext *context) {
-  results.insert<ClosureOptimizationPattern<DispatchRegionOp>>(context);
-}
-
 void DispatchWorkgroupsOp::getCanonicalizationPatterns(
     OwningRewritePatternList &results, MLIRContext *context) {
   results.insert<ClosureOptimizationPattern<DispatchWorkgroupsOp>>(context);
@@ -423,18 +419,43 @@ struct ConvertDispatchInputLoadOfTensorToSubTensor
         loadOp.strides().empty()) {
       return failure();
     }
-    rewriter.replaceOpWithNewOp<SubTensorOp>(loadOp, loadOp.source(),
-                                             loadOp.offsets(), loadOp.sizes(),
-                                             loadOp.strides());
+    rewriter.replaceOpWithNewOp<SubTensorOp>(
+        loadOp, loadOp.source(), loadOp.getMixedOffsets(),
+        loadOp.getMixedSizes(), loadOp.getMixedStrides());
     return success();
   }
 };
+
+/// Returns the canonical type of the result of the load op.
+struct DispatchTensorLoadReturnTypeCanonicalizer {
+  RankedTensorType operator()(DispatchTensorLoadOp loadOp,
+                              ArrayRef<OpFoldResult> mixedOffsets,
+                              ArrayRef<OpFoldResult> mixedSizes,
+                              ArrayRef<OpFoldResult> mixedStrides) {
+    return DispatchTensorLoadOp::inferResultType(
+        loadOp.source().getType().cast<DispatchTensorType>(), mixedSizes);
+  }
+};
+
+/// A canonicalizer wrapper to replace DispatchTensorLoadOps.
+struct DispatchTensorLoadOpCanonicalizer {
+  void operator()(PatternRewriter &rewriter, DispatchTensorLoadOp op,
+                  DispatchTensorLoadOp newOp) {
+    rewriter.replaceOpWithNewOp<tensor::CastOp>(op, op.getResult().getType(),
+                                                newOp.getResult());
+  }
+};
+
 }  // namespace
 
 void DispatchTensorLoadOp::getCanonicalizationPatterns(
     OwningRewritePatternList &results, MLIRContext *context) {
-  results.insert<ConvertDimOfDispatchInputLoadToDispatchShape,
-                 ConvertDispatchInputLoadOfTensorToSubTensor>(context);
+  results.insert<
+      ConvertDimOfDispatchInputLoadToDispatchShape,
+      ConvertDispatchInputLoadOfTensorToSubTensor,
+      OpWithOffsetSizesAndStridesConstantArgumentFolder<
+          DispatchTensorLoadOp, DispatchTensorLoadReturnTypeCanonicalizer,
+          DispatchTensorLoadOpCanonicalizer>>(context);
 }
 
 // Inlining producers of an input to the dispatch region results in the
@@ -442,11 +463,39 @@ void DispatchTensorLoadOp::getCanonicalizationPatterns(
 // verification. Fold such uses of the offsets, size and strides are emtpy.
 // i.e, flow.dispatch.input.load %v -> %v
 OpFoldResult DispatchTensorLoadOp::fold(ArrayRef<Attribute> operands) {
-  if (source().getType().isa<RankedTensorType>() && offsets().empty() &&
-      sizes().empty() && strides().empty()) {
+  if (source().getType() && source().getType().isa<RankedTensorType>() &&
+      getMixedOffsets().empty() && getMixedSizes().empty() &&
+      getMixedStrides().empty()) {
     return source();
   }
   return {};
+}
+
+//===----------------------------------------------------------------------===//
+// flow.dispatch.tensor.store
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct FoldCastOpIntoDispatchStoreOp
+    : public OpRewritePattern<DispatchTensorStoreOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(DispatchTensorStoreOp storeOp,
+                                PatternRewriter &rewriter) const override {
+    if (!storeOp.value().getDefiningOp<tensor::CastOp>()) return failure();
+    auto parentOp = storeOp.value().getDefiningOp<tensor::CastOp>();
+    rewriter.replaceOpWithNewOp<DispatchTensorStoreOp>(
+        storeOp, parentOp.source(), storeOp.target(), storeOp.offsets(),
+        storeOp.sizes(), storeOp.strides(), storeOp.static_offsets(),
+        storeOp.static_sizes(), storeOp.static_strides());
+    return success();
+  }
+};
+}  // namespace
+
+void DispatchTensorStoreOp::getCanonicalizationPatterns(
+    OwningRewritePatternList &results, MLIRContext *context) {
+  results.insert<FoldCastOpIntoDispatchStoreOp>(context);
 }
 
 //===----------------------------------------------------------------------===//
@@ -550,14 +599,78 @@ static uint64_t getFlattenedIndex(ShapedType type, ArrayRef<uint64_t> index) {
   return valueIndex;
 }
 
+static bool compareShapesEqual(ShapedType lhsType, ValueRange lhsDynamicDims,
+                               ShapedType rhsType, ValueRange rhsDynamicDims) {
+  if (lhsType.hasStaticShape() &&
+      lhsType.getNumElements() == rhsType.getNumElements()) {
+    // Static shape equivalence means we can fast-path the check.
+    return true;
+  }
+  if (lhsType.getRank() != rhsType.getRank()) {
+    return false;
+  }
+  unsigned dynamicDimIndex = 0;
+  for (unsigned i = 0; i < lhsType.getRank(); ++i) {
+    if (lhsType.isDynamicDim(i) != rhsType.isDynamicDim(i)) {
+      // Static/dynamic dimension mismatch - definitely differ.
+      return false;
+    } else if (lhsType.isDynamicDim(i)) {
+      unsigned j = dynamicDimIndex++;
+      if (lhsDynamicDims[j] != rhsDynamicDims[j]) {
+        // Dynamic dimensions with different SSA values - probably differ.
+        return false;
+      }
+    } else {
+      if (lhsType.getDimSize(i) != rhsType.getDimSize(i)) {
+        // Static dimensions differ.
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 OpFoldResult TensorReshapeOp::fold(ArrayRef<Attribute> operands) {
   auto sourceType = source().getType().cast<ShapedType>();
   auto resultType = result().getType().cast<ShapedType>();
-  if (sourceType.hasStaticShape() && sourceType == resultType) {
-    // No-op.
+  if (compareShapesEqual(sourceType, source_dims(), resultType,
+                         result_dims())) {
+    // Shapes match and this is a no-op so just fold to the source.
     return source();
   }
+
   return {};
+}
+
+namespace {
+
+// Flatten a chain of reshapes (reshape feeding into reshape) such that a
+// reshape only ever pulls from a non-reshape source. This prevents big useless
+// chains and makes it easier to track the original storage for the tensor.
+struct FlattenTensorReshapeChain : public OpRewritePattern<TensorReshapeOp> {
+  using OpRewritePattern<TensorReshapeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(TensorReshapeOp reshapeOp,
+                                PatternRewriter &rewriter) const override {
+    auto sourceOp =
+        dyn_cast_or_null<TensorReshapeOp>(reshapeOp.source().getDefiningOp());
+    if (!sourceOp) return failure();
+
+    // We want the same result value/shape but to source from the ancestor. We
+    // need to pull any dynamic dims from that as we don't care about the
+    // intermediate reshapes.
+    rewriter.replaceOpWithNewOp<TensorReshapeOp>(
+        reshapeOp, reshapeOp.result().getType(), sourceOp.source(),
+        sourceOp.source_dims(), reshapeOp.result_dims());
+    return success();
+  }
+};
+
+}  // namespace
+
+void TensorReshapeOp::getCanonicalizationPatterns(
+    OwningRewritePatternList &results, MLIRContext *context) {
+  results.insert<FlattenTensorReshapeChain>(context);
 }
 
 OpFoldResult TensorLoadOp::fold(ArrayRef<Attribute> operands) {

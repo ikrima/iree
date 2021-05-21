@@ -43,9 +43,10 @@ FlowTypeConverter::FlowTypeConverter() {
   // 64-bit types natively.
   // TODO(benvanik): make whether to narrow integers an option.
   addConversion([](IntegerType integerType) -> Optional<Type> {
-    if (integerType.isSignlessInteger() && integerType.getWidth() > 32) {
-      // Don't support 64-bit types in general. Rewrite to i32 (if desired).
-      return IntegerType::get(integerType.getContext(), 32);
+    if (integerType.getWidth() > 32) {
+      // Narrow to i32 preserving signedness semantics.
+      return IntegerType::get(integerType.getContext(), 32,
+                              integerType.getSignedness());
     }
     return llvm::None;
   });

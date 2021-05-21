@@ -17,6 +17,8 @@
 
 include "iree/compiler/Dialect/HAL/IR/HALBase.td"
 include "iree/compiler/Dialect/HAL/IR/HALInterfaces.td"
+include "iree/compiler/Dialect/IREE/IR/IREEInterfaces.td"
+include "iree/compiler/Dialect/Shape/IR/ShapeInterfaces.td"
 include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -58,6 +60,59 @@ def HAL_ExSubmitAndWaitOp : HAL_Op<"ex.submit_and_wait", [YieldPoint]> {
   );
 
   let assemblyFormat = "$device `,` $command_buffer attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
+// Pseudo ops for conversion support
+//===----------------------------------------------------------------------===//
+
+def HAL_TensorCastOp : HAL_PureOp<"tensor.cast", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<IREE_TiedOpInterface, [
+        "getTiedResult",
+        "getTiedResultOperandIndex",
+        "getTiedResultOperandIndices",
+    ]>,
+    DeclareOpInterfaceMethods<Shape_ShapeCarryingOpInterface>,
+  ]> {
+  let summary = [{conversion placeholder for HAL<->tensor type conversion}];
+  let description = [{
+    Defines a conversion from a higher-level dialect type such as `tensor` that
+    is resolved during lowering into the HAL. This can be used to interoperate
+    between levels of the stack that require specifying HAL types and those that
+    prior to lowering do not handle them.
+  }];
+
+  let arguments = (ins
+    AnyType:$source,
+    HAL_ShapeDynamicDims:$source_dims,
+    HAL_ShapeDynamicDims:$target_dims
+  );
+  let results = (outs
+    AnyType:$target
+  );
+
+  let assemblyFormat = [{
+    $source `:`
+    type($source) (`{` $source_dims^ `}`)? `->`
+    type($target) (`{` $target_dims^ `}`)?
+    attr-dict-with-keyword
+  }];
+
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins
+      "Type":$resultType,
+      "Value":$source,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attributes)>,
+    OpBuilder<(ins
+      "Type":$resultType,
+      "Value":$source,
+      "ValueRange":$dynamicDims,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attributes)>,
+  ];
+
+  let hasFolder = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -484,6 +539,110 @@ def HAL_AllocatorMapOp : HAL_Op<"allocator.map", [
   }];
 }
 
+def HAL_AllocatorPackOp : HAL_PureOp<"allocator.pack", [
+    DeclareOpInterfaceMethods<OpAsmOpInterface>,
+    AttrSizedOperandSegments,
+  ]> {
+  let summary = [{packs variable-sized slices into a single slab}];
+  let description = [{
+    Performs a greedy packing of one or more sized slices with specified
+    lifetimes and returns their relative offsets in an aliased linear space.
+
+    Slices are `[start, end] = %slice_byte_size`, where the start and end values
+    define an inclusive lifetime range and the size is the total number of bytes
+    required to be live for that range.
+
+    ```mlir
+    // Computes thte total length required for the packed values and the offsets
+    // of the 3 slices requested relative to the base of the packed memory:
+    %total_length, %offset_0, %offset_1, %offset_2 =
+        hal.allocator.pack<%allocator : !hal.allocator>
+            // Each slice gets one result offset:
+            slices([
+              // 3 slices where A and B overlap and will get unique offsets
+              // while B and C do not overlap and are allowed to alias.
+              [0, 10] = %size_0,  // A => %offset_0
+              [3,  8] = %size_1,  // B => %offset_1
+              [9, 10] = %size_2,  // C => %offset_2
+              ...
+            ]) : index
+    ```
+
+    The lifetime start and end points (inclusive) are only used for relative
+    comparisons and may originate with any meaning (op order in block, epoch,
+    phase of the moon, etc). The packing algorithm uses the intervals to
+    determine slice liveness and when aliasing is safe.
+
+    The size of each slice may either be a constant or runtime-computed dynamic
+    value. Constant slices can achieve more dense packing than the dynamic
+    values and CSE/canonicalization should be applied to ensure that as many of
+    the dynamic values are equivalent if possible.
+
+    The total length required to pack all slices is returned and can be used to
+    acquire storage. The individual slice offsets are 0-based and as such if are
+    directly used as buffer offsets may need additional offseting. This can
+    either be applied via the optional `offset` operand or slicing of the
+    underlying allocation buffer.
+  }];
+
+  let arguments = (ins
+    HAL_Allocator:$allocator,
+    Optional<HAL_DeviceSize>:$offset,
+    HAL_IndexArrayAttr:$lifetime_intervals,
+    Variadic<HAL_DeviceSize>:$dynamic_slice_sizes
+  );
+  let results = (outs
+    HAL_DeviceSize:$total_length,
+    Variadic<HAL_DeviceSize>:$packed_offsets
+  );
+
+  let assemblyFormat = [{
+    `<` $allocator `:` type($allocator) `>`
+    (`offset` `(` $offset^ `)`)?
+    `slices` `(` `{`
+    custom<PackSliceRanges>($lifetime_intervals,
+                            $dynamic_slice_sizes,
+                            type($packed_offsets))
+    `}` `)`
+    `:` type($total_length)
+    attr-dict-with-keyword
+  }];
+
+  let verifier = [{ return verifyAllocatorPackOp(*this); }];
+
+  let extraClassDeclaration = [{
+    struct Slice {
+      int64_t lifetimeStart;
+      int64_t lifetimeEnd;
+      Value dynamicSize;
+      Value packedOffset;
+
+      bool operator==(const Slice &rhs) const {
+        return lifetimeStart == rhs.lifetimeStart &&
+               lifetimeEnd == rhs.lifetimeEnd;
+      }
+      bool operator!=(const Slice &rhs) const {
+        return !(*this == rhs);
+      }
+      bool operator<(const Slice &rhs) const {
+        return std::make_pair(lifetimeStart, lifetimeEnd) <
+               std::make_pair(rhs.lifetimeStart, rhs.lifetimeEnd);
+      }
+      bool intersects(const Slice &rhs) const {
+        return lifetimeEnd >= rhs.lifetimeStart &&
+               rhs.lifetimeEnd >= lifetimeStart;
+      }
+    };
+
+    /// Returns all of the slices to be packed.
+    /// Order is ascending by lifetime interval (post-canonicalization).
+    SmallVector<Slice> getSlices();
+  }];
+
+  let hasCanonicalizer = 1;
+  let hasFolder = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // !hal.buffer / iree_hal_buffer_t
 //===----------------------------------------------------------------------===//
@@ -558,51 +717,6 @@ def HAL_BufferLengthOp : HAL_PureOp<"buffer.length", [
   let assemblyFormat = [{
     `<` $buffer `:` type($buffer) `>`
     `:` type($result)
-    attr-dict-with-keyword
-  }];
-}
-
-def HAL_BufferFillOp : HAL_Op<"buffer.fill"> {
-  let summary = [{buffer fill operation}];
-  let description = [{
-    Fills the target buffer with the given repeating value.
-  }];
-
-  let arguments = (ins
-    HAL_BufferType:$target_buffer,
-    HAL_DeviceSize:$target_offset,
-    HAL_DeviceSize:$length,
-    I32:$pattern
-  );
-
-  let assemblyFormat = [{
-    `<` $target_buffer `:` type($target_buffer) `>`
-    `` `[` $target_offset `,` $length `]`
-    `pattern` `(` $pattern `:` type($pattern) `)`
-    attr-dict-with-keyword
-  }];
-}
-
-def HAL_BufferCopyOp : HAL_Op<"buffer.copy"> {
-  let summary = [{buffer-to-buffer copy operation}];
-  let description = [{
-    Copies data from the provided source_buffer into the buffer.
-  }];
-
-  let arguments = (ins
-    HAL_BufferType:$source_buffer,
-    HAL_DeviceSize:$source_offset,
-    HAL_BufferType:$target_buffer,
-    HAL_DeviceSize:$target_offset,
-    HAL_DeviceSize:$length
-  );
-
-  let assemblyFormat = [{
-    `source` `(` $source_buffer `:` type($source_buffer) `)`
-    `` `[` $source_offset `]`
-    `target` `(` $target_buffer `:` type($target_buffer) `)`
-    `` `[` $target_offset `]`
-    `length` `(` $length `)`
     attr-dict-with-keyword
   }];
 }
@@ -1066,6 +1180,8 @@ def HAL_CommandBufferFillBufferOp : HAL_Op<"command_buffer.fill_buffer"> {
     `pattern` `(` $pattern `:` type($pattern) `)`
     attr-dict-with-keyword
   }];
+
+  let hasCanonicalizer = 1;
 }
 
 // TODO(benvanik): update buffer op.
@@ -1094,6 +1210,8 @@ def HAL_CommandBufferCopyBufferOp : HAL_Op<"command_buffer.copy_buffer"> {
     `length` `(` $length `)`
     attr-dict-with-keyword
   }];
+
+  let hasCanonicalizer = 1;
 }
 
 def HAL_CommandBufferPushConstantsOp :
@@ -1703,7 +1821,7 @@ def HAL_DeviceSwitchOp : HAL_Op<"device.switch", [IsolatedFromAbove]> {
       #hal.device.match.id<"vulkan-v1.?-*">(%c1a = %c1 : i32) {
         hal.return %c1a : i32
       },
-      #hal.match.any<[#hal.device.match.id<"vmla">, #hal.device.match.id<"vulkan-*">]>(%c2a = %c2 : i32) {
+      #hal.match.any<[#hal.device.match.id<"vmvx">, #hal.device.match.id<"vulkan-*">]>(%c2a = %c2 : i32) {
         hal.return %c2a : i32
       },
       #hal.match.always(%c0a = %c0 : i32) {
@@ -1826,6 +1944,48 @@ def HAL_DeviceMatchMemoryModelOp : HAL_PureOp<"device.match.memory_model"> {
   }];
 }
 
+def HAL_DeviceQueryOp : HAL_PureOp<"device.query"> {
+  let summary = [{returns a runtime configuration parameter from the device}];
+  let description = [{
+    Queries a device configuration parameter with the given key.
+    Returns a status indicating whether the key was recognized/available and if
+    it was the value converted to the specified type. Queries must return the
+    same value for the lifetime of the module though may vary from run to run.
+
+    This is roughly equivalent to the `sysconf` linux syscall
+    (https://man7.org/linux/man-pages/man3/sysconf.3.html) in that the exact
+    set of keys available and their interpretation is target-dependent. If there
+    is a HAL match attribute (`#hal.device.match.*`) or op
+    (`hal.device.match.*`) prefer to use that in order to get compile-time
+    propagation when the target is specified and elide the runtime query and
+    get compile-time verification when a runtime query is required.
+
+    Users of the op must check the `ok` result before using the value as what
+    set of keys is available may change over time. If in doubt: don't use this.
+    Each key used adds additional versioning and testing complexity as runtime
+    code path changes will explode combinatorially and should be treated with as
+    much care as a binary file format change. Keys should be prefixed with `ex.`
+    when experimental indicating that they are not expected to be present
+    forever; all non-experimental keys should be vetted.
+  }];
+
+  let arguments = (ins
+    HAL_Device:$device,
+    StrAttr:$key
+  );
+  let results = (outs
+    I1:$ok,
+    AnyType:$value
+  );
+
+  let assemblyFormat = [{
+    `<` $device `:` type($device) `>`
+    `key` `(` $key `)`
+    `:` type($ok) `,` type($value)
+    attr-dict-with-keyword
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // !hal.executable / iree_hal_executable_t
 //===----------------------------------------------------------------------===//
@@ -1895,7 +2055,6 @@ def HAL_ExecutableEntryPointOp : HAL_Op<"executable.entry_point", [
     StrAttr:$sym_name,
     HAL_OrdinalAttr:$ordinal,
     FlatSymbolRefAttr:$interface,
-    TypeAttr:$signature,
     OptionalAttr<HAL_WorkgroupSizeAttr>:$workgroup_size
   );
 
@@ -1906,20 +2065,18 @@ def HAL_ExecutableEntryPointOp : HAL_Op<"executable.entry_point", [
       "::llvm::StringRef":$sym_name,
       "::llvm::APInt":$ordinal,
       "::llvm::StringRef":$interface,
-      "::mlir::Type":$signature,
       "::mlir::ArrayAttr":$workgroup_size
     ), [{
-      build($_builder, $_state, sym_name, ordinal, interface, signature,
+      build($_builder, $_state, sym_name, ordinal, interface,
             workgroup_size, 0);
     }]>,
     OpBuilder<(ins
       "::mlir::StringAttr":$sym_name,
       "::mlir::IntegerAttr":$ordinal,
       "::mlir::FlatSymbolRefAttr":$interface,
-      "::mlir::TypeAttr":$signature,
       "::mlir::ArrayAttr":$workgroup_size
     ), [{
-      build($_builder, $_state, sym_name, ordinal, interface, signature,
+      build($_builder, $_state, sym_name, ordinal, interface,
             workgroup_size, 0);
     }]>
   ];
@@ -1996,15 +2153,13 @@ def HAL_ExecutableBinaryOp : HAL_Op<"executable.binary", [
   let description = [{
     A compiled executable binary with an optional nested module containing the
     IR prior to serialization (for debugging).
-
-    The `format` attribute specifies a four character code (FourCC) matching the
-    executable format in `iree/hal/executable_format.h`.
   }];
 
   let arguments = (ins
     StrAttr:$sym_name,
-    HAL_ExecutableFormatAttr:$format,
-    HAL_ExecutableDataAttr:$data
+    StrAttr:$format,
+    HAL_ExecutableDataAttr:$data,
+    OptionalAttr<StrAttr>:$mime_type
     // TODO(benvanik): add compatibility and versioning attributes.
   );
 
@@ -2014,12 +2169,12 @@ def HAL_ExecutableBinaryOp : HAL_Op<"executable.binary", [
   let builders = [
     OpBuilder<(ins
       "StringRef":$name,
-      "uint32_t":$format,
+      "StringRef":$format,
       "std::vector<uint8_t>":$data
     )>,
     OpBuilder<(ins
       "StringRef":$name,
-      "uint32_t":$format,
+      "StringAttr":$format,
       "DenseIntElementsAttr":$data
     )>,
   ];
@@ -2337,265 +2492,6 @@ def HAL_InterfaceBindingSubspanOp : HAL_Op<"interface.binding.subspan", [
     /// Returns the hal.interface.binding op associated with this op.
     /// Returns null op if not found.
     IREE::HAL::InterfaceBindingOp queryBindingOp();
-  }];
-}
-
-def HAL_InterfaceLoadTensorOp : HAL_PureOp<"interface.load.tensor"> {
-  let summary = [{loads a tensor from an executable IO binding}];
-  let description = [{
-    Loads a tensor value from an executable IO binding. This is a pseudo op
-    that can be used to tie SSA tensor values in the IR to the bindings that
-    contain those tensors.
-
-    Note that because there may not be a 1:1 mapping between original tensor
-    arguments to the entry point function and the bindings in the interface the
-    backend must use the offset provided on this op to properly compute the base
-    address of the tensor data. The offset is in bytes relative to the base
-    binding address, irrespective of the type of the tensor loaded by this
-    operation.
-
-    The offset provided, if non-zero, will have an alignment compatible with the
-    tensor type represented. For example, a `tensor<16xf32>` will be aligned on
-    at least a 4 byte boundary.
-  }];
-
-  let arguments = (ins
-    SymbolRefAttr:$binding,
-    HAL_DeviceSize:$offset
-  );
-  let results = (outs
-    AnyRankedTensor:$result
-  );
-
-  let assemblyFormat = [{
-    $binding `,` `offset` `=` $offset attr-dict `:` type($result)
-  }];
-
-  let extraClassDeclaration = [{
-    /// Returns the hal.interface.binding op associated with this op.
-    /// Returns null op if not found.
-    IREE::HAL::InterfaceBindingOp queryBindingOp();
-  }];
-}
-
-def HAL_InterfaceStoreTensorOp : HAL_Op<"interface.store.tensor"> {
-  let summary = [{stores a tensor in an executable IO binding}];
-  let description = [{
-    Stores a tensor value into an executable IO binding. This is a pseudo op
-    indicating that the value of the operand tensor should be stored into the
-    specified binding.
-
-    Note that because there may not be a 1:1 mapping between original tensor
-    arguments to the entry point function and the bindings in the interface the
-    backend must use the offset provided on this op to properly compute the base
-    address of the tensor data. The offset is in bytes relative to the base
-    binding address, irrespective of the type of the tensor loaded by this
-    operation.
-
-    The offset provided, if non-zero, will have an alignment compatible with the
-    tensor type represented. For example, a `tensor<16xf32>` will be aligned on
-    at least a 4 byte boundary.
-  }];
-
-  let arguments = (ins
-    AnyRankedTensor:$operand,
-    SymbolRefAttr:$binding,
-    HAL_DeviceSize:$offset
-  );
-
-  let assemblyFormat = [{
-    $operand `,` $binding `,` `offset` `=` $offset
-    attr-dict `:` type($operand)
-  }];
-
-  let extraClassDeclaration = [{
-    /// Returns the hal.interface.binding op associated with this op.
-    /// Returns null op if not found.
-    IREE::HAL::InterfaceBindingOp queryBindingOp();
-  }];
-}
-
-def HAL_InterfaceLoadTensorTileOp : HAL_PureOp<"interface.load.tensor.tile", [
-    AttrSizedOperandSegments,
-    OffsetSizeAndStrideOpInterface,
-  ]> {
-  let summary = [{loads a tensor tile from an executable IO binding}];
-  let description = [{
-    Loads a tensor tile value from an executable IO binding at the given
-    offset/size/stride. This is a pseudo op that can be used to tie SSA tensor
-    values in the IR to the bindings that contain those tensors.
-
-    Note that because there may not be a 1:1 mapping between original tensor
-    arguments to the entry point function and the bindings in the interface the
-    backend must use the offset provided on this op to properly compute the base
-    address of the tensor data. The offset is in bytes relative to the base
-    binding address, irrespective of the type of the tensor loaded by this
-    operation.
-
-    The base_offset provided, if non-zero, will have an alignment compatible
-    with the tensor type represented. For example, a `tensor<16xf32>` will be
-    aligned on at least a 4 byte boundary.
-
-    The op follows the semantic of similar core MLIR strided subview / subtensor
-    ops where offset-list, size-list and stride-list are SSA value or constants
-    of type index.
-
-    Example:
-    ```
-      `hal.interface.load.tensor.tile` $binding `,`
-        `base_offset` `=` base_offset `,`
-        `offsets` `=` `[` offset-list `]` `,`
-        `sizes` `=` `[` size-list `]` `,`
-        `strides` `=` `[` stride-list `]` attr-dict `:` type($result)
-    ```
-  }];
-
-  let arguments = (ins
-    SymbolRefAttr:$binding,
-    HAL_DeviceSize:$base_offset,
-    Variadic<Index>:$offsets,
-    Variadic<Index>:$sizes,
-    Variadic<Index>:$strides,
-    I64ArrayAttr:$static_offsets,
-    I64ArrayAttr:$static_sizes,
-    I64ArrayAttr:$static_strides
-  );
-  let results = (outs
-    AnyRankedTensor:$result
-  );
-
-  let assemblyFormat = [{
-    $binding `,`
-    `base_offset` `=` $base_offset `,`
-    `offsets` `=`
-    custom<OperandsOrIntegersOffsetsOrStridesList>($offsets, $static_offsets) `,`
-    `sizes` `=`
-    custom<OperandsOrIntegersSizesList>($sizes, $static_sizes) `,`
-    `strides` `=`
-    custom<OperandsOrIntegersOffsetsOrStridesList>($strides, $static_strides)
-    attr-dict `:` type($result)
-  }];
-
-  let extraClassDeclaration = [{
-    /// Returns the hal.interface.binding op associated with this op.
-    /// Returns null op if not found.
-    IREE::HAL::InterfaceBindingOp queryBindingOp();
-
-    /// Return the expected rank of each of the`static_offsets`, `static_sizes`
-    /// and `static_strides` attributes.
-    std::array<unsigned, 3> getArrayAttrMaxRanks() {
-      unsigned resultRank = getResult().getType().cast<ShapedType>().getRank();
-      return {resultRank, resultRank, resultRank};
-    }
-
-    /// Special attribute names.
-    static StringRef getBindingAttrName() {
-      return "binding";
-    }
-    static ArrayRef<StringRef> getSpecialAttrNames() {
-      static SmallVector<StringRef, 5> names{getBindingAttrName()};
-      if (names.size() !=
-          1 + OffsetSizeAndStrideOpInterface::getSpecialAttrNames().size()) {
-        auto otherNames = OffsetSizeAndStrideOpInterface::getSpecialAttrNames();
-        names.append(otherNames.begin(), otherNames.end());
-      }
-      return names;
-    }
-
-    /// Return the number of leading operands before the `offsets`, `sizes` and
-    /// and `strides` operands.
-    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 1; }
-  }];
-}
-
-def HAL_InterfaceStoreTensorTileOp : HAL_Op<"interface.store.tensor.tile", [
-    AttrSizedOperandSegments,
-    OffsetSizeAndStrideOpInterface,
-  ]> {
-  let summary = [{stores a tensor tile in an executable IO binding}];
-  let description = [{
-    Stores a tensor value into an executable IO binding. This is a pseudo op
-    indicating that the value of the operand tensor should be stored into the
-    specified binding at the given offset/size/stride.
-
-    Note that because there may not be a 1:1 mapping between original tensor
-    arguments to the entry point function and the bindings in the interface the
-    backend must use the offset provided on this op to properly compute the base
-    address of the tensor data. The offset is in bytes relative to the base
-    binding address, irrespective of the type of the tensor loaded by this
-    operation.
-
-    The base_offset provided, if non-zero, will have an alignment compatible
-    with the tensor type represented. For example, a `tensor<16xf32>` will be
-    aligned on at least a 4 byte boundary.
-
-    The op follows the semantic of similar core MLIR strided subview / subtensor
-    ops where offset-list, size-list and stride-list are SSA value or constants
-    of type index.
-
-    Grammar:
-    ```
-      `hal.interface.store.tensor.tile` $operand `,` $binding `,`
-        `base_offset` `=` base_offset `,`
-        `offsets` `=` `[` offset-list `]` `,`
-        `sizes` `=` `[` size-list `]` `,`
-        `strides` `=` `[` stride-list `]` attr-dict `:` type($operand)
-    ```
-  }];
-
-  let arguments = (ins
-    AnyRankedTensor:$operand,
-    SymbolRefAttr:$binding,
-    HAL_DeviceSize:$base_offset,
-    Variadic<Index>:$offsets,
-    Variadic<Index>:$sizes,
-    Variadic<Index>:$strides,
-    I64ArrayAttr:$static_offsets,
-    I64ArrayAttr:$static_sizes,
-    I64ArrayAttr:$static_strides
-  );
-
-  let assemblyFormat = [{
-    $operand `,` $binding `,`
-    `base_offset` `=` $base_offset `,`
-    `offsets` `=`
-    custom<OperandsOrIntegersOffsetsOrStridesList>($offsets, $static_offsets) `,`
-    `sizes` `=`
-    custom<OperandsOrIntegersSizesList>($sizes, $static_sizes) `,`
-    `strides` `=`
-    custom<OperandsOrIntegersOffsetsOrStridesList>($strides, $static_strides)
-    attr-dict `:` type($operand)
-  }];
-
-  let extraClassDeclaration = [{
-    /// Returns the hal.interface.binding op associated with this op.
-    /// Returns null op if not found.
-    IREE::HAL::InterfaceBindingOp queryBindingOp();
-
-    /// Return the expected rank of each of the`static_offsets`, `static_sizes`
-    /// and `static_strides` attributes.
-    std::array<unsigned, 3> getArrayAttrMaxRanks() {
-      unsigned rank = operand().getType().cast<ShapedType>().getRank();
-      return {rank, rank, rank};
-    }
-
-    /// Special attribute names.
-    static StringRef getBindingAttrName() {
-      return "binding";
-    }
-    static ArrayRef<StringRef> getSpecialAttrNames() {
-      static SmallVector<StringRef, 5> names{getBindingAttrName()};
-      if (names.size() !=
-          1 + OffsetSizeAndStrideOpInterface::getSpecialAttrNames().size()) {
-        auto otherNames = OffsetSizeAndStrideOpInterface::getSpecialAttrNames();
-        llvm::append_range(names, otherNames);
-      }
-      return names;
-    }
-
-    /// Return the number of leading operands before the `offsets`, `sizes` and
-    /// and `strides` operands.
-    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 2; }
   }];
 }
 

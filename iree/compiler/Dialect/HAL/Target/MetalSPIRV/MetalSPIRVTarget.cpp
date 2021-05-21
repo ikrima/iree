@@ -14,7 +14,6 @@
 
 #include "iree/compiler/Dialect/HAL/Target/MetalSPIRV/MetalSPIRVTarget.h"
 
-#include "iree/compiler/Conversion/Common/Attributes.h"
 #include "iree/compiler/Dialect/HAL/Target/MetalSPIRV/SPIRVToMSL.h"
 #include "iree/compiler/Dialect/HAL/Target/SPIRVCommon/SPIRVTarget.h"
 #include "iree/compiler/Dialect/HAL/Target/TargetRegistry.h"
@@ -79,18 +78,9 @@ class MetalSPIRVTargetBackend : public SPIRVTargetBackend {
     // names for constructing pipeline states. Get an ordered list of the entry
     // point names.
     SmallVector<StringRef, 8> entryPointNames;
-    if (auto scheduleAttr = innerModuleOp->getAttrOfType<ArrayAttr>(
-            iree_compiler::getEntryPointScheduleAttrName())) {
-      // We have multiple entry points in this module. Make sure the order
-      // specified in the schedule attribute is respected.
-      for (Attribute entryPoint : scheduleAttr) {
-        entryPointNames.push_back(entryPoint.cast<StringAttr>().getValue());
-      }
-    } else {
-      spvModuleOp.walk([&](spirv::EntryPointOp entryPointOp) {
-        entryPointNames.push_back(entryPointOp.fn());
-      });
-    }
+    spvModuleOp.walk([&](spirv::EntryPointOp entryPointOp) {
+      entryPointNames.push_back(entryPointOp.fn());
+    });
 
     // 1. Serialize the spirv::ModuleOp into binary format.
     SmallVector<uint32_t, 0> spvBinary;
@@ -121,6 +111,7 @@ class MetalSPIRVTargetBackend : public SPIRVTargetBackend {
 
     // 4. Pack the MTLLibrary and metadata into a flatbuffer.
     FlatbufferBuilder builder;
+    iree_MetalExecutableDef_start_as_root(builder);
 
     auto shaderSourcesRef = builder.createStringVec(llvm::map_range(
         mslShaders, [&](const MetalShader &shader) { return shader.source; }));
@@ -135,17 +126,18 @@ class MetalSPIRVTargetBackend : public SPIRVTargetBackend {
 
     auto entryPointNamesRef = builder.createStringVec(entryPointNames);
 
-    iree_MetalExecutableDef_start_as_root(builder);
     iree_MetalExecutableDef_entry_points_add(builder, entryPointNamesRef);
     iree_MetalExecutableDef_threadgroup_sizes_add(builder, threadgroupSizesRef);
     iree_MetalExecutableDef_shader_sources_add(builder, shaderSourcesRef);
     iree_MetalExecutableDef_end_as_root(builder);
 
     // 5. Add the binary data to the target executable.
-    executableBuilder.create<IREE::HAL::ExecutableBinaryOp>(
+    auto binaryOp = executableBuilder.create<IREE::HAL::ExecutableBinaryOp>(
         targetOp.getLoc(), targetOp.sym_name(),
-        static_cast<uint32_t>(IREE::HAL::ExecutableFormat::Metal),
+        executableBuilder.getStringAttr("MTLE"),
         builder.getBufferAttr(executableBuilder.getContext()));
+    binaryOp.mime_typeAttr(
+        executableBuilder.getStringAttr("application/x-flatbuffers"));
 
     return success();
   }

@@ -12,7 +12,7 @@ iree_add_all_subdirs()
 
 iree_check_single_backend_test_suite(
   NAME
-    check_vmla_vmla
+    check_cuda
   SRCS
     "abs.mlir"
     "add.mlir"
@@ -22,16 +22,15 @@ iree_check_single_backend_test_suite(
     "broadcast_in_dim.mlir"
     "clamp.mlir"
     "compare.mlir"
-    "concatenate.mlir"
     "constant.mlir"
     "convert.mlir"
     "convolution.mlir"
     "cosine.mlir"
     "divide.mlir"
-    "dot.mlir"
-    "dot_general.mlir"
+    "dynamic_slice.mlir"
     "exponential.mlir"
     "exponential_minus_one.mlir"
+    "fft.mlir"
     "finite.mlir"
     "floor.mlir"
     "gather.mlir"
@@ -43,64 +42,6 @@ iree_check_single_backend_test_suite(
     "multiply.mlir"
     "negate.mlir"
     "pad.mlir"
-    "reduce.mlir"
-    "reduce_window.mlir"
-    "remainder.mlir"
-    "reshape.mlir"
-    "reverse.mlir"
-    "round.mlir"
-    "rsqrt.mlir"
-    "select.mlir"
-    "sine.mlir"
-    "slice.mlir"
-    "sort.mlir"
-    "sqrt.mlir"
-    "subtract.mlir"
-    "tanh.mlir"
-    "torch_index_select.mlir"
-    "transpose.mlir"
-    "while.mlir"
-  TARGET_BACKEND
-    "vmla"
-  DRIVER
-    "vmla"
-)
-
-iree_check_single_backend_test_suite(
-  NAME
-    check_vulkan-spirv_vulkan
-  SRCS
-    "abs.mlir"
-    "add.mlir"
-    "batch_norm_inference.mlir"
-    "broadcast.mlir"
-    "broadcast_add.mlir"
-    "broadcast_in_dim.mlir"
-    "clamp.mlir"
-    "compare.mlir"
-    "concatenate.mlir"
-    "constant.mlir"
-    "convert.mlir"
-    "convolution.mlir"
-    "cosine.mlir"
-    "divide.mlir"
-    "dot.mlir"
-    "dot_general.mlir"
-    "exponential.mlir"
-    "exponential_minus_one.mlir"
-    "floor.mlir"
-    "gather.mlir"
-    "iota.mlir"
-    "log.mlir"
-    "log_plus_one.mlir"
-    "maximum.mlir"
-    "minimum.mlir"
-    "multiply.mlir"
-    "negate.mlir"
-    "pad.mlir"
-    "reduce.mlir"
-    "reduce_window.mlir"
-    "remainder.mlir"
     "reshape.mlir"
     "reverse.mlir"
     "rsqrt.mlir"
@@ -114,9 +55,15 @@ iree_check_single_backend_test_suite(
     "transpose.mlir"
     "while.mlir"
   TARGET_BACKEND
-    "vulkan-spirv"
+    "cuda"
   DRIVER
-    "vulkan"
+    "cuda"
+  LABELS
+    "noasan"
+    "nomsan"
+    "notsan"
+    "noubsan"
+    "requires-gpu-nvidia"
 )
 
 iree_check_single_backend_test_suite(
@@ -139,8 +86,10 @@ iree_check_single_backend_test_suite(
     "divide.mlir"
     "dot.mlir"
     "dot_general.mlir"
+    "dynamic_slice.mlir"
     "exponential.mlir"
     "exponential_minus_one.mlir"
+    "fft.mlir"
     "floor.mlir"
     "gather.mlir"
     "iota.mlir"
@@ -174,7 +123,7 @@ iree_check_single_backend_test_suite(
 
 iree_check_single_backend_test_suite(
   NAME
-    check_linalg_on_tensors_dylib-llvm-aot_dylib
+    check_vmvx_vmvx
   SRCS
     "abs.mlir"
     "add.mlir"
@@ -192,8 +141,10 @@ iree_check_single_backend_test_suite(
     "divide.mlir"
     "dot.mlir"
     "dot_general.mlir"
+    "dynamic_slice.mlir"
     "exponential.mlir"
     "exponential_minus_one.mlir"
+    "fft.mlir"
     "floor.mlir"
     "gather.mlir"
     "iota.mlir"
@@ -220,17 +171,14 @@ iree_check_single_backend_test_suite(
     "transpose.mlir"
     "while.mlir"
   TARGET_BACKEND
-    "dylib-llvm-aot"
+    "vmvx"
   DRIVER
-    "dylib"
-  COMPILER_FLAGS
-    "-iree-flow-dispatch-linalg-on-tensors"
-    "-iree-codegen-llvm-experimental-linalg-on-tensors"
+    "vmvx"
 )
 
 iree_check_single_backend_test_suite(
   NAME
-    check_linalg_on_tensors_vulkan-spirv_vulkan
+    check_vulkan-spirv_vulkan
   SRCS
     "abs.mlir"
     "add.mlir"
@@ -248,6 +196,7 @@ iree_check_single_backend_test_suite(
     "divide.mlir"
     "dot.mlir"
     "dot_general.mlir"
+    "dynamic_slice.mlir"
     "exponential.mlir"
     "exponential_minus_one.mlir"
     "floor.mlir"
@@ -279,39 +228,6 @@ iree_check_single_backend_test_suite(
     "vulkan-spirv"
   DRIVER
     "vulkan"
-  COMPILER_FLAGS
-    "-iree-flow-dispatch-linalg-on-tensors"
-    "-iree-codegen-spirv-experimental-linalg-on-tensors"
-)
-
-iree_check_single_backend_test_suite(
-  NAME
-    check_linalg_on_tensors_cuda
-  SRCS
-    "add.mlir"
-    "broadcast.mlir"
-    "broadcast_in_dim.mlir"
-    "clamp.mlir"
-    "compare.mlir"
-    "constant.mlir"
-    "divide.mlir"
-    "iota.mlir"
-    "multiply.mlir"
-    "negate.mlir"
-    "select.mlir"
-    "subtract.mlir"
-  TARGET_BACKEND
-    "cuda"
-  DRIVER
-    "cuda"
-  COMPILER_FLAGS
-    "-iree-flow-dispatch-linalg-on-tensors"
-  LABELS
-    "noasan"
-    "nomsan"
-    "notsan"
-    "noubsan"
-    "requires-gpu-nvidia"
 )
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

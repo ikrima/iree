@@ -21,10 +21,9 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
-#include "absl/container/inlined_vector.h"
-#include "iree/base/status.h"
-#include "iree/base/synchronization.h"
+#include "iree/base/internal/synchronization.h"
 #include "iree/hal/api.h"
 #include "iree/hal/vulkan/command_queue.h"
 #include "iree/hal/vulkan/dynamic_symbols.h"
@@ -64,7 +63,7 @@ class SerializingCommandQueue final : public CommandQueue {
   iree_status_t Submit(iree_host_size_t batch_count,
                        const iree_hal_submission_batch_t* batches) override;
 
-  iree_status_t WaitIdle(iree_time_t deadline_ns) override;
+  iree_status_t WaitIdle(iree_timeout_t timeout) override;
 
   // Releases all deferred submissions ready to submit to the GPU.
   iree_status_t AdvanceQueueSubmission();
@@ -73,14 +72,14 @@ class SerializingCommandQueue final : public CommandQueue {
   void AbortQueueSubmission();
 
   // Informs this queue that the given |fences| are known to have signaled.
-  void SignalFences(absl::Span<VkFence> fences);
+  void SignalFences(const std::vector<VkFence>& fences);
 
  private:
   // A submission batch together with the fence to singal its status.
   struct FencedSubmission : public IntrusiveLinkBase<void> {
-    absl::InlinedVector<SemaphoreValue, 4> wait_semaphores;
-    absl::InlinedVector<VkCommandBuffer, 4> command_buffers;
-    absl::InlinedVector<SemaphoreValue, 4> signal_semaphores;
+    std::vector<SemaphoreValue> wait_semaphores;
+    std::vector<VkCommandBuffer> command_buffers;
+    std::vector<SemaphoreValue> signal_semaphores;
     ref_ptr<TimePointFence> fence;
   };
 
@@ -94,8 +93,7 @@ class SerializingCommandQueue final : public CommandQueue {
   TimePointFencePool* fence_pool_;
 
   // A list of fences that are submitted to GPU.
-  absl::InlinedVector<ref_ptr<TimePointFence>, 4> pending_fences_
-      IREE_GUARDED_BY(mutex_);
+  std::vector<ref_ptr<TimePointFence>> pending_fences_ IREE_GUARDED_BY(mutex_);
   // A list of deferred submissions that haven't been submitted to GPU.
   IntrusiveList<std::unique_ptr<FencedSubmission>> deferred_submissions_
       IREE_GUARDED_BY(mutex_);

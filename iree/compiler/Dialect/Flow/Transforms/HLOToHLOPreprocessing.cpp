@@ -14,6 +14,7 @@
 
 #include <numeric>
 
+#include "iree/compiler/Dialect/Flow/Transforms/PassDetail.h"
 #include "iree/compiler/Dialect/Flow/Transforms/Passes.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
@@ -47,9 +48,13 @@ static llvm::cl::opt<bool> orderConvFeatures(
     llvm::cl::desc("Guarantees input/output features ordered for conv kernel"),
     llvm::cl::init(true));
 
+/// Returns true if the given `attr` is a splat of the given `value`.
+static bool isSplatValue(DenseIntElementsAttr attr, uint64_t value) {
+  return attr.isSplat() && attr.getSplatValue<uint64_t>() == value;
+}
+
 static bool isAllZero(DenseIntElementsAttr attr) {
-  if (!attr.isSplat()) return false;
-  return attr.getSplatValue<IntegerAttr>().getInt() == 0;
+  return isSplatValue(attr, 0);
 }
 
 static bool isIota(ArrayRef<int64_t> array) {
@@ -397,19 +402,27 @@ class ExtractReduceWindowOpPaddingAttributes
                                 PatternRewriter &rewriter) const override {
     if (!op.padding()) return failure();
 
-    if (op.base_dilations() || op.window_dilations()) return failure();
+    if ((op.base_dilations() && !isSplatValue(*op.base_dilations(), 1)) ||
+        (op.window_dilations() && !isSplatValue(*op.window_dilations(), 1))) {
+      return failure();
+    }
     if (isAllZero(op.paddingAttr())) return failure();
 
-    auto inputType = op.operand().getType().cast<ShapedType>();
-    int rank = inputType.getRank();
+    // All inputs must be of the same static shape, since
+    // mhlo.pad doesn't support dynamic shape.
+    for (Type inputType : op.inputs().getType()) {
+      if (!inputType.cast<ShapedType>().hasStaticShape()) return failure();
+    }
+    ArrayRef<int64_t> inputShape =
+        op.inputs()[0].getType().cast<ShapedType>().getShape();
+
+    int rank = inputShape.size();
     SmallVector<int64_t, 4> paddingLow, paddingHigh, interiorPadding, shape;
     for (unsigned i = 0; i < rank; ++i) {
-      // mhlo.pad doesn't support dynamic shape.
-      if (inputType.isDynamicDim(i)) return failure();
       interiorPadding.push_back(0);
       paddingLow.push_back(op.paddingAttr().getValue<int64_t>({i, 0}));
       paddingHigh.push_back(op.paddingAttr().getValue<int64_t>({i, 1}));
-      int size = inputType.getShape()[i];
+      int size = inputShape[i];
       shape.push_back(size + paddingLow.back() + paddingHigh.back());
     }
 
@@ -419,20 +432,27 @@ class ExtractReduceWindowOpPaddingAttributes
           elements);
     };
 
+    SmallVector<Value> padOps;
+    padOps.reserve(op.inputs().size());
     auto loc = op.getLoc();
-    auto padResultType =
-        RankedTensorType::get(shape, inputType.getElementType());
-    auto padOp = rewriter.create<mhlo::PadOp>(
-        loc, padResultType, op.operand(), op.init_value(),
-        toDenseAttr(paddingLow), toDenseAttr(paddingHigh),
-        toDenseAttr(interiorPadding));
+    for (auto it : llvm::zip(op.inputs(), op.init_values())) {
+      Value input = std::get<0>(it);
+      Value initValue = std::get<1>(it);
+      auto inputType = input.getType().cast<ShapedType>();
+      auto padResultType =
+          RankedTensorType::get(shape, inputType.getElementType());
+      auto padOp = rewriter.create<mhlo::PadOp>(
+          loc, padResultType, input, initValue, toDenseAttr(paddingLow),
+          toDenseAttr(paddingHigh), toDenseAttr(interiorPadding));
+      padOps.push_back(padOp);
+    }
     auto newOp = rewriter.create<mhlo::ReduceWindowOp>(
-        loc, op.getResult().getType(), padOp, op.init_value(),
+        loc, op.getResultTypes(), padOps, op.init_values(),
         op.window_dimensions(), op.window_stridesAttr(),
         op.base_dilationsAttr(), op.window_dilationsAttr(),
         /*padding=*/nullptr);
     rewriter.inlineRegionBefore(op.body(), newOp.body(), newOp.body().begin());
-    rewriter.replaceOp(op, newOp.getResult());
+    rewriter.replaceOp(op, newOp.getResults());
     return success();
   }
 };
@@ -786,26 +806,27 @@ class ReorderBroadcastInDimOpAndElementwiseOp
   }
 };
 
-struct HLOToHLOPreprocessing
-    : public PassWrapper<HLOToHLOPreprocessing, FunctionPass> {
+struct HLOToHLOPreprocessingPass
+    : public HLOToHLOPreprocessingBase<HLOToHLOPreprocessingPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<shape::ShapeDialect, mhlo::MhloDialect,
                     tensor::TensorDialect>();
   }
 
-  void runOnFunction() override {
+  void runOnOperation() override {
     MLIRContext *context = &getContext();
     ConversionTarget conversionTarget(*context);
     OwningRewritePatternList conversionPatterns(&getContext());
     // Note that various input modalities may do their own legalization of
     // CHLO. Converting here allows IREE to accept CHLO dialect regardless of
     // whether it was legalized away at a higher level.
-    chlo::PopulateLegalizeChloToHloPatterns(context, &conversionPatterns);
+    chlo::PopulateDecomposeChloPatterns(context, &conversionPatterns);
+    chlo::PopulateChloBroadcastingPatterns(context, &conversionPatterns);
     conversionTarget.addLegalDialect<shape::ShapeDialect, mhlo::MhloDialect,
                                      mlir::StandardOpsDialect,
                                      mlir::tensor::TensorDialect>();
     conversionTarget.addIllegalDialect<chlo::HloClientDialect>();
-    if (failed(applyPartialConversion(getFunction(), conversionTarget,
+    if (failed(applyPartialConversion(getOperation(), conversionTarget,
                                       std::move(conversionPatterns)))) {
       return signalPassFailure();
     }
@@ -880,13 +901,9 @@ struct HLOToHLOPreprocessing
 
 }  // namespace
 
-std::unique_ptr<OperationPass<FuncOp>> createHLOPreprocessingPass() {
-  return std::make_unique<HLOToHLOPreprocessing>();
+std::unique_ptr<OperationPass<FuncOp>> createHLOToHLOPreprocessingPass() {
+  return std::make_unique<HLOToHLOPreprocessingPass>();
 }
-
-static PassRegistration<HLOToHLOPreprocessing> legalize_pass(
-    "iree-flow-hlo-to-hlo-preprocessing",
-    "Apply hlo to hlo transformations for some hlo ops");
 
 }  // namespace Flow
 }  // namespace IREE

@@ -27,8 +27,8 @@ func @device_switch(%device: !hal.device) -> i32 {
       hal.return %c1a : i32
       // CHECK-NEXT: },
     },
-    // CHECK-NEXT: #hal.match.any<[#hal.device.match.id<"vmla">, #hal.device.match.id<"vulkan-*">]>(%[[C2A:.+]] = %[[C2]] : i32) {
-    #hal.match.any<[#hal.device.match.id<"vmla">, #hal.device.match.id<"vulkan-*">]>(%c2a = %c2 : i32) {
+    // CHECK-NEXT: #hal.match.any<[#hal.device.match.id<"vmvx">, #hal.device.match.id<"vulkan-*">]>(%[[C2A:.+]] = %[[C2]] : i32) {
+    #hal.match.any<[#hal.device.match.id<"vmvx">, #hal.device.match.id<"vulkan-*">]>(%c2a = %c2 : i32) {
       // CHECK-NEXT: hal.return %[[C2A]] : i32
       hal.return %c2a : i32
       // CHECK-NEXT: },
@@ -50,4 +50,14 @@ func @device_matchers(%device : !hal.device) -> i1 {
   // CHECK: = hal.device.match.id<%[[DEVICE]] : !hal.device> pattern("vulkan-*") : i1
   %0 = hal.device.match.id<%device : !hal.device> pattern("vulkan-*") : i1
   return %0 : i1
+}
+
+// -----
+
+// CHECK-LABEL: @device_query
+// CHECK-SAME: (%[[DEVICE:.+]]: !hal.device)
+func @device_query(%device : !hal.device) -> (i1, i32) {
+  // CHECK: = hal.device.query<%[[DEVICE]] : !hal.device> key("foo") : i1, i32
+  %ok, %value = hal.device.query<%device : !hal.device> key("foo") : i1, i32
+  return %ok, %value : i1, i32
 }
