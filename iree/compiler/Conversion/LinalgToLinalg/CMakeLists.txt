@@ -13,18 +13,19 @@ iree_add_all_subdirs()
 iree_cc_library(
   NAME
     LinalgToLinalg
-  HDRS
-    "Passes.h"
   SRCS
-    "Conv2D1x1ToMatmul.cpp"
-    "Conv2DToImg2Col.cpp"
+    "ConvertConv2D1x1ToMatmulPass.cpp"
+    "ConvertConv2DToImg2ColPass.cpp"
+    "PadTensorToSubTensorInsert.cpp"
   DEPS
     LLVMSupport
     MLIRIR
     MLIRLinalg
     MLIRPass
+    MLIRStandard
     MLIRSupport
     MLIRTransformUtils
+    iree::compiler::Conversion::PassHeaders
   PUBLIC
 )
 

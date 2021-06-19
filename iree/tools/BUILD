@@ -22,15 +22,18 @@ cc_binary(
     testonly = True,
     srcs = ["iree-benchmark-module-main.cc"],
     deps = [
+        "//iree/base",
         "//iree/base:status",
         "//iree/base:tracing",
         "//iree/base/internal:file_io",
         "//iree/base/internal:flags",
+        "//iree/hal",
         "//iree/hal/drivers",
         "//iree/modules/hal",
         "//iree/tools/utils:vm_util",
         "//iree/vm",
         "//iree/vm:bytecode_module",
+        "//iree/vm:cc",
         "@com_google_benchmark//:benchmark",
     ],
 )
@@ -42,15 +45,18 @@ cc_binary(
     deps = [
         "//iree/base",
         "//iree/base:core_headers",
+        "//iree/base:logging",
         "//iree/base:status",
         "//iree/base:tracing",
         "//iree/base/internal:file_io",
         "//iree/base/internal:flags",
+        "//iree/hal",
         "//iree/hal/drivers",
         "//iree/modules/check:native_module",
         "//iree/modules/hal",
         "//iree/testing:gtest",
         "//iree/tools/utils:vm_util",
+        "//iree/vm",
         "//iree/vm:bytecode_module",
     ],
 )
@@ -59,7 +65,7 @@ cc_binary(
     name = "iree-dump-module",
     srcs = ["iree-dump-module-main.cc"],
     deps = [
-        "//iree/base:status",
+        "//iree/base",
         "//iree/base/internal:file_io",
         "//iree/schemas:bytecode_module_def_c_fbs",
         "//iree/tools/utils:vm_util",
@@ -83,7 +89,6 @@ cc_library(
         "//iree/compiler/Dialect/IREE/Transforms",
         "//iree/compiler/Dialect/Modules/VMVX/IR:VMVXDialect",
         "//iree/compiler/Dialect/Modules/VMVX/Transforms",
-        "//iree/compiler/Dialect/Shape/Conversion",
         "//iree/compiler/Dialect/Shape/IR",
         "//iree/compiler/Dialect/Shape/Transforms",
         "//iree/compiler/Dialect/VM/Analysis",
@@ -143,7 +148,7 @@ cc_library(
         ":init_mlir_passes_and_dialects",
         ":init_xla_dialects",
         "//iree/compiler/Conversion",
-        "//iree/compiler/Conversion:init_conversions",
+        "//iree/compiler/Conversion/HLOToLinalg",
         "//iree/compiler/Dialect/HAL/Conversion:Passes",
     ],
 )
@@ -153,8 +158,6 @@ cc_library(
     hdrs = ["init_compiler_modules.h"],
     deps = [
         "//iree/compiler/Dialect/Modules/Check/IR:CheckDialect",
-        "//iree/compiler/Dialect/Modules/Strings/IR:Dialect",
-        "//iree/compiler/Dialect/Modules/TensorList/IR:TensorListDialect",
     ],
 )
 
@@ -224,6 +227,17 @@ cc_binary(
     ],
 )
 
+cc_library(
+    name = "iree-mlir-lsp-server",
+    srcs = ["iree-mlir-lsp-server.cc"],
+    deps = [
+        ":init_passes_and_dialects",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MlirLspServerLib",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
 cc_binary(
     name = "iree-run-mlir",
     srcs = ["iree-run-mlir-main.cc"],
@@ -232,9 +246,11 @@ cc_binary(
         ":init_passes_and_dialects",
         ":init_targets",
         "//iree/base",
+        "//iree/base:logging",
         "//iree/base:status",
         "//iree/base:tracing",
         "//iree/base/internal:flags",
+        "//iree/compiler/Dialect/HAL/Target",
         "//iree/compiler/Dialect/VM/Target:init_targets",
         "//iree/compiler/Dialect/VM/Target/Bytecode",
         "//iree/compiler/Translation:IREEVM",
@@ -244,6 +260,7 @@ cc_binary(
         "//iree/tools/utils:vm_util",
         "//iree/vm",
         "//iree/vm:bytecode_module",
+        "//iree/vm:cc",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -259,15 +276,18 @@ cc_binary(
     name = "iree-run-module",
     srcs = ["iree-run-module-main.cc"],
     deps = [
+        "//iree/base",
         "//iree/base:status",
         "//iree/base:tracing",
         "//iree/base/internal:file_io",
         "//iree/base/internal:flags",
+        "//iree/hal",
         "//iree/hal/drivers",
         "//iree/modules/hal",
         "//iree/tools/utils:vm_util",
         "//iree/vm",
         "//iree/vm:bytecode_module",
+        "//iree/vm:cc",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -300,7 +320,6 @@ cc_library(
         ":init_translations",
         ":init_xla_dialects",
         "//iree/compiler/Conversion",
-        "//iree/compiler/Conversion:init_conversions",
         "//iree/compiler/Dialect/VM/Target:init_targets",
         "//iree/compiler/Dialect/VM/Target/Bytecode",
         "//iree/compiler/Translation:IREEVM",

@@ -43,7 +43,7 @@ inline void registerMlirPasses() {
   registerLocationSnapshotPass();
   registerLoopCoalescingPass();
   registerLoopInvariantCodeMotionPass();
-  registerMemRefDataFlowOptPass();
+  registerAffineScalarReplacementPass();
   registerParallelLoopCollapsingPass();
   registerPrintOpStatsPass();
   registerStripDebugInfoPass();
@@ -64,6 +64,7 @@ inline void registerMlirPasses() {
   // SCF
   registerSCFParallelLoopFusionPass();
   registerSCFParallelLoopTilingPass();
+  registerSCFToStandardPass();
 
   // Quant
   quant::registerQuantPasses();

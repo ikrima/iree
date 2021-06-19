@@ -6,10 +6,9 @@
 
 #include "iree_tf_compiler/TF/Passes.h"
 
-#include "iree/compiler/Dialect/Shape/Conversion/Passes.h"
+#include "iree/compiler/Dialect/Flow/Transforms/Passes.h"
 #include "iree/compiler/Dialect/Shape/Transforms/Passes.h"
-#include "iree_tf_compiler/dialect/tf_strings/ir/dialect.h"
-#include "iree_tf_compiler/dialect/tf_tensorlist/ir/tf_tensorlist_dialect.h"
+#include "iree_tf_compiler/MHLO/Passes.h"
 #include "mlir-hlo/Dialect/mhlo/transforms/passes.h"
 #include "mlir/Dialect/Shape/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
@@ -21,11 +20,6 @@
 namespace mlir {
 namespace iree_integrations {
 namespace TF {
-
-void registerAllDialects(mlir::DialectRegistry &registry) {
-  registry.insert<tf_strings::TFStringsDialect>();
-  registry.insert<tf_tensorlist::TFTensorListDialect>();
-}
 
 // All IREE-specific passes that lower TF representations before reaching the
 // IREE core should go here.
@@ -66,12 +60,6 @@ void buildTFImportPassPipeline(OpPassManager &pm) {
   pm.addPass(createCanonicalizerPass());
 
   //----------------------------------------------------------------------------
-  // Lowering module specific TF behavior to intermediate dialects.
-  //----------------------------------------------------------------------------
-  pm.addPass(tf_strings::createConvertTFToTFStringsPass());
-  pm.addPass(tf_tensorlist::createConvertTFToTFTensorListPass());
-
-  //----------------------------------------------------------------------------
   // Legalize to XLA
   //----------------------------------------------------------------------------
   pm.addPass(createConvertToMHLOPass());
@@ -85,18 +73,12 @@ void buildTFImportPassPipeline(OpPassManager &pm) {
   //----------------------------------------------------------------------------
   // Lowering shape-related constructs.
   //----------------------------------------------------------------------------
-  pm.addPass(iree_compiler::Shape::createConvertHLOToShapePass());
+  // pm.addPass(iree_compiler::Shape::createConvertHLOToShapePass());
   // TODO(GH-2277): Lower HLO shape constraints instead of eliding them here.
   pm.addPass(createRemoveShapeConstraintsPass());
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(iree_compiler::Shape::createConvertShapeToShapexPass());
-  pm.addPass(createCanonicalizerPass());
-
-  //----------------------------------------------------------------------------
-  // Lowering intermediate dialects to module specific dialects.
-  //----------------------------------------------------------------------------
-  pm.addPass(tf_strings::createConvertTFStringsToStringsPass());
-  pm.addPass(tf_tensorlist::createConvertTFTensorListToTensorListPass());
+  // pm.addPass(iree_compiler::Shape::createConvertShapeToShapexPass());
+  // pm.addPass(createCanonicalizerPass());
 
   //----------------------------------------------------------------------------
   // Lowering tf_saved_model dialect to IREE dialects
@@ -111,11 +93,9 @@ void buildTFImportPassPipeline(OpPassManager &pm) {
   // - It assumes that tf_saved_model.bound_inputs have been eliminated
   // - It removes tf_saved_model.semantics from the module, which we can only
   //   do at the very end.
-  pm.addPass(createLowerExportedFunctionsPass());
-  // TODO: Remove the above and uncomment the below to enable IREE native ABI.
-  // pm.addPass(createSavedModelToIREEABIPass());
-  // // Inline the wrapper functions.
-  // pm.addPass(createInlinerPass());
+  pm.addPass(createSavedModelToIREEABIPass());
+  // Inline the wrapper functions.
+  pm.addPass(createInlinerPass());
 
   //----------------------------------------------------------------------------
   // Ensure that all Tensorflow has been legalized away
@@ -124,38 +104,7 @@ void buildTFImportPassPipeline(OpPassManager &pm) {
   pm.nest<ModuleOp>().addPass(createStripFunctionMetadataPass());
   pm.addPass(createVerifyFullyConvertedPass());
 
-  buildMHLOImportPassPipeline(pm);
-}
-
-void buildMHLOImportPassPipeline(OpPassManager &pm) {
-  //----------------------------------------------------------------------------
-  // Convert control flow and flatten tuples (like tuple<tensor<...>, ...>)
-  //----------------------------------------------------------------------------
-  // NOTE: FlattenTuplesInCFGPass requires inlining to have run and has some
-  // sensitivity to structured control flow ops.
-  // SCF would be ideal as a target (as that matches our other IREE inputs) but
-  // the current HLO to SCF pass is extremely basic and doesn't handle anything
-  // but tf.while for less-than comparisons from 0. Since those are common we
-  // still try to pull those out here but then fall back on the full conversion
-  // to CFG form.
-  pm.addNestedPass<FuncOp>(mhlo::createControlFlowToScfPass());
-  pm.addNestedPass<FuncOp>(mhlo::createLegalizeControlFlowPass());
-  pm.addPass(createFlattenTuplesInCFGPass());
-
-  ////////////////////////////////////////////////////////////////////////////
-  // Temporary: Does some special case fixups of HLO ops with dynamic
-  // shapes until these can be done properly upstream.
-  ////////////////////////////////////////////////////////////////////////////
-  pm.addPass(iree_compiler::Shape::createConvertHLOToShapePass());
-}
-
-void registerMHLOImportPassPipeline() {
-  mlir::PassPipelineRegistration<> pipeline(
-      "iree-mhlo-import-pipeline",
-      "Run IREE-specific passes for importing MHLO code into IREE",
-      [](OpPassManager &passManager) {
-        buildMHLOImportPassPipeline(passManager);
-      });
+  MHLO::buildMHLOImportPassPipeline(pm);
 }
 
 void registerTFImportPassPipeline() {

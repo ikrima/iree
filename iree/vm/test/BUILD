@@ -33,6 +33,7 @@ c_embed_data(
         ":assignment_ops_f32.vmfb",
         ":assignment_ops_i64.vmfb",
         ":buffer_ops.vmfb",
+        ":call_ops.vmfb",
         ":comparison_ops.vmfb",
         ":comparison_ops_f32.vmfb",
         ":comparison_ops_i64.vmfb",
@@ -45,6 +46,7 @@ c_embed_data(
         ":global_ops_i64.vmfb",
         ":list_ops.vmfb",
         ":list_variant_ops.vmfb",
+        ":ref_ops.vmfb",
         ":shift_ops.vmfb",
         ":shift_ops_i64.vmfb",
     ],
@@ -92,6 +94,12 @@ iree_bytecode_module(
 iree_bytecode_module(
     name = "buffer_ops",
     src = "buffer_ops.mlir",
+    flags = ["-iree-vm-ir-to-bytecode-module"],
+)
+
+iree_bytecode_module(
+    name = "call_ops",
+    src = "call_ops.mlir",
     flags = ["-iree-vm-ir-to-bytecode-module"],
 )
 
@@ -164,6 +172,12 @@ iree_bytecode_module(
 iree_bytecode_module(
     name = "list_variant_ops",
     src = "list_variant_ops.mlir",
+    flags = ["-iree-vm-ir-to-bytecode-module"],
+)
+
+iree_bytecode_module(
+    name = "ref_ops",
+    src = "ref_ops.mlir",
     flags = ["-iree-vm-ir-to-bytecode-module"],
 )
 

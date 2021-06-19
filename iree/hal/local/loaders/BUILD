@@ -28,6 +28,7 @@ cc_library(
         "//iree/base:tracing",
         "//iree/hal",
         "//iree/hal/local",
+        "//iree/hal/local:executable_library",
         "//iree/hal/local/elf:elf_module",
     ],
 )
@@ -47,6 +48,7 @@ cc_library(
         "//iree/base/internal:flatcc",
         "//iree/hal",
         "//iree/hal/local",
+        "//iree/hal/local:executable_library",
         "//iree/schemas:dylib_executable_def_c_fbs",
     ],
 )
@@ -63,23 +65,7 @@ cc_library(
         "//iree/base:tracing",
         "//iree/hal",
         "//iree/hal/local",
-    ],
-)
-
-cc_library(
-    name = "system_library_loader",
-    srcs = ["system_library_loader.c"],
-    hdrs = ["system_library_loader.h"],
-    defines = [
-        "IREE_HAL_HAVE_SYSTEM_LIBRARY_LOADER=1",
-    ],
-    deps = [
-        "//iree/base",
-        "//iree/base:tracing",
-        "//iree/base/internal:file_io",
-        "//iree/base/internal:flatcc",
-        "//iree/hal",
-        "//iree/hal/local",
+        "//iree/hal/local:executable_library",
     ],
 )
 
@@ -102,6 +88,7 @@ cc_library(
         "//iree/base:tracing",
         "//iree/hal",
         "//iree/hal/local",
+        "//iree/hal/local:executable_library",
         "//iree/modules/vmvx",
         "//iree/vm",
         "//iree/vm:bytecode_module",

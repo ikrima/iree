@@ -63,6 +63,12 @@ def InjectDispatchTracing :
   let constructor = "mlir::iree_compiler::IREE::Flow::createInjectDispatchTracingPass()";
 }
 
+def PromoteI1ToI8 :
+    Pass<"iree-flow-promote-i1-to-i8", "FuncOp"> {
+  let summary = "Legalizes i1 tensor constants to i8s";
+  let constructor = "mlir::iree_compiler::IREE::Flow::createPromoteI1ToI8Pass()";
+}
+
 def LegalizeInputTypes :
     Pass<"iree-flow-legalize-input-types", "ModuleOp"> {
   let summary = "Legalizes input types to ones supported by the IREE flow dialect";
@@ -82,10 +88,10 @@ def OutlineLargeConstants :
   let constructor = "mlir::iree_compiler::IREE::Flow::createOutlineLargeConstantsPass(25)";
 }
 
-def PrePartitioningConversion :
-    Pass<"iree-flow-pre-partitioning-conversion", "FuncOp"> {
-  let summary = "Dialect conversion prior to partitioning";
-  let constructor = "mlir::iree_compiler::IREE::Flow::createPrePartitioningConversionPass()";
+def PromoteTensorLoads :
+    Pass<"iree-flow-promote-tensor-loads", "FuncOp"> {
+  let summary = "Converts standard ops which match to flow.tensor.load (typically causing a read-back)";
+  let constructor = "mlir::iree_compiler::IREE::Flow::createPromoteTensorLoadsPass()";
 }
 
 def StripAndSplatConstantVariables :
@@ -94,4 +100,15 @@ def StripAndSplatConstantVariables :
   let constructor = "mlir::iree_compiler::IREE::Flow::createStripAndSplatConstantVariablesPass()";
 }
 
+def VerifyCompilerInputLegality :
+    Pass<"iree-verify-compiler-input-legality", "ModuleOp"> {
+  let summary = "Verifies that only supported IR constructs are passed to the compiler.";
+  let constructor = "mlir::iree_compiler::IREE::Flow::createVerifyCompilerInputLegality()";
+}
+
+def PadLinalgOps :
+    Pass<"iree-flow-pad-linalg-ops", "FuncOp"> {
+  let summary = "Pad linalg ops to the next integer multiple of paddingSize.";
+  let constructor = "mlir::iree_compiler::IREE::Flow::createPadLinalgOpsToIntegerMultiplePass()";
+}
 #endif  // IREE_DIALECT_FLOW_PASSES

@@ -36,7 +36,9 @@ class TargetInfo:
     self.hal_target_backend = hal_target_backend
     self.taskset = taskset
     self.mako_tag = mako_tag
-    self.compilation_flags = compilation_flags
+    # This setup is going to be deprecated. Now we only test mhlo inputs for
+    # Mako setup, hardcoded would make it eaiser.
+    self.compilation_flags = compilation_flags + ['--iree-input-type=mhlo']
     self.runtime_flags = runtime_flags
 
   def add_batch_flag(self, size):
@@ -240,11 +242,13 @@ MODEL_BENCHMARKS = [
                     skipped_target=["vlk2"],
                     compilation_flags={
                         'cpu': [
-                            "--iree-flow-dispatch-formation-enable-operand-fusion",
+                            # TODO(GH-5857): Enable this after fixing segfault.
+                            #"--iree-flow-dispatch-formation-enable-operand-fusion",
                             "-iree-llvm-loop-unrolling=true"
                         ],
                         'cpu3t': [
-                            "--iree-flow-dispatch-formation-enable-operand-fusion",
+                            # TODO(GH-5857): Enable this after fixing segfault.
+                            #"--iree-flow-dispatch-formation-enable-operand-fusion",
                             "-iree-llvm-loop-unrolling=true"
                         ]
                     })),
@@ -254,11 +258,13 @@ MODEL_BENCHMARKS = [
                 targets=get_s20_default_target_list(
                     compilation_flags={
                         'cpu': [
-                            "--iree-flow-dispatch-formation-enable-operand-fusion",
+                            # TODO(GH-5857): Enable this after fixing segfault.
+                            #"--iree-flow-dispatch-formation-enable-operand-fusion",
                             "-iree-llvm-loop-unrolling=true"
                         ],
                         'cpu3t': [
-                            "--iree-flow-dispatch-formation-enable-operand-fusion",
+                            # TODO(GH-5857): Enable this after fixing segfault.
+                            #"--iree-flow-dispatch-formation-enable-operand-fusion",
                             "-iree-llvm-loop-unrolling=true"
                         ]
                     })),

@@ -7,6 +7,8 @@
 #ifndef IREE_TASK_EXECUTOR_H_
 #define IREE_TASK_EXECUTOR_H_
 
+#include <stdint.h>
+
 #include "iree/base/api.h"
 #include "iree/base/internal/atomics.h"
 #include "iree/base/internal/wait_handle.h"
@@ -252,7 +254,7 @@ extern "C" {
 
 // A bitfield specifying the scheduling mode used for configuring how (or if)
 // work is balanced across queues.
-enum iree_task_scheduling_mode_e {
+enum iree_task_scheduling_mode_bits_t {
   // TODO(benvanik): batch, round-robin, FCFS, SJF, etc.
   // We can also allow for custom scheduling, though I'm skeptical of the value
   // of that. We should look into what GPUs do in hardware for balancing things
@@ -295,14 +297,22 @@ enum iree_task_scheduling_mode_e {
 typedef uint32_t iree_task_scheduling_mode_t;
 
 // Base task system executor interface.
-typedef struct iree_task_executor_s iree_task_executor_t;
+typedef struct iree_task_executor_t iree_task_executor_t;
 
 // Creates a task executor using the specified topology.
+//
+// |worker_local_memory_size| defines the bytes to be allocated and reserved for
+// each worker to use for local memory operations. Will be rounded up to the
+// next power of two. Dispatches performed will be able to request up to this
+// amount of memory for their invocations and no more. May be 0 if no worker
+// local memory is required.
+//
 // |topology| is only used during creation and need not live beyond this call.
 // |out_executor| must be released by the caller.
 iree_status_t iree_task_executor_create(
     iree_task_scheduling_mode_t scheduling_mode,
-    const iree_task_topology_t* topology, iree_allocator_t allocator,
+    const iree_task_topology_t* topology,
+    iree_host_size_t worker_local_memory_size, iree_allocator_t allocator,
     iree_task_executor_t** out_executor);
 
 // Retains the given |executor| for the caller.

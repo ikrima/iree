@@ -52,6 +52,22 @@ iree_cc_test(
 
 iree_cc_library(
   NAME
+    arena
+  HDRS
+    "arena.h"
+  SRCS
+    "arena.c"
+  DEPS
+    ::atomic_slist
+    ::synchronization
+    iree::base
+    iree::base::core_headers
+    iree::base::tracing
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
     atomic_slist
   HDRS
     "atomic_slist.h"
@@ -113,6 +129,8 @@ iree_cc_test(
     "file_io_test.cc"
   DEPS
     ::file_io
+    iree::base::logging
+    iree::base::status
     iree::testing::gtest
     iree::testing::gtest_main
 )
@@ -164,7 +182,7 @@ iree_cc_binary(
     "flags_demo.c"
   DEPS
     ::flags
-    iree::base::core_headers
+    iree::base
 )
 
 iree_lit_test_suite(
@@ -225,6 +243,7 @@ iree_cc_test(
   DEPS
     ::fpu_state
     benchmark
+    iree::base
     iree::testing::benchmark_main
 )
 
@@ -277,23 +296,6 @@ iree_cc_test(
 
 iree_cc_library(
   NAME
-    status_internal
-  HDRS
-    "status.h"
-    "statusor.h"
-  SRCS
-    "status.cc"
-    "statusor.cc"
-  DEPS
-    absl::utility
-    iree::base
-    iree::base::core_headers
-    iree::base::logging
-  PUBLIC
-)
-
-iree_cc_library(
-  NAME
     synchronization
   HDRS
     "call_once.h"
@@ -340,6 +342,29 @@ iree_cc_test(
     iree::testing::gtest_main
 )
 
+# TODO(#3848): absl has a thread dependency, move this condition after statusor
+# is fixed.
+if(NOT ${IREE_ENABLE_THREADING})
+  return()
+endif()
+
+iree_cc_library(
+  NAME
+    status_internal
+  HDRS
+    "status.h"
+    "statusor.h"
+  SRCS
+    "status.cc"
+    "statusor.cc"
+  DEPS
+    absl::utility
+    iree::base
+    iree::base::core_headers
+    iree::base::logging
+  PUBLIC
+)
+
 iree_cc_library(
   NAME
     threading
@@ -367,8 +392,10 @@ iree_cc_test(
     "threading_impl.h"
     "threading_test.cc"
   DEPS
+    ::internal
     ::synchronization
     ::threading
+    iree::base::status
     iree::testing::gtest
     iree::testing::gtest_main
 )

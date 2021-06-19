@@ -34,6 +34,7 @@ option(IREE_ENABLE_EMITC "Enables MLIR EmitC dependencies." OFF)
 
 option(IREE_BUILD_COMPILER "Builds the IREE compiler." ON)
 option(IREE_BUILD_TESTS "Builds IREE unit tests." ON)
+option(IREE_BUILD_BENCHMARKS "Builds IREE benchmark suites." OFF)
 option(IREE_BUILD_DOCS "Builds IREE docs." OFF)
 option(IREE_BUILD_SAMPLES "Builds IREE sample projects." ON)
 option(IREE_BUILD_EMBEDDING_SAMPLES "Builds IREE embedding sample projects. The compiler needs to be available." OFF)
@@ -42,6 +43,7 @@ option(IREE_BUILD_TENSORFLOW_ALL "Builds all TensorFlow compiler frontends." OFF
 option(IREE_BUILD_TENSORFLOW_COMPILER "Builds TensorFlow compiler frontend." OFF)
 option(IREE_BUILD_TFLITE_COMPILER "Builds the TFLite compiler frontend." OFF)
 option(IREE_BUILD_XLA_COMPILER "Builds TensorFlow XLA compiler frontend." OFF)
+option(IREE_ENABLE_THREADING "Builds IREE in with thread library support." ON)
 
 set(IREE_HAL_DRIVERS_TO_BUILD "all"
   CACHE STRING "Semicolon-separated list of HAL drivers to build, or \"all\".")
@@ -81,6 +83,7 @@ endif()
 option(IREE_BUILD_EXPERIMENTAL_REMOTING "Builds experimental remoting support." OFF)
 option(IREE_BUILD_EXPERIMENTAL_JAVA_BINDINGS "Builds the experimental java bindings." OFF)
 option(IREE_BUILD_EXPERIMENTAL_ROCM "Builds the experimental ROCM Backend." OFF)
+option(IREE_ENABLE_NEW_INTEGRATION_TESTS "Enables new integration tests and disables old." OFF)
 
 #-------------------------------------------------------------------------------
 # Derived flags based on primary options
@@ -202,6 +205,55 @@ if(${IREE_ENABLE_CCACHE})
   endif()
 endif()
 
+
+#-------------------------------------------------------------------------------
+# IREE assertions
+# We don't love the way this is done, but we have to line it up with how LLVM
+# does it and not diverge, since all implementations and all header users must
+# have the same definition of NDEBUG.
+#
+# LLVM defaults LLVM_ENABLE_ASSERTIONS to ON for Debug builds only but then
+# conditions itself to only update flags if not building Debug. We just let
+# IREE_ENABLE_ASSERTIONS be not conditioned on anything and only update the
+# flags in appropriate build types.
+#
+# If IREE_ENABLE_ASSERTIONS is set ON manually, then
+#   - NDEBUG must be undefined
+#   - LLVM_ENABLE_ASSERTIONS is forced off in order to keep multiple parties
+#     from mucking with globals.
+#
+# Since CMake forces NDEBUG for !Debug builds, some surgery needs to be done
+# at the top level to avoid divergence.
+#-------------------------------------------------------------------------------
+
+option(IREE_ENABLE_ASSERTIONS "Force unset of NDEBUG compile option" OFF)
+
+# Filter -DNDEBUG from CMAKE_CXX_FLAGS_* and CMAKE_C_FLAGS_* (if
+# CMAKE_BUILD_TYPE is not Debug).
+function(iree_fix_ndebug)
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" uppercase_CMAKE_BUILD_TYPE)
+  if(IREE_ENABLE_ASSERTIONS AND NOT "${uppercase_CMAKE_BUILD_TYPE}" STREQUAL "DEBUG")
+      # Also remove /D NDEBUG to avoid MSVC warnings about conflicting defines.
+      foreach (flags_var_to_scrub
+              CMAKE_CXX_FLAGS_${uppercase_CMAKE_BUILD_TYPE}
+              CMAKE_C_FLAGS_${uppercase_CMAKE_BUILD_TYPE})
+          set(original_flags "${${flags_var_to_scrub}}")
+          string (REGEX REPLACE "(^| )[/-]D *NDEBUG($| )" " "
+                  altered_flags "${original_flags}")
+          if(NOT "${original_flags}" STREQUAL "${altered_flags}")
+            message(STATUS
+              "IREE_ENABLE_ASSERTIONS force disabled NDEBUG for ${flags_var_to_scrub}: '${original_flags}' -> '${altered_flags}'")
+            set(${flags_var_to_scrub} "${altered_flags}" PARENT_SCOPE)
+          endif()
+      endforeach()
+
+      # Make sure that LLVM doesn't add its own logic for assertion disabling.
+      # We'd like to make sure that we are not dueling over globals.
+      set(LLVM_ENABLE_ASSERTIONS OFF PARENT_SCOPE)
+  endif()
+endfunction()
+iree_fix_ndebug()
+
 #-------------------------------------------------------------------------------
 # IREE utility definitions
 #-------------------------------------------------------------------------------
@@ -222,6 +274,7 @@ include(iree_lit_test)
 include(iree_add_all_subdirs)
 include(iree_check_test)
 include(iree_run_binary_test)
+include(iree_mlir_benchmark_suite)
 
 set(DEFAULT_CMAKE_BUILD_TYPE "Release")
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -274,7 +327,6 @@ endif()
 #-------------------------------------------------------------------------------
 
 # Disable LLVM's warnings.
-set(LLVM_ENABLE_ASSERTIONS OFF CACHE BOOL "don't use global flags /facepalm")
 set(LLVM_ENABLE_WARNINGS OFF CACHE BOOL "don't use global flags /facepalm")
 
 # Adds bundled projects that must be included after the LLVM directory has
@@ -376,16 +428,17 @@ endif()
 include(external_cc_library)
 include(flatbuffer_c_library)
 
-add_subdirectory(third_party/benchmark EXCLUDE_FROM_ALL)
 add_subdirectory(build_tools/third_party/cuda EXCLUDE_FROM_ALL)
 add_subdirectory(build_tools/third_party/flatcc EXCLUDE_FROM_ALL)
-add_subdirectory(build_tools/third_party/renderdoc_api EXCLUDE_FROM_ALL)
 add_subdirectory(build_tools/third_party/vulkan_memory_allocator EXCLUDE_FROM_ALL)
 add_subdirectory(build_tools/third_party/stblib EXCLUDE_FROM_ALL)
 
-add_subdirectory(third_party/cpuinfo EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/googletest EXCLUDE_FROM_ALL)
-add_subdirectory(third_party/abseil-cpp EXCLUDE_FROM_ALL)
+if(${IREE_ENABLE_THREADING})
+  add_subdirectory(third_party/benchmark EXCLUDE_FROM_ALL)
+  add_subdirectory(third_party/cpuinfo EXCLUDE_FROM_ALL)
+  add_subdirectory(third_party/abseil-cpp EXCLUDE_FROM_ALL)
+endif()
 add_subdirectory(third_party/flatcc EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/vulkan_headers EXCLUDE_FROM_ALL)
 
@@ -417,6 +470,11 @@ endif()
 # IREE top-level targets
 #-------------------------------------------------------------------------------
 
+if(${IREE_BUILD_BENCHMARKS})
+  # Add a top-level custom target to drive generating benchmark suites.
+  add_custom_target(iree-benchmark-suites)
+endif()
+
 if(${IREE_BUILD_DOCS})
   # Add a top-level custom target to drive generating all documentation.
   # Register it to the default target given that IREE_BUILD_DOCS is explicitly
@@ -439,6 +497,11 @@ add_subdirectory(iree/task)
 add_subdirectory(iree/testing)
 add_subdirectory(iree/test)
 add_subdirectory(iree/vm)
+
+if(${IREE_BUILD_BENCHMARKS})
+  add_subdirectory(iree/benchmark)
+endif()
+
 if(${IREE_BUILD_EXPERIMENTAL_ROCM})
   add_subdirectory(build_tools/third_party/rocm EXCLUDE_FROM_ALL)
   add_subdirectory(experimental/rocm)

@@ -261,7 +261,9 @@ static bool isDispatchableOp(Operation *op) {
 }
 
 static bool isAlwaysFusedIntoDispatchOp(Operation *op) {
-  return isDispatchableOp(op) && isa<linalg::TensorReshapeOp, SubTensorOp>(op);
+  return isDispatchableOp(op) &&
+         (isa<linalg::TensorCollapseShapeOp, SubTensorOp>(op) ||
+          isa<linalg::TensorExpandShapeOp, SubTensorOp>(op));
 }
 
 //===----------------------------------------------------------------------===//
@@ -359,7 +361,7 @@ static void pullInProducersInSameGroup(
         OpResult opResult = en.value().cast<OpResult>();
         auto maybeFusionInfo = linalg::fuseProducerOfTensor(
             rewriter, clonedOpToFuse->getResult(opResult.getResultNumber()),
-            tiledOp.getShapedOpOperand(en.index()));
+            *tiledOp.getInputAndOutputOperands()[en.index()]);
         if (!maybeFusionInfo.hasValue()) {
           DEBUG_WITH_TYPE(DEBUG_TYPE, llvm::dbgs()
                                           << "failed to fuse with tensor\n");
@@ -377,8 +379,8 @@ static void pullInProducersInSameGroup(
       // producer's operands and pull them in if they are marked to be fused
       // into the current group.
       if (fusedProducer) {
-        SmallVector<Value, 4> producerOperands =
-            cast<linalg::LinalgOp>(clonedOpToFuse).getShapedOperands();
+        SmallVector<Value> producerOperands =
+            cast<linalg::LinalgOp>(clonedOpToFuse).getInputAndOutputOperands();
         pullInProducersInSameGroup(rewriter, dispatchOp, fusedProducer,
                                    producerOperands, tiledLoops, groupNum);
       }
@@ -496,14 +498,6 @@ static void getUsedValuesDefinedAboveAfterCloningOps(
       valuesDefinedAbove.insert(outsideValue);
       continue;
     }
-    // Only clone if operation either has no operands, or the operation is in
-    // same basic block as the dispatch op. This could really be relaxed, but
-    // this is conservative for now.
-    if (definingOp->getNumOperands() != 0 &&
-        definingOp->getBlock() != dispatchOp->getBlock()) {
-      valuesDefinedAbove.insert(outsideValue);
-      continue;
-    }
     clonedOps.push_back(definingOp);
     worklist.append(definingOp->operand_begin(), definingOp->operand_end());
   }
@@ -549,7 +543,8 @@ static void tryToTieOperandsAndResults(
       return loadOp.source().cast<BlockArgument>();
     } else if (auto linalgOp = dyn_cast_or_null<linalg::LinalgOp>(tieOp)) {
       unsigned resultIndex = storeOp.value().cast<OpResult>().getResultNumber();
-      auto loadOp = linalgOp.getOutputTensors()[resultIndex]
+      auto loadOp = linalgOp.getOutputTensorOperands()[resultIndex]
+                        ->get()
                         .getDefiningOp<IREE::Flow::DispatchTensorLoadOp>();
       if (!loadOp) return nullptr;
       return loadOp.source().cast<BlockArgument>();
@@ -790,11 +785,12 @@ struct TileAndDistributeOnTensorsPattern
       return failure();
     }
     // Keep track of the tiledOpOperands for fusion.
-    SmallVector<Value, 4> shapedOperands(clonedLinalgOp.getShapedOperands());
+    SmallVector<Value> tiledOperands =
+        clonedLinalgOp.getInputAndOutputOperands();
     rewriter.replaceOp(clonedLinalgOp, tiledLinalgOp.tensorResults);
 
     pullInProducersInSameGroup(rewriter, dispatchOp, tiledLinalgOp.op,
-                               shapedOperands, tiledLinalgOp.loops,
+                               tiledOperands, tiledLinalgOp.loops,
                                rootOpAttr.getInt());
 
     tiledLinalgOp.op.getOperation()->removeAttr(kRootOpAttr);
@@ -947,10 +943,11 @@ struct MakeDispatchWorkgroupsOp : public RewritePattern {
     // together with it.
     if (auto rootOpAttr = op->getAttrOfType<IntegerAttr>(kRootOpAttr)) {
       linalg::LinalgOp clonedLinalgOp = cast<linalg::LinalgOp>(en.second);
-      SmallVector<Value, 4> shapedOperands(clonedLinalgOp.getShapedOperands());
+      SmallVector<Value> tiledOperands =
+          clonedLinalgOp.getInputAndOutputOperands();
 
       pullInProducersInSameGroup(
-          rewriter, dispatchOp, clonedLinalgOp, shapedOperands,
+          rewriter, dispatchOp, clonedLinalgOp, tiledOperands,
           /*tiledLoops=*/ArrayRef<Operation *>(), rootOpAttr.getInt());
       clonedLinalgOp->removeAttr(kRootOpAttr);
     }
@@ -1001,7 +998,7 @@ static unsigned makeElementwiseOpsRootOps(FuncOp funcOp, unsigned numRoots) {
       unsigned newGroup = numRoots++;
       op->setAttr(kRootOpAttr, builder.getI64IntegerAttr(newGroup));
 
-      for (OpOperand *operand : linalgOp.getOutputTensorsOpOperands()) {
+      for (OpOperand *operand : linalgOp.getOutputTensorOperands()) {
         auto producer = operand->get().getDefiningOp<linalg::LinalgOp>();
         if (!producer) continue;
         if (producer.getNumLoops() != producer.getNumParallelLoops()) continue;
@@ -1033,7 +1030,7 @@ static unsigned decideFusableLinalgOps(FuncOp funcOp) {
       unsigned newGroup = numRootOps++;
       op->setAttr(kRootOpAttr, builder.getI64IntegerAttr(newGroup));
 
-      for (OpOperand *operand : linalgOp.getOutputTensorsOpOperands()) {
+      for (OpOperand *operand : linalgOp.getOutputTensorOperands()) {
         auto producer = operand->get().getDefiningOp<linalg::LinalgOp>();
         if (!producer) continue;
         if (producer.getNumLoops() != producer.getNumParallelLoops()) continue;
@@ -1062,9 +1059,9 @@ static unsigned decideFusableLinalgOps(FuncOp funcOp) {
         if (!consumer ||
             consumer.getNumLoops() != consumer.getNumParallelLoops())
           continue;
-        AffineMap consumerIndexingMap =
-            consumer.getInputIndexingMap(use.getOperandNumber());
-        AffineMap producerIndexingMap = linalgOp.getOutputIndexingMap(0);
+        AffineMap consumerIndexingMap = consumer.getTiedIndexingMap(&use);
+        AffineMap producerIndexingMap =
+            linalgOp.getTiedIndexingMap(linalgOp.getOutputOperand(0));
         if (!consumerIndexingMap.isIdentity() ||
             producerIndexingMap.getResults() !=
                 consumerIndexingMap.getResults()) {
@@ -1111,7 +1108,9 @@ void DispatchLinalgOnTensorsPass::runOnOperation() {
         return procInfo;
       },
       {linalg::DistributionMethod::Cyclic, linalg::DistributionMethod::Cyclic,
-       linalg::DistributionMethod::Cyclic}};
+       linalg::DistributionMethod::Cyclic},
+      DenseMap<StringRef,
+               std::function<linalg::ProcInfo(OpBuilder &, Location)>>()};
 
   auto tileSizeFn = [&](OpBuilder &builder,
                         Operation *op) -> SmallVector<Value, 4> {

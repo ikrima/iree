@@ -7,10 +7,6 @@
 #ifndef IREE_INTEGRATIONS_TENSORFLOW_IREE_TF_COMPILER_TF_PASSES_H_
 #define IREE_INTEGRATIONS_TENSORFLOW_IREE_TF_COMPILER_TF_PASSES_H_
 
-#include "iree_tf_compiler/dialect/tf_strings/conversion/convert_tf_strings_to_strings.h"
-#include "iree_tf_compiler/dialect/tf_strings/conversion/convert_tf_to_tf_strings.h"
-#include "iree_tf_compiler/dialect/tf_tensorlist/conversion/convert_tf_tensorlist_to_tensorlist.h"
-#include "iree_tf_compiler/dialect/tf_tensorlist/conversion/convert_tf_to_tf_tensorlist.h"
 #include "mlir/Pass/Pass.h"
 
 namespace mlir {
@@ -24,12 +20,7 @@ namespace TF {
 // Create a single pipeline that will run all the needed IREE-specific TF import
 // passes in the right order.
 void buildTFImportPassPipeline(OpPassManager &pm);
-
-void buildMHLOImportPassPipeline(OpPassManager &pm);
-
 void registerTFImportPassPipeline();
-
-void registerMHLOImportPassPipeline();
 
 //===----------------------------------------------------------------------===//
 // IREE-specific Passes For TensorFlow Import
@@ -38,25 +29,12 @@ void registerMHLOImportPassPipeline();
 // Converts the TF dialect to the XLA MHLO dialect.
 std::unique_ptr<FunctionPass> createConvertToMHLOPass();
 
-// Annotates an appropriate iree.abi attribute on public functions that
-// operate exclusively on tensor types. This corresponds to the expectations
-// of MHLO and is suitable for such programs.
-std::unique_ptr<OperationPass<FuncOp>> createEmitDefaultIREEABIPass();
-
-// Flattens tuple values in function signatures and blocks.
-std::unique_ptr<OperationPass<ModuleOp>> createFlattenTuplesInCFGPass();
-
 // In a module tagged with `tf_saved_model.semantics`, lowers
 // `tf_saved_model.global_variable`'s to `flow.variable`'s.
 //
 // This pass should be run before adopting the exports, which transitions to
 // a module that does not have `tf_saved_model.semantics`.
 std::unique_ptr<OperationPass<ModuleOp>> createLowerGlobalTensorsPass();
-
-// In a module tagged with `tf_saved_model.semantics`, lowers any tf_saved_model
-// exported functions to IREE exported functions with appropriate reflection
-// metadata.
-std::unique_ptr<OperationPass<ModuleOp>> createLowerExportedFunctionsPass();
 
 // In a module tagged with `tf_saved_model.semantics`, creates IREE ABI
 // functions for any saved model exported functions.
@@ -83,17 +61,11 @@ std::unique_ptr<OperationPass<FuncOp>> createVerifyFullyConvertedPass();
 // Registration
 //===----------------------------------------------------------------------===//
 
-void registerAllDialects(mlir::DialectRegistry &registry);
-
 inline void registerAllPasses() {
   registerTFImportPassPipeline();
-  registerMHLOImportPassPipeline();
 
   createConvertToMHLOPass();
-  createEmitDefaultIREEABIPass();
-  createFlattenTuplesInCFGPass();
   createLowerGlobalTensorsPass();
-  createLowerExportedFunctionsPass();
   createPrettifyDebugInfoPass();
   createPropagateResourceCastsPass();
   createSavedModelToIREEABIPass();
@@ -101,11 +73,6 @@ inline void registerAllPasses() {
   createStripModuleMetadataPass();
   createStripFunctionMetadataPass();
   createVerifyFullyConvertedPass();
-
-  tf_strings::createConvertTFToTFStringsPass();
-  tf_strings::createConvertTFStringsToStringsPass();
-  tf_tensorlist::createConvertTFTensorListToTensorListPass();
-  tf_tensorlist::createConvertTFToTFTensorListPass();
 }
 
 }  // namespace TF

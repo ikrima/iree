@@ -41,7 +41,6 @@ LLVM_SRCS = enforce_glob(
         "log.mlir",
         "logical_left_shift.mlir",
         "logical_right_shift.mlir",
-        "matmul.mlir",
         "max_pool.mlir",
         "maximum.mlir",
         "minimum.mlir",
@@ -63,12 +62,14 @@ LLVM_SRCS = enforce_glob(
     ],
     include = ["*.mlir"],
     exclude = [
+        "matmul.mlir",  # TOSA matmul is being refactored to be batched
     ],
 )
 
 iree_check_single_backend_test_suite(
     name = "check_dylib-llvm-aot_dylib",
     srcs = LLVM_SRCS,
+    compiler_flags = ["-iree-input-type=tosa"],
     driver = "dylib",
     target_backend = "dylib-llvm-aot",
 )
@@ -95,7 +96,6 @@ VMVX_SRCS = enforce_glob(
         "log.mlir",
         "logical_left_shift.mlir",
         "logical_right_shift.mlir",
-        "matmul.mlir",
         "max_pool.mlir",
         "maximum.mlir",
         "minimum.mlir",
@@ -116,6 +116,7 @@ VMVX_SRCS = enforce_glob(
     ],
     include = ["*.mlir"],
     exclude = [
+        "matmul.mlir",  # TOSA matmul is being refactored to be batched
         "reduce.mlir",  # Currently flakey https://github.com/google/iree/issues/5885
     ],
 )
@@ -124,6 +125,7 @@ iree_check_single_backend_test_suite(
     name = "check_vmvx_vmvx",
     srcs = VMVX_SRCS,
     compiler_flags = [
+        "-iree-input-type=tosa",
         # tosa.apply_scale currently expands to i64 math, requiring this
         # extension. Nothing else about the tests require it, though, and we
         # really should not be emulating it with 64-bit math. Having this
@@ -156,7 +158,6 @@ VULKAN_SRCS = enforce_glob(
         "log.mlir",
         "logical_left_shift.mlir",
         "logical_right_shift.mlir",
-        "matmul.mlir",
         "maximum.mlir",
         "minimum.mlir",
         "mul.mlir",
@@ -177,6 +178,7 @@ VULKAN_SRCS = enforce_glob(
     include = ["*.mlir"],
     exclude = [
         "fully_connected.mlir",  # Currently failing on vulkan.
+        "matmul.mlir",  # TOSA matmul is being refactored to be batched
         "reduce.mlir",  # Currently failing on vulkan.
         "max_pool.mlir",  # Currently failing on vulkan.
     ],
@@ -185,6 +187,7 @@ VULKAN_SRCS = enforce_glob(
 iree_check_single_backend_test_suite(
     name = "check_vulkan-spirv_vulkan",
     srcs = VULKAN_SRCS,
+    compiler_flags = ["-iree-input-type=tosa"],
     driver = "vulkan",
     target_backend = "vulkan-spirv",
 )

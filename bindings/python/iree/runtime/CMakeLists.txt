@@ -11,13 +11,9 @@ iree_pyext_module(
   SRCS
     "initialize_module.cc"
     "binding.h"
-    "function_abi.h"
     "hal.h"
-    "host_types.h"
     "vm.h"
-    "function_abi.cc"
     "hal.cc"
-    "host_types.cc"
     "status_utils.cc"
     "status_utils.h"
     "vm.cc"
@@ -25,13 +21,10 @@ iree_pyext_module(
     "unix_version.lds"
   DEPS
     iree::base
-    iree::base::signature_parser
     iree::base::status
     iree::hal
     iree::hal::drivers
     iree::modules::hal
-    iree::modules::strings::strings_module
-    iree::modules::tensorlist::native_module
     iree::vm
     iree::vm::bytecode_module
     absl::inlined_vector
@@ -49,15 +42,6 @@ iree_py_library(
     "system_api.py"
   PYEXT_DEPS
     ::PyExtRt
-)
-
-iree_py_test(
-  NAME
-    function_abi_test
-  SRCS
-    "function_abi_test.py"
-  LABELS
-    "nokokoro"
 )
 
 iree_py_test(

@@ -26,6 +26,7 @@ iree_cc_library(
     "DestructiveUpdateUtils.h"
     "Passes.h"
     "Passes.h.inc"
+    "TypeConverter.h"
   SRCS
     "ConvertToFlowTensorOps.cpp"
     "DeduplicateExecutables.cpp"
@@ -40,10 +41,14 @@ iree_cc_library(
     "LegalizeInputTypes.cpp"
     "OutlineDispatchRegions.cpp"
     "OutlineLargeConstants.cpp"
+    "PadLinalgOps.cpp"
     "PassDetail.h"
     "Passes.cpp"
-    "PrePostPartitioningConversion.cpp"
+    "PromoteI1ToI8Pass.cpp"
+    "PromoteTensorLoads.cpp"
     "StripAndSplatConstantVariables.cpp"
+    "TypeConverter.cpp"
+    "VerifyCompilerInputLegality.cpp"
   DEPS
     LLVMSupport
     MLIRIR
@@ -55,9 +60,11 @@ iree_cc_library(
     MLIRSCFToStandard
     MLIRShape
     MLIRShapeOpsTransforms
+    MLIRShapeToStandard
     MLIRStandard
     MLIRSupport
     MLIRTensor
+    MLIRTosa
     MLIRTosaToLinalg
     MLIRTosaToSCF
     MLIRTosaToStandard
@@ -67,13 +74,9 @@ iree_cc_library(
     iree::compiler::Conversion::HLOToLinalg
     iree::compiler::Conversion::LinalgToLinalg
     iree::compiler::Conversion::PassHeaders
-    iree::compiler::Dialect::Flow::Conversion
-    iree::compiler::Dialect::Flow::Conversion::HLOToFlow
-    iree::compiler::Dialect::Flow::Conversion::StandardToFlow
     iree::compiler::Dialect::Flow::IR
     iree::compiler::Dialect::HAL::IR
     iree::compiler::Dialect::IREE::IR
-    iree::compiler::Dialect::Shape::Conversion
     iree::compiler::Dialect::Shape::IR
     iree::compiler::Dialect::Shape::Transforms
     iree::compiler::Dialect::Shape::Utils::TypeConversion

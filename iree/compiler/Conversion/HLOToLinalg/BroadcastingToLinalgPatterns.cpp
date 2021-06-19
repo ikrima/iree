@@ -23,6 +23,9 @@ namespace {
 // Broadcasting utilities
 // -----------------------------------------------------------------------------
 
+/// Whether an element type is legal for codegen via linalg on IREE.
+bool isElementTypeLegalForCodegen(Type t) { return !t.isa<ComplexType>(); }
+
 /// Returns an ArrayAttr that contains `nLoops` attributes. All the attributes
 /// are "parallel" except the last `nReduction` elements, where are "reduction"
 /// attributes.
@@ -45,13 +48,13 @@ class Extent {
   Extent(int64_t extent) : extent(extent) {}
   Extent(Value value) : value(value) {}
 
-  bool isStatic() { return !value; }
-  bool isUnitExtent() { return isStatic() && getStatic() == 1; }
-  int64_t getStatic() {
+  bool isStatic() const { return !value; }
+  bool isUnitExtent() const { return isStatic() && getStatic() == 1; }
+  int64_t getStatic() const {
     assert(isStatic());
     return extent;
   }
-  Value getValue() {
+  Value getValue() const {
     assert(!isStatic());
     return value;
   }
@@ -65,6 +68,16 @@ class Extent {
   int64_t extent;
   Value value;
 };
+
+inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                     const Extent &extent) {
+  if (extent.isStatic()) {
+    os << "DIM[" << extent.getStatic() << "]";
+  } else {
+    os << "DIM[" << extent.getValue() << "]";
+  }
+  return os;
+}
 
 Value broadcast(OpBuilder &builder, Location loc, Value operand,
                 SmallVectorImpl<Extent> &resultExtents,
@@ -122,10 +135,10 @@ Value broadcastScalar(OpBuilder &builder, Location loc, Value scalarValue,
   return broadcast(builder, loc, scalarValue, resultExtents, isExpansion);
 }
 
-Optional<Extent> computeResultExtent(OpBuilder &builder, Location loc,
-                                     Extent &lhsDim, Extent &rhsDim,
-                                     bool &isLhsExpansion,
-                                     bool &isRhsExpansion) {
+Optional<Extent> computeBinaryResultExtent(OpBuilder &builder, Location loc,
+                                           Extent &lhsDim, Extent &rhsDim,
+                                           bool &isLhsExpansion,
+                                           bool &isRhsExpansion) {
   if (lhsDim.isStatic() && rhsDim.isStatic()) {
     // Both are static. Just check.
     if (lhsDim.getStatic() != rhsDim.getStatic() &&
@@ -189,11 +202,78 @@ Optional<Extent> computeResultExtent(OpBuilder &builder, Location loc,
   }
 
   // Both are dynamic. Compute the max.
-  Value lhsIsGreater = builder.create<CmpIOp>(loc, CmpIPredicate::sge,
-                                              lhsExtentValue, rhsExtentValue);
-  Value resultExtent = builder.create<SelectOp>(loc, lhsIsGreater,
-                                                lhsExtentValue, rhsExtentValue);
-  return Extent(resultExtent);
+  return Extent(lhsExtentValue);
+}
+
+Optional<Extent> computeTernaryResultExtent(OpBuilder &builder, Location loc,
+                                            Extent &aValue, Extent &bValue,
+                                            Extent &cValue, bool &isAExpansion,
+                                            bool &isBExpansion,
+                                            bool &isCExpansion) {
+  // Collect non unit extents (which includes, implicitly, dynamic dims).
+  SmallVector<Extent> nonUnitExtents;
+  if (!aValue.isUnitExtent()) nonUnitExtents.push_back(aValue);
+  if (!bValue.isUnitExtent()) nonUnitExtents.push_back(bValue);
+  if (!cValue.isUnitExtent()) nonUnitExtents.push_back(cValue);
+
+  // Early exit if all unit extents.
+  if (nonUnitExtents.empty()) {
+    isAExpansion = false;
+    isBExpansion = false;
+    isCExpansion = false;
+    return aValue;
+  }
+
+  // Are any a unit?
+  bool hasUnitExtent = false;
+  if (aValue.isUnitExtent()) hasUnitExtent = true;
+  if (bValue.isUnitExtent()) hasUnitExtent = true;
+  if (cValue.isUnitExtent()) hasUnitExtent = true;
+
+  // Mark expansion for any unit.
+  if (hasUnitExtent) {
+    if (aValue.isUnitExtent()) isAExpansion = true;
+    if (bValue.isUnitExtent()) isBExpansion = true;
+    if (cValue.isUnitExtent()) isCExpansion = true;
+  }
+
+  // By default, compare against the first non unit extent; however, prefer
+  // a static extent if present.
+  int nonUnitCompareExtentIndex = 0;
+  for (int i = 0, e = nonUnitExtents.size(); i < e; i++) {
+    if (nonUnitExtents[i].isStatic()) nonUnitCompareExtentIndex = i;
+  }
+
+  // Generate checks for each non unit extent.
+  for (int i = 0, e = nonUnitExtents.size(); i < e; i++) {
+    if (i == nonUnitCompareExtentIndex) continue;
+    Extent &cmpLhs = nonUnitExtents[nonUnitCompareExtentIndex];
+    Extent &cmpRhs = nonUnitExtents[i];
+    // Static check.
+    if (cmpLhs.isStatic() && cmpRhs.isStatic()) {
+      if (cmpLhs.getStatic() != cmpRhs.getStatic()) {
+        // Statically illegal.
+        emitError(loc) << "cannot broadcast extents of differing size unless "
+                          "if one of them is 1 (got "
+                       << cmpLhs.getStatic() << ", " << cmpRhs.getStatic()
+                       << ")";
+        return llvm::None;
+      }
+      continue;
+    }
+    // Dynamic check.
+    Value cmpLhsValue = cmpLhs.convertToValue(builder, loc);
+    Value cmpRhsValue = cmpRhs.convertToValue(builder, loc);
+    Value isEqual = builder.create<CmpIOp>(loc, CmpIPredicate::eq, cmpLhsValue,
+                                           cmpRhsValue);
+    builder.create<AssertOp>(
+        loc, isEqual,
+        builder.getStringAttr("mismatched dynamic broadcast extents"));
+  }
+
+  // The result must be one of the non unit extents. Just take the one
+  // used for comparison.
+  return nonUnitExtents[nonUnitCompareExtentIndex];
 }
 
 void padExtents(SmallVectorImpl<Extent> &extents, int size) {
@@ -373,6 +453,11 @@ struct ConvertRankedBroadcastBinaryOp : public ConversionPattern {
     if (failed(bcastAdaptor.verifyBroadcastCompatibility(op, operands))) {
       return rewriter.notifyMatchFailure(op, "not legal broadcasting");
     }
+    if (!isElementTypeLegalForCodegen(lhsType.getElementType()) ||
+        !isElementTypeLegalForCodegen(rhsType.getElementType())) {
+      return rewriter.notifyMatchFailure(op,
+                                         "not legal element type for codegen");
+    }
 
     // Extract the original extents.
     SmallVector<Extent> lhsOrigExtents;
@@ -400,12 +485,13 @@ struct ConvertRankedBroadcastBinaryOp : public ConversionPattern {
     bool lhsNeedsBroadcast = resultRank != lhsType.getRank();
     bool rhsNeedsBroadcast = resultRank != rhsType.getRank();
     for (int i = 0; i < resultRank; i++) {
-      auto resultExtent = computeResultExtent(
+      auto resultExtent = computeBinaryResultExtent(
           rewriter, loc, lhsBcastExtents[i], rhsBcastExtents[i],
           isLhsExpansion[i], isRhsExpansion[i]);
-      if (!resultExtent)
+      if (!resultExtent) {
         return rewriter.notifyMatchFailure(op,
                                            "could not compute result extent");
+      }
       resultExtents[i] = *resultExtent;
       if (isLhsExpansion[i]) lhsNeedsBroadcast = true;
       if (isRhsExpansion[i]) rhsNeedsBroadcast = true;
@@ -450,22 +536,27 @@ struct ConvertTrivialNonBroadcastBinaryOp : public ConversionPattern {
       ConversionPatternRewriter &rewriter) const override {
     // Only rewrite for statically determinable non-broadcasting cases.
     auto bcastOperands = bcastAdaptor.getFromBroadcastValues(op, operands);
-    auto lhs_type =
+    auto lhsType =
         bcastOperands.first.getType().template dyn_cast<RankedTensorType>();
-    auto rhs_type =
+    auto rhsType =
         bcastOperands.second.getType().template dyn_cast<RankedTensorType>();
-    if (!lhs_type || !rhs_type)
+    if (!lhsType || !rhsType)
       return rewriter.notifyMatchFailure(op, "not ranked tensors");
+    if (!isElementTypeLegalForCodegen(lhsType.getElementType()) ||
+        !isElementTypeLegalForCodegen(rhsType.getElementType())) {
+      return rewriter.notifyMatchFailure(op,
+                                         "not legal element type for codegen");
+    }
 
     // Requires rank broadcast.
-    if (lhs_type.getRank() != rhs_type.getRank())
+    if (lhsType.getRank() != rhsType.getRank())
       return rewriter.notifyMatchFailure(op, "not same rank");
     // Any dynamic dimension may require broadcasting and requires more
     // analysis.
-    if (!lhs_type.hasStaticShape() || !rhs_type.hasStaticShape())
+    if (!lhsType.hasStaticShape() || !rhsType.hasStaticShape())
       return rewriter.notifyMatchFailure(op, "not static shapes");
 
-    for (auto extents : llvm::zip(lhs_type.getShape(), rhs_type.getShape())) {
+    for (auto extents : llvm::zip(lhsType.getShape(), rhsType.getShape())) {
       auto lhs_extent = std::get<0>(extents);
       auto rhs_extent = std::get<1>(extents);
       if (lhs_extent != rhs_extent) {
@@ -493,20 +584,9 @@ struct ConvertTrivialNonBroadcastBinaryOp : public ConversionPattern {
 // -----------------------------------------------------------------------------
 
 // Sepecial case conversion for the BroadcastSelectOp into primitives.
-// Note that the "specification" for this op is totally self-contradictory and
-// no one seems to know what its broadcasting semantics actually are.
-// The most canonical documentation
-// (https://www.tensorflow.org/xla/operation_semantics#select) has a completely
-// different set of constraints expressed than the (minimal) descriptions
-// of both the BroadcastSelectOp and the SelectOp, the original conversions
-// from BroadcastSelectOp, and the XlaBuilder implementation. The implementation
-// in XlaBuilder::TernaryOp is taken as authoritative, since that is the oldest
-// code. Note that in that code, pred=lhs, onTrue=rhs, onFalse=ehs.
-// In that implementation, there can only be one non-scalar shape in
-// {pred, onTrue, onFalse} and any of them can be scalar (in violation of the
-// specification). Since they are all assumed to be the same shape, the
-// result shape is the first non-scalar of {pred, onTrue, onFalse}. Then
-// any scalars are broadcast to that shape.
+// This follows the new convention of SelectV2, which allows a true ternary
+// select (whereas the original definition only supported one broadcasting
+// value).
 struct ConvertSelectOp : public OpConversionPattern<chlo::BroadcastSelectOp> {
   using OpConversionPattern<chlo::BroadcastSelectOp>::OpConversionPattern;
 
@@ -518,65 +598,98 @@ struct ConvertSelectOp : public OpConversionPattern<chlo::BroadcastSelectOp> {
 
     // Only support ranked operands.
     Value pred = transformed.pred();
-    Value onTrue = transformed.on_true();
-    Value onFalse = transformed.on_false();
+    Value thenValue = transformed.on_true();
+    Value elseValue = transformed.on_false();
     auto predType = pred.getType().dyn_cast<RankedTensorType>();
-    auto onTrueType = onTrue.getType().dyn_cast<RankedTensorType>();
-    auto onFalseType = onFalse.getType().dyn_cast<RankedTensorType>();
+    auto thenType = thenValue.getType().dyn_cast<RankedTensorType>();
+    auto elseType = elseValue.getType().dyn_cast<RankedTensorType>();
     auto resultType = op.getResult().getType().dyn_cast<RankedTensorType>();
-    if (!predType || !onTrueType || !onFalseType || !resultType) {
+    if (!predType || !thenType || !elseType || !resultType) {
       return rewriter.notifyMatchFailure(op, "cannot convert unranked tensors");
+    }
+    if (!isElementTypeLegalForCodegen(resultType.getElementType())) {
+      return rewriter.notifyMatchFailure(op,
+                                         "not legal element type for codegen");
     }
 
     // Short-circuit if all types are statically equal.
-    if (predType == onTrueType && predType == onFalseType) {
+    if (predType == thenType && predType == elseType) {
       // No broadcasting. This includes the 0d -> 0d case.
-      rewriter.replaceOpWithNewOp<mhlo::SelectOp>(op, resultType, pred, onTrue,
-                                                  onFalse);
+      rewriter.replaceOpWithNewOp<mhlo::SelectOp>(op, resultType, pred,
+                                                  thenValue, elseValue);
       return success();
     }
 
-    // Determine which component will be taken as the result shape.
-    SmallVector<Value, 3> resultCandidates = {pred, onTrue, onFalse};
-    Value nonScalarResult;
-    for (Value resultCandidate : resultCandidates) {
-      auto t = resultCandidate.getType().cast<RankedTensorType>();
-      if (t.getRank() > 0) {
-        if (nonScalarResult &&
-            nonScalarResult.getType().cast<RankedTensorType>().getShape() !=
-                t.getShape()) {
-          // Since the spec is ill-defined on this point, don't trust the
-          // verifier and make sure to avoid the situation in all builds.
-          return rewriter.notifyMatchFailure(op, "mismatched select shapes");
-        }
-        nonScalarResult = resultCandidate;
+    // Full ternary broadcast. See ConvertBroadcastBinaryOp for the
+    // simplified version.
+    // Extract the original extents.
+    SmallVector<Extent> predOrigExtents;
+    predOrigExtents.reserve(predType.getRank());
+    appendExtents(rewriter, loc, predOrigExtents, pred, predType);
+    SmallVector<Extent> thenOrigExtents;
+    thenOrigExtents.reserve(thenType.getRank());
+    appendExtents(rewriter, loc, thenOrigExtents, thenValue, thenType);
+    SmallVector<Extent> elseOrigExtents;
+    elseOrigExtents.reserve(elseType.getRank());
+    appendExtents(rewriter, loc, elseOrigExtents, elseValue, elseType);
+
+    // Left pad with 1-extents to the result rank.
+    int resultRank = std::max(std::max(predType.getRank(), thenType.getRank()),
+                              elseType.getRank());
+    SmallVector<Extent> predBcastExtents;
+    predBcastExtents.reserve(resultRank);
+    padExtents(predBcastExtents, resultRank - predType.getRank());
+    predBcastExtents.append(predOrigExtents);
+
+    SmallVector<Extent> thenBcastExtents;
+    thenBcastExtents.reserve(resultRank);
+    padExtents(thenBcastExtents, resultRank - thenType.getRank());
+    thenBcastExtents.append(thenOrigExtents);
+
+    SmallVector<Extent> elseBcastExtents;
+    elseBcastExtents.reserve(resultRank);
+    padExtents(elseBcastExtents, resultRank - elseType.getRank());
+    elseBcastExtents.append(elseOrigExtents);
+
+    // Compute the result extents.
+    SmallVector<Extent> resultExtents(resultRank);
+    SmallVector<bool> isPredExpansion(resultRank);
+    SmallVector<bool> isThenExpansion(resultRank);
+    SmallVector<bool> isElseExpansion(resultRank);
+    bool predNeedsBroadcast = resultRank != predType.getRank();
+    bool thenNeedsBroadcast = resultRank != thenType.getRank();
+    bool elseNeedsBroadcast = resultRank != elseType.getRank();
+    for (int i = 0; i < resultRank; i++) {
+      auto resultExtent = computeTernaryResultExtent(
+          rewriter, loc, predBcastExtents[i], thenBcastExtents[i],
+          elseBcastExtents[i], isPredExpansion[i], isThenExpansion[i],
+          isElseExpansion[i]);
+      if (!resultExtent) {
+        return rewriter.notifyMatchFailure(op,
+                                           "could not compute result extent");
       }
-    }
-    // Must be true per the equality early-exit above.
-    assert(nonScalarResult && "must have a non-scalar result");
-    auto nonScalarResultType =
-        nonScalarResult.getType().cast<RankedTensorType>();
-
-    // Compute result extents.
-    int resultRank = nonScalarResultType.getRank();
-    SmallVector<Extent> resultExtents;
-    resultExtents.reserve(resultRank);
-    appendExtents(rewriter, loc, resultExtents, nonScalarResult,
-                  nonScalarResultType);
-
-    // Broadcast any scalars.
-    if (predType.getRank() == 0) {
-      pred = broadcastScalar(rewriter, loc, pred, resultExtents);
-    }
-    if (onTrueType.getRank() == 0) {
-      onTrue = broadcastScalar(rewriter, loc, onTrue, resultExtents);
-    }
-    if (onFalseType.getRank() == 0) {
-      onFalse = broadcastScalar(rewriter, loc, onFalse, resultExtents);
+      resultExtents[i] = *resultExtent;
+      if (isPredExpansion[i]) predNeedsBroadcast = true;
+      if (isThenExpansion[i]) thenNeedsBroadcast = true;
+      if (isElseExpansion[i]) elseNeedsBroadcast = true;
     }
 
-    rewriter.replaceOpWithNewOp<mhlo::SelectOp>(op, resultType, pred, onTrue,
-                                                onFalse);
+    // Broadcast all.
+    Value predBcast =
+        predNeedsBroadcast
+            ? broadcast(rewriter, loc, pred, resultExtents, isPredExpansion)
+            : pred;
+    Value thenBcast = thenNeedsBroadcast
+                          ? broadcast(rewriter, loc, thenValue, resultExtents,
+                                      isThenExpansion)
+                          : thenValue;
+    Value elseBcast = elseNeedsBroadcast
+                          ? broadcast(rewriter, loc, elseValue, resultExtents,
+                                      isElseExpansion)
+                          : elseValue;
+
+    rewriter.replaceOpWithNewOp<mhlo::SelectOp>(op, resultType, predBcast,
+                                                thenBcast, elseBcast);
     return success();
   }
 };

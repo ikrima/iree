@@ -6,17 +6,20 @@
 
 #include "iree/hal/local/sync_device.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
 #include "iree/base/tracing.h"
 #include "iree/hal/local/inline_command_buffer.h"
 #include "iree/hal/local/local_descriptor_set.h"
 #include "iree/hal/local/local_descriptor_set_layout.h"
-#include "iree/hal/local/local_executable.h"
 #include "iree/hal/local/local_executable_cache.h"
 #include "iree/hal/local/local_executable_layout.h"
 #include "iree/hal/local/sync_event.h"
 #include "iree/hal/local/sync_semaphore.h"
 
-typedef struct {
+typedef struct iree_hal_sync_device_t {
   iree_hal_resource_t resource;
   iree_string_view_t identifier;
 
@@ -151,8 +154,8 @@ static iree_status_t iree_hal_sync_device_create_command_buffer(
   // TODO(#4680): implement a non-inline command buffer that stores its commands
   // and can be submitted later on/multiple-times.
   return iree_hal_inline_command_buffer_create(
-      base_device, mode, command_categories, queue_affinity,
-      out_command_buffer);
+      mode, command_categories, queue_affinity,
+      iree_hal_device_host_allocator(base_device), out_command_buffer);
 }
 
 static iree_status_t iree_hal_sync_device_create_descriptor_set(

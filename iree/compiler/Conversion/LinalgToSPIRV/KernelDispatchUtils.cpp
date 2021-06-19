@@ -15,10 +15,10 @@
 
 #include "iree/compiler/Conversion/LinalgToSPIRV/KernelDispatchUtils.h"
 
-#include "iree/compiler/Conversion/CodegenUtils/FunctionUtils.h"
-#include "iree/compiler/Conversion/Common/LaunchConfig.h"
-#include "iree/compiler/Conversion/LinalgToSPIRV/Passes.h"
+#include "iree/compiler/Conversion/LinalgToSPIRV/LaunchConfig.h"
 #include "iree/compiler/Conversion/LinalgToSPIRV/Utils.h"
+#include "iree/compiler/Conversion/Passes.h"
+#include "iree/compiler/Conversion/Utils/Utils.h"
 #include "iree/compiler/Dialect/IREE/IR/IREEOps.h"
 #include "iree/compiler/Dialect/Shape/IR/ShapeOps.h"
 #include "llvm/Support/Debug.h"
@@ -102,13 +102,16 @@ static std::tuple<SmallVector<ShapedType>, SmallVector<ShapedType>>
 getInputOutputTypes(linalg::LinalgOp op) {
   SmallVector<ShapedType> inputTypes(op.getNumInputs()),
       outputTypes(op.getNumOutputs());
-  for (auto operand : enumerate(op.getInputOpOperands())) {
+  auto inputOperands = op.getInputOperands();
+  for (auto operand : enumerate(inputOperands)) {
+    assert(!op.isScalar(operand.value()));
     inputTypes[operand.index()] =
-        getUntiledType(operand.value().get()).dyn_cast<ShapedType>();
+        getUntiledType(operand.value()->get()).dyn_cast<ShapedType>();
   }
-  for (auto operand : enumerate(op.getOutputOpOperands())) {
+  auto outputOperands = op.getOutputOperands();
+  for (auto operand : enumerate(outputOperands)) {
     outputTypes[operand.index()] =
-        getUntiledType(operand.value().get()).dyn_cast<ShapedType>();
+        getUntiledType(operand.value()->get()).dyn_cast<ShapedType>();
   }
   return std::make_tuple(std::move(inputTypes), std::move(outputTypes));
 }
@@ -380,7 +383,8 @@ LogicalResult getGenericOpLaunchConfig(linalg::LinalgOp linalgOp,
   config.workgroupSize[0] = subgroupSize;
   config.workgroupSize[1] = 1;
   config.workgroupSize[2] = 1;
-  ShapedType outputShape = linalgOp.getOutputShapedType(0);
+  ShapedType outputShape =
+      linalgOp.getOutputOperand(0)->get().getType().cast<ShapedType>();
 
   SmallVector<int64_t, 4> candidateTileSizes;
   // When Vectororization is not enabled we skil the second level of tiling and
@@ -871,7 +875,7 @@ getOpNativeVectorSize<vector::TransferWriteOp>(vector::TransferWriteOp op) {
   return nativeSize;
 }
 
-Optional<SmallVector<int64_t, 4>> getNativeVectorSize(Operation *op) {
+Optional<SmallVector<int64_t, 4>> getSPIRVNativeVectorSize(Operation *op) {
 #define DISPATCH(opname)                            \
   if (isa<opname>(op)) {                            \
     return getOpNativeVectorSize(cast<opname>(op)); \

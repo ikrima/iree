@@ -122,6 +122,29 @@ LogicalResult FuncOp::verifyType() {
   return success();
 }
 
+void FuncOp::setReflectionAttr(StringRef name, Attribute value) {
+  // TODO(benvanik): remove reflection attrs as a concept and use something more
+  // MLIRish like an attribute interface/dialect interface.
+  // DictionaryAttr is not very friendly for modification :/
+  auto existingAttr =
+      getOperation()->getAttrOfType<DictionaryAttr>("iree.reflection");
+  SmallVector<NamedAttribute> attrs(existingAttr.begin(), existingAttr.end());
+  bool didFind = false;
+  for (size_t i = 0; i < attrs.size(); ++i) {
+    if (attrs[i].first == name) {
+      attrs[i].second = value;
+      didFind = true;
+      break;
+    }
+  }
+  if (!didFind) {
+    attrs.push_back(NamedAttribute(Identifier::get(name, getContext()), value));
+    DictionaryAttr::sortInPlace(attrs);
+  }
+  getOperation()->setAttr("iree.reflection",
+                          DictionaryAttr::getWithSorted(getContext(), attrs));
+}
+
 static ParseResult parseExportOp(OpAsmParser &parser, OperationState *result) {
   FlatSymbolRefAttr functionRefAttr;
   if (failed(parser.parseAttribute(functionRefAttr, "function_ref",
@@ -728,6 +751,19 @@ void ConstRefZeroOp::build(OpBuilder &builder, OperationState &result,
 }
 
 static ParseResult parseRodataOp(OpAsmParser &parser, OperationState *result) {
+  // TODO(#4670): Share across ops or upstream a custom directive
+  StringRef visibility;
+  if (parser.parseOptionalKeyword(&visibility,
+                                  {"public", "private", "nested"})) {
+    parser.emitError(
+        parser.getCurrentLocation(),
+        "expected valid visibility specifier (public, private or nested)");
+    return failure();
+  }
+  StringAttr visibilityAttr = parser.getBuilder().getStringAttr(visibility);
+  result->attributes.push_back(parser.getBuilder().getNamedAttr(
+      SymbolTable::getVisibilityAttrName(), visibilityAttr));
+
   StringAttr nameAttr;
   Attribute valueAttr;
   if (failed(parser.parseSymbolName(nameAttr,
@@ -736,11 +772,19 @@ static ParseResult parseRodataOp(OpAsmParser &parser, OperationState *result) {
       failed(parser.parseAttribute(valueAttr, "value", result->attributes))) {
     return failure();
   }
+
   return success();
 }
 
 static void printRodataOp(OpAsmPrinter &p, RodataOp &op) {
   p << op.getOperationName() << ' ';
+
+  // TODO(#4670): Share across ops or upstream a custom directive
+  StringRef visibilityAttrName = SymbolTable::getVisibilityAttrName();
+  if (auto visibility = op->getAttrOfType<StringAttr>(visibilityAttrName)) {
+    p << visibility.getValue() << ' ';
+  }
+
   p.printSymbolName(op.sym_name());
   p << ' ';
   p.printAttribute(op.value());
@@ -1225,6 +1269,6 @@ Optional<MutableOperandRange> CondBreakOp::getMutableSuccessorOperands(
 // TableGen definitions (intentionally last)
 //===----------------------------------------------------------------------===//
 
-#include "iree/compiler/Dialect/VM/IR/VMOpEncoder.cpp.inc"
+#include "iree/compiler/Dialect/VM/IR/VMOpEncoder.cpp.inc"  // IWYU pragma: keep
 #define GET_OP_CLASSES
-#include "iree/compiler/Dialect/VM/IR/VMOps.cpp.inc"
+#include "iree/compiler/Dialect/VM/IR/VMOps.cpp.inc"  // IWYU pragma: keep

@@ -8,14 +8,13 @@
 
 #include <memory>
 
-#include "iree/compiler/Conversion/Common/Passes.h"
-#include "iree/compiler/Conversion/LinalgToLLVM/Passes.h"
 #include "iree/compiler/Conversion/Passes.h"
 #include "iree/compiler/Dialect/HAL/Transforms/Passes.h"
 #include "iree/compiler/Dialect/Shape/Transforms/Passes.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/SCFToStandard/SCFToStandard.h"
 #include "mlir/Conversion/VectorToSCF/VectorToSCF.h"
+#include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/StandardOps/Transforms/Passes.h"
@@ -27,43 +26,17 @@ namespace iree_compiler {
 namespace IREE {
 namespace VMVX {
 
-// NOTE:
-// NOTE:    THIS IS ALL JUST A HACK
-// NOTE:
-// NOTE:    this entire pipeline needs to be reworked - it's been randomly
-// NOTE:    constructed to "work" for a few samples by someone who does not
-// NOTE:    understand the codegen system :)
-// NOTE:
-
 static void buildVectorVMVXTransformPassPipeline(OpPassManager &passManager) {
+  // For now lower using the default CPU pass-pipeline which doesn't
+  // vectorize. When VMVX can lower vector operations, this can be relaxed.
+  passManager.addPass(
+      createLowerExecutableTargetPass(/*lowerToVectors=*/false));
+
   OpPassManager &nestedModulePM = passManager.nest<ModuleOp>();
-
-  // ---------------------------------------------------------------------------
-  // Configuration
-  // ---------------------------------------------------------------------------
-
-  // TODO(#5925): This can also be modified to just use the dynamic pass
-  // pipeline like the CPU side.
-  // passManager.addPass(createMaterializeCPULaunchConfigurationPass());
-  passManager.addPass(createSetNumWorkgroupsPass());
 
   // ---------------------------------------------------------------------------
   // Linalg -> Vectors
   // ---------------------------------------------------------------------------
-
-  nestedModulePM.addNestedPass<FuncOp>(createLinalgVectorizePass());
-
-  // Use stack allocation for transient buffers.
-  WorkgroupMemoryAllocationFn allocationFn =
-      [](OpBuilder &builder, Location loc, ArrayRef<int64_t> staticShape,
-         Type elementType, ArrayRef<Value> dynamicSizes) {
-        MemRefType allocType = MemRefType::get(staticShape, elementType);
-        return builder.create<memref::AllocaOp>(loc, allocType, dynamicSizes);
-      };
-  addLinalgBufferizePasses(nestedModulePM, allocationFn);
-  nestedModulePM.addPass(createPromoteBuffersToStackPass(
-      /*maxAllocSizeInBytes=*/1 << 10, /*bitwidthOfIndexType=*/32,
-      /*maxRankOfAllocatedMemRef=*/10));
 
   nestedModulePM.addNestedPass<FuncOp>(createResolveShapeOpsPass());
   nestedModulePM.addNestedPass<FuncOp>(
@@ -93,7 +66,7 @@ static void buildVectorVMVXTransformPassPipeline(OpPassManager &passManager) {
   nestedModulePM.addPass(createCSEPass());
   nestedModulePM.addPass(createFlattenMemRefSubspanPass());
   nestedModulePM.addPass(createNormalizeMemRefsPass());
-  nestedModulePM.addNestedPass<FuncOp>(createMemRefDataFlowOptPass());
+  nestedModulePM.addNestedPass<FuncOp>(createAffineScalarReplacementPass());
 }
 
 static void buildLoopOptimizationVMVXTransformPassPipeline(

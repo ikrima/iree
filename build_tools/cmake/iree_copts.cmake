@@ -289,7 +289,7 @@ if(CMAKE_CXX_FLAGS AND "${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   string(REPLACE "/GR" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
-if(NOT ANDROID)
+if(NOT ANDROID AND ${IREE_ENABLE_THREADING})
   iree_select_compiler_opts(_IREE_PTHREADS_LINKOPTS
     CLANG_OR_GCC
       "-lpthread"
@@ -306,16 +306,35 @@ if(ANDROID)
   )
 endif()
 
+if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Generic")
+# If building for a known OS, link against libdl for dynamic library support.
+# Generic systems may not support dynamic libraries.
+  iree_select_compiler_opts(_IREE_DL_LINKOPTS
+  CLANG_OR_GCC
+    "-ldl"
+  )
+endif()
+
+# TODO(benvanik): remove the ABSL usage here; we aren't abseil.
+If(${IREE_ENABLE_THREADING})
+  iree_select_compiler_opts(_IREE_ABSL_LINKOPTS
+    ALL
+      "${ABSL_DEFAULT_LINKOPTS}"
+  )
+endif()
+
 iree_select_compiler_opts(IREE_DEFAULT_LINKOPTS
   ALL
     # TODO(benvanik): remove the ABSL usage here; we aren't abseil.
-    "${ABSL_DEFAULT_LINKOPTS}"
+    ${_IREE_ABSL_LINKOPTS}
   CLANG_OR_GCC
     # Required by all modern software, effectively:
-    "-ldl"
     "-lm"
+    ${_IREE_DL_LINKOPTS}
     ${_IREE_PTHREADS_LINKOPTS}
     ${_IREE_LOGGING_LINKOPTS}
+  MSVC
+    "-natvis:${CMAKE_SOURCE_DIR}/iree/iree.natvis"
 )
 
 # Add to LINKOPTS on a binary to configure it for X/Wayland/Windows/etc
@@ -438,12 +457,8 @@ set(LLVM_ENABLE_IDE ON CACHE BOOL "" FORCE)
 set(LLVM_TARGETS_TO_BUILD "WebAssembly;X86;ARM;AArch64;RISCV;NVPTX;AMDGPU"
     CACHE STRING "" FORCE)
 
-set(LLVM_ENABLE_PROJECTS "mlir" CACHE STRING "" FORCE)
+set(LLVM_ENABLE_PROJECTS "mlir;lld" CACHE STRING "" FORCE)
 set(LLVM_ENABLE_BINDINGS OFF CACHE BOOL "" FORCE)
-
-if(IREE_USE_LINKER)
-  set(LLVM_USE_LINKER ${IREE_USE_LINKER} CACHE STRING "" FORCE)
-endif()
 
 set(MLIR_TABLEGEN_EXE mlir-tblgen)
 # iree-tblgen is not defined using the add_tablegen mechanism as other TableGen

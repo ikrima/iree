@@ -13,7 +13,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "iree/compiler/Conversion/CodegenUtils/MarkerUtils.h"
+#include "iree/compiler/Conversion/PassDetail.h"
+#include "iree/compiler/Conversion/Passes.h"
+#include "iree/compiler/Conversion/Utils/MarkerUtils.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "iree/compiler/Dialect/IREE/IR/IREEOps.h"
 #include "llvm/ADT/DenseMapInfo.h"
@@ -220,15 +222,16 @@ struct RemoveIdentityConversionCast final
 /// This pass converts remaining interface ops into SPIR-V global variables,
 /// GPU processor ID ops into SPIR-V global variables, loop/standard ops into
 /// corresponding SPIR-V ops.
-struct ConvertToSPIRVPass
-    : public PassWrapper<ConvertToSPIRVPass, OperationPass<ModuleOp>> {
+struct LinalgToSPIRVConvertToSPIRVPass
+    : public LinalgToSPIRVConvertToSPIRVBase<LinalgToSPIRVConvertToSPIRVPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<spirv::SPIRVDialect>();
   }
 
   void runOnOperation() override;
-  ConvertToSPIRVPass() {}
-  ConvertToSPIRVPass(const ConvertToSPIRVPass &pass) {}
+  LinalgToSPIRVConvertToSPIRVPass() {}
+  LinalgToSPIRVConvertToSPIRVPass(const LinalgToSPIRVConvertToSPIRVPass &pass) {
+  }
 };
 }  // namespace
 
@@ -260,7 +263,7 @@ LogicalResult HALInterfaceLoadConstantConverter::matchAndRewrite(
   return success();
 }
 
-void ConvertToSPIRVPass::runOnOperation() {
+void LinalgToSPIRVConvertToSPIRVPass::runOnOperation() {
   MLIRContext *context = &getContext();
   ModuleOp moduleOp = getOperation();
 
@@ -313,9 +316,10 @@ void ConvertToSPIRVPass::runOnOperation() {
   /// - tensor_to_memref can become a no-op since tensors are lowered to
   ///   !spv.array.
   /// - unrealized_conversion_cast with the same source and target type.
-  patterns
-      .insert<FoldAsNoOp<linalg::ReshapeOp>, FoldAsNoOp<memref::BufferCastOp>,
-              RemoveIdentityConversionCast>(typeConverter, context);
+  patterns.insert<
+      FoldAsNoOp<linalg::CollapseShapeOp>, FoldAsNoOp<linalg::ExpandShapeOp>,
+      FoldAsNoOp<memref::BufferCastOp>, RemoveIdentityConversionCast>(
+      typeConverter, context);
 
   std::unique_ptr<ConversionTarget> target =
       SPIRVConversionTarget::get(targetAttr);
@@ -337,12 +341,12 @@ void ConvertToSPIRVPass::runOnOperation() {
   auto spvModule = builder.create<spirv::ModuleOp>(
       moduleOp.getLoc(), spirv::AddressingModel::Logical,
       spirv::MemoryModel::GLSL450);
-  Operation *terminator = spvModule.getBlock().getTerminator();
+  Block *body = spvModule.getBody();
   Dialect *spvDialect = spvModule->getDialect();
   for (Operation &op : llvm::make_early_inc_range(*moduleOp.getBody())) {
     // Skip the newly created spv.module itself.
     if (&op == spvModule) continue;
-    if (op.getDialect() == spvDialect) op.moveBefore(terminator);
+    if (op.getDialect() == spvDialect) op.moveBefore(body, body->end());
   }
 }
 
@@ -350,13 +354,10 @@ void ConvertToSPIRVPass::runOnOperation() {
 // Pass entry point and registration
 //===----------------------------------------------------------------------===//
 
-std::unique_ptr<OperationPass<ModuleOp>> createConvertToSPIRVPass() {
-  return std::make_unique<ConvertToSPIRVPass>();
+std::unique_ptr<OperationPass<ModuleOp>>
+createLinalgToSPIRVConvertToSPIRVPass() {
+  return std::make_unique<LinalgToSPIRVConvertToSPIRVPass>();
 }
 
-static PassRegistration<ConvertToSPIRVPass> pass(
-    "iree-codegen-convert-to-spirv",
-    "Perform final conversion from builtin/GPU/HAL/standard dialect to SPIR-V "
-    "dialect");
 }  // namespace iree_compiler
 }  // namespace mlir

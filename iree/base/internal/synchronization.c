@@ -7,6 +7,7 @@
 #include "iree/base/internal/synchronization.h"
 
 #include <assert.h>
+#include <string.h>
 
 #if IREE_SYNCHRONIZATION_DISABLE_UNSAFE
 
@@ -153,7 +154,7 @@ static inline void iree_futex_wake(void* address, int32_t count) {
 #define iree_mutex_impl_initialize(mutex)
 #define iree_mutex_impl_deinitialize(mutex)
 #define iree_mutex_impl_lock(mutex)
-#define iree_mutex_impl_try_lock(mutex)
+#define iree_mutex_impl_try_lock(mutex) true
 #define iree_mutex_impl_unlock(mutex)
 
 #elif defined(IREE_PLATFORM_WINDOWS) && defined(IREE_MUTEX_USE_WIN32_SRW)
@@ -308,7 +309,9 @@ void iree_slim_mutex_lock(iree_slim_mutex_t* mutex)
     IREE_DISABLE_THREAD_SAFETY_ANALYSIS {}
 
 bool iree_slim_mutex_try_lock(iree_slim_mutex_t* mutex)
-    IREE_DISABLE_THREAD_SAFETY_ANALYSIS {}
+    IREE_DISABLE_THREAD_SAFETY_ANALYSIS {
+  return iree_mutex_try_lock((iree_mutex_t*)&mutex->reserved);
+}
 
 void iree_slim_mutex_unlock(iree_slim_mutex_t* mutex)
     IREE_DISABLE_THREAD_SAFETY_ANALYSIS {}

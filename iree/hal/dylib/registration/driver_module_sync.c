@@ -7,8 +7,12 @@
 #include "iree/hal/dylib/registration/driver_module_sync.h"
 
 #include <inttypes.h>
+#include <stddef.h>
 
+#include "iree/base/api.h"
+#include "iree/hal/local/executable_loader.h"
 #include "iree/hal/local/loaders/legacy_library_loader.h"
+#include "iree/hal/local/sync_device.h"
 #include "iree/hal/local/sync_driver.h"
 
 // TODO(#4298): remove this driver registration and wrapper.
@@ -45,8 +49,8 @@ static iree_status_t iree_hal_dylib_sync_driver_factory_try_create(
   iree_hal_sync_device_params_initialize(&default_params);
 
   iree_hal_executable_loader_t* dylib_loader = NULL;
-  iree_status_t status =
-      iree_hal_legacy_library_loader_create(allocator, &dylib_loader);
+  iree_status_t status = iree_hal_legacy_library_loader_create(
+      iree_hal_executable_import_provider_null(), allocator, &dylib_loader);
   iree_hal_executable_loader_t* loaders[1] = {dylib_loader};
 
   if (iree_status_is_ok(status)) {

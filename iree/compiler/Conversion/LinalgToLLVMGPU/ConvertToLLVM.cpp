@@ -6,7 +6,9 @@
 
 #include "iree/compiler/Conversion/LinalgToLLVMGPU/ConvertToLLVM.h"
 
-#include "iree/compiler/Conversion/CodegenUtils/FunctionUtils.h"
+#include "iree/compiler/Conversion/PassDetail.h"
+#include "iree/compiler/Conversion/Passes.h"
+#include "iree/compiler/Conversion/Utils/Utils.h"
 #include "iree/compiler/Dialect/IREE/IR/IREEOps.h"
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
 #include "mlir/Dialect/GPU/Passes.h"
@@ -59,8 +61,9 @@ struct ScalarizeMathOp : public OpRewritePattern<MathOpTy> {
 };
 
 /// Pass to test scalarization pattern.
-class ScalarizationTestPass
-    : public PassWrapper<ScalarizationTestPass, OperationPass<FuncOp>> {
+class TestLinalgToLLVMGPUScalarizeMathOpPass
+    : public TestLinalgToLLVMGPUScalarizeMathOpBase<
+          TestLinalgToLLVMGPUScalarizeMathOpPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<vector::VectorDialect>();
   }
@@ -70,6 +73,34 @@ class ScalarizationTestPass
     (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns));
   }
 };
+
+// Convention with the HAL side to pass kernel arguments.
+// The bindings are ordered based on binding index then compressed and mapped to
+// dense set of arguments.
+// This function looks at the symbols and return the mapping between binding
+// index and kernel argument index. For instance if the kernel has bindings 1,
+// 5, 6 it will return the mapping [1, 0], [5, 1], [6, 2]
+static llvm::SmallDenseMap<uint64_t, size_t> getKernelArgMapping(
+    Operation *func) {
+  llvm::SmallDenseMap<uint64_t, size_t> mapBindingArgIndex;
+  llvm::SmallVector<uint64_t> bindingUsed;
+  Operation *symbolTableOp = SymbolTable::getNearestSymbolTable(func);
+  SymbolTable::walkSymbolTables(symbolTableOp, true, [&](Operation *op, bool) {
+    if (auto interface = dyn_cast<IREE::HAL::InterfaceOp>(op)) {
+      interface.walk([&](Operation *symbolOp) {
+        if (auto binding = dyn_cast<IREE::HAL::InterfaceBindingOp>(symbolOp)) {
+          uint64_t bindingIndex = binding.binding().getZExtValue();
+          bindingUsed.push_back(bindingIndex);
+        }
+      });
+    }
+  });
+  std::sort(bindingUsed.begin(), bindingUsed.end());
+  for (auto binding : llvm::enumerate(bindingUsed)) {
+    mapBindingArgIndex[binding.value()] = binding.index();
+  }
+  return mapBindingArgIndex;
+}
 
 class ConvertFunc : public ConvertToLLVMPattern {
  public:
@@ -88,13 +119,16 @@ class ConvertFunc : public ConvertToLLVMPattern {
     assert(fnType.getNumInputs() == 0 && fnType.getNumResults() == 0);
 
     TypeConverter::SignatureConversion signatureConverter(/*numOrigInputs=*/0);
-    SmallVector<Type, 8> llvmInputTypes;
+    llvm::SmallDenseMap<uint64_t, size_t> argMapping =
+        getKernelArgMapping(funcOp);
+    SmallVector<Type, 8> llvmInputTypes(argMapping.size());
     funcOp.walk([&](IREE::HAL::InterfaceBindingSubspanOp input) {
       auto memrefType = input.getType().cast<MemRefType>();
       Type elType = memrefType.getElementType();
       auto llvmType =
           LLVM::LLVMPointerType::get(elType, memrefType.getMemorySpaceAsInt());
-      llvmInputTypes.push_back(llvmType);
+      uint64_t binding = input.queryBindingOp().binding().getZExtValue();
+      llvmInputTypes[argMapping[binding]] = llvmType;
     });
     signatureConverter.addInputs(llvmInputTypes);
 
@@ -142,18 +176,28 @@ class ConvertIREEBindingOp : public ConvertToLLVMPattern {
     if (!llvmFuncOp) return failure();
     assert(llvmFuncOp.getNumArguments() > 0);
 
+    llvm::SmallDenseMap<uint64_t, size_t> argMapping =
+        getKernelArgMapping(llvmFuncOp);
     Location loc = op->getLoc();
     auto ireeBindingOp = cast<IREE::HAL::InterfaceBindingSubspanOp>(op);
     IREE::HAL::InterfaceBindingSubspanOpAdaptor adaptor(operands);
     MemRefType memrefType =
         ireeBindingOp.getResult().getType().dyn_cast<MemRefType>();
-
-    // Fetch the interface binding op and extract the buffer index from void**.
-    auto symbol = SymbolTable::lookupNearestSymbolFrom(
-        op, op->getAttrOfType<SymbolRefAttr>("binding"));
-    auto interfaceBindingOp = cast<IREE::HAL::InterfaceBindingOp>(symbol);
-    Value llvmBufferBasePtr =
-        llvmFuncOp.getArgument(interfaceBindingOp.binding().getZExtValue());
+    uint64_t binding = ireeBindingOp.queryBindingOp().binding().getZExtValue();
+    Value llvmBufferBasePtr = llvmFuncOp.getArgument(argMapping[binding]);
+    // Add the byte offset.
+    Value llvmBufferBasei8Ptr = rewriter.create<LLVM::BitcastOp>(
+        loc,
+        LLVM::LLVMPointerType::get(rewriter.getIntegerType(8),
+                                   llvmBufferBasePtr.getType()
+                                       .cast<LLVM::LLVMPointerType>()
+                                       .getAddressSpace()),
+        llvmBufferBasePtr);
+    llvmBufferBasei8Ptr = rewriter.create<LLVM::GEPOp>(
+        loc, llvmBufferBasei8Ptr.getType(), llvmBufferBasei8Ptr,
+        adaptor.byte_offset());
+    llvmBufferBasePtr = rewriter.create<LLVM::BitcastOp>(
+        loc, llvmBufferBasePtr.getType(), llvmBufferBasei8Ptr);
     if (memrefType.hasStaticShape()) {
       auto desc = MemRefDescriptor::fromStaticShape(
           rewriter, loc, *getTypeConverter(), memrefType, llvmBufferBasePtr);
@@ -245,8 +289,10 @@ void populateScalarizeMathOps(RewritePatternSet &patterns) {
       patterns.getContext());
 }
 
-static PassRegistration<ScalarizationTestPass> scalarization_test_pass(
-    "iree-llvmgpu-scalarize-math-op", "Test pass for scalarization patterns.");
+std::unique_ptr<OperationPass<FuncOp>>
+createTestLinalgToLLVMGPUScalarizeMathOpPass() {
+  return std::make_unique<TestLinalgToLLVMGPUScalarizeMathOpPass>();
+}
 
 }  // namespace iree_compiler
 }  // namespace mlir

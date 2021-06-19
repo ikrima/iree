@@ -10,6 +10,11 @@
 
 iree_add_all_subdirs()
 
+# Task-based executor requires threading support.
+if(NOT ${IREE_ENABLE_THREADING})
+  return()
+endif()
+
 iree_cc_library(
   NAME
     api
@@ -75,8 +80,8 @@ iree_cc_test(
   DEPS
     ::task
     iree::base
-    iree::base::core_headers
     iree::base::internal::prng
+    iree::base::tracing
     iree::task::testing::test_util
     iree::testing::gtest
     iree::testing::gtest_main

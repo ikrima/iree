@@ -41,6 +41,7 @@ iree_check_single_backend_test_suite(
             "dot.mlir",
             "dot_general.mlir",
             "dynamic_slice.mlir",
+            "dynamic_update_slice.mlir",
             "exponential.mlir",
             "exponential_minus_one.mlir",
             "fft.mlir",
@@ -57,6 +58,7 @@ iree_check_single_backend_test_suite(
             "pad.mlir",
             "reduce.mlir",
             "reduce_window.mlir",
+            "remainder.mlir",
             "reshape.mlir",
             "reverse.mlir",
             "rsqrt.mlir",
@@ -72,12 +74,12 @@ iree_check_single_backend_test_suite(
         ],
         include = ["*.mlir"],
         exclude = [
-            "remainder.mlir",  # frem has a bug in LLVM PTX backend for negative values.
             "round.mlir",
             "scatter.mlir",
             "sort.mlir",
         ],
     ),
+    compiler_flags = ["-iree-input-type=mhlo"],
     driver = "cuda",
     tags = [
         # CUDA cuInit fails with sanitizer on.
@@ -112,6 +114,7 @@ iree_check_single_backend_test_suite(
             "dot.mlir",
             "dot_general.mlir",
             "dynamic_slice.mlir",
+            "dynamic_update_slice.mlir",
             "exponential.mlir",
             "exponential_minus_one.mlir",
             "fft.mlir",
@@ -149,6 +152,7 @@ iree_check_single_backend_test_suite(
             "sort.mlir",
         ],
     ),
+    compiler_flags = ["-iree-input-type=mhlo"],
     driver = "dylib",
     target_backend = "dylib-llvm-aot",
 )
@@ -175,6 +179,7 @@ iree_check_single_backend_test_suite(
             "dot.mlir",
             "dot_general.mlir",
             "dynamic_slice.mlir",
+            "dynamic_update_slice.mlir",
             "exponential.mlir",
             "exponential_minus_one.mlir",
             "fft.mlir",
@@ -212,6 +217,7 @@ iree_check_single_backend_test_suite(
             "sort.mlir",
         ],
     ),
+    compiler_flags = ["-iree-input-type=mhlo"],
     driver = "vmvx",
     target_backend = "vmvx",
 )
@@ -238,6 +244,7 @@ iree_check_single_backend_test_suite(
             "dot.mlir",
             "dot_general.mlir",
             "dynamic_slice.mlir",
+            "dynamic_update_slice.mlir",
             "exponential.mlir",
             "exponential_minus_one.mlir",
             "finite.mlir",
@@ -275,6 +282,7 @@ iree_check_single_backend_test_suite(
             "sort.mlir",
         ],
     ),
+    compiler_flags = ["-iree-input-type=mhlo"],
     driver = "vulkan",
     target_backend = "vulkan-spirv",
 )

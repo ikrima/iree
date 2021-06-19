@@ -6,6 +6,11 @@
 
 # Doesn't use bazel_to_cmake because of various special logic throughout.
 
+# Tools has thread dependency from iree::hal::drivers and absl
+if(NOT ${IREE_ENABLE_THREADING})
+  return()
+endif()
+
 add_subdirectory(android)
 add_subdirectory(test)
 add_subdirectory(utils)
@@ -58,15 +63,18 @@ iree_cc_binary(
     "iree-benchmark-module-main.cc"
   DEPS
     benchmark
+    iree::base
     iree::base::internal::file_io
     iree::base::internal::flags
     iree::base::status
     iree::base::tracing
+    iree::hal
     iree::hal::drivers
     iree::modules::hal
     iree::tools::utils::vm_util
     iree::vm
     iree::vm::bytecode_module
+    iree::vm::cc
   TESTONLY
 )
 
@@ -82,12 +90,15 @@ iree_cc_binary(
     iree::base::core_headers
     iree::base::internal::file_io
     iree::base::internal::flags
+    iree::base::logging
     iree::base::status
     iree::base::tracing
+    iree::hal
     iree::hal::drivers
     iree::modules::hal
     iree::testing::gtest
     iree::tools::utils::vm_util
+    iree::vm
     iree::vm::bytecode_module
   TESTONLY
 )
@@ -99,8 +110,8 @@ iree_cc_binary(
     "iree-dump-module-main.cc"
   DEPS
     flatcc::runtime
+    iree::base
     iree::base::internal::file_io
-    iree::base::status
     iree::schemas::bytecode_module_def_c_fbs
     iree::tools::utils::vm_util
 )
@@ -157,7 +168,6 @@ if(${IREE_BUILD_COMPILER})
       iree::compiler::Dialect::IREE::Transforms
       iree::compiler::Dialect::Modules::VMVX::IR::VMVXDialect
       iree::compiler::Dialect::Modules::VMVX::Transforms
-      iree::compiler::Dialect::Shape::Conversion
       iree::compiler::Dialect::Shape::IR
       iree::compiler::Dialect::Shape::Transforms
       iree::compiler::Dialect::VM::Analysis
@@ -213,7 +223,6 @@ if(${IREE_BUILD_COMPILER})
       ::init_iree_passes_and_dialects
       ::init_mlir_passes_and_dialects
       ::init_xla_dialects
-      iree::compiler::Conversion::init_conversions
       iree::compiler::Conversion::Conversion
       iree::compiler::Dialect::HAL::Conversion::Passes
     INCLUDES
@@ -228,8 +237,6 @@ if(${IREE_BUILD_COMPILER})
       "init_compiler_modules.h"
     DEPS
       iree::compiler::Dialect::Modules::Check::IR::CheckDialect
-      iree::compiler::Dialect::Modules::Strings::IR::Dialect
-      iree::compiler::Dialect::Modules::TensorList::IR::TensorListDialect
   )
 
   iree_cc_library(
@@ -302,7 +309,6 @@ if(${IREE_BUILD_COMPILER})
       MLIRSupport
       MLIRTargetLLVMIRExport
       MLIRTranslation
-      iree::compiler::Conversion::init_conversions
       iree::compiler::Conversion::Conversion
       iree::compiler::Dialect::VM::Target::Bytecode
       iree::compiler::Dialect::VM::Target::init_targets
@@ -318,6 +324,8 @@ if(${IREE_BUILD_COMPILER})
       iree-translate
     DEPS
       ::iree_translate_main
+    DATA
+      lld
     HOSTONLY
   )
 
@@ -326,7 +334,23 @@ if(${IREE_BUILD_COMPILER})
       iree-opt
     DEPS
       ::iree_opt_main
+    DATA
+      lld
     HOSTONLY
+  )
+
+  iree_cc_binary(
+    NAME
+      iree-mlir-lsp-server
+    SRCS
+      "iree-mlir-lsp-server.cc"
+    DEPS
+      ::init_passes_and_dialects
+      MLIRIR
+      MLIRLspServerLib
+      MLIRSupport
+      ${IREE_OPT_CONDITIONAL_DEPS}
+    PUBLIC
   )
 
   iree_cc_binary(
@@ -346,8 +370,10 @@ if(${IREE_BUILD_COMPILER})
       absl::span
       iree::base
       iree::base::internal::flags
+      iree::base::logging
       iree::base::status
       iree::base::tracing
+      iree::compiler::Dialect::HAL::Target
       iree::compiler::Dialect::VM::Target::Bytecode
       iree::compiler::Dialect::VM::Target::init_targets
       iree::compiler::Translation::IREEVM
@@ -357,6 +383,9 @@ if(${IREE_BUILD_COMPILER})
       iree::tools::utils::vm_util
       iree::vm
       iree::vm::bytecode_module
+      iree::vm::cc
+    DATA
+      lld
     HOSTONLY
   )
 
@@ -401,6 +430,13 @@ if(${IREE_BUILD_COMPILER})
       DEPENDS FileCheck
     )
   endif()
+
+  # lld install - required by the compiler to link codegen executables.
+  install(
+    TARGETS lld
+    COMPONENT Compiler
+    RUNTIME DESTINATION bin
+  )
 
   # General test dependency binary/scripts installed.
   install(

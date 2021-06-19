@@ -7,7 +7,7 @@
 # This image provides the Vulkan SDK. Requires a child image to provide
 # a Vulkan ICD.
 
-FROM gcr.io/iree-oss/cmake-bazel-frontends@sha256:3c2945cf40699ac38d68ebd56b1ca9d72ed3e2fbe14f032a2a4fdc000b96b657 AS final
+FROM gcr.io/iree-oss/cmake-bazel-frontends@sha256:8974ee20d855ecfc8b9e511f4fb4a25d67888952738d2c457d9fd91116b6b67f AS final
 
 ARG VULKAN_SDK_VERSION=1.2.154.0
 

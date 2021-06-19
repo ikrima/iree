@@ -22,7 +22,7 @@ bool iree_elf_arch_is_valid(const iree_elf_ehdr_t* ehdr);
 //==============================================================================
 
 // State used during relocation.
-typedef struct {
+typedef struct iree_elf_relocation_state_t {
   // Bias applied to all relative addresses (from the string table, etc) in the
   // loaded module. This is an offset from the vaddr_base that may not be 0 if
   // host page granularity was larger than the ELF's defined granularity.
@@ -53,7 +53,10 @@ void* iree_elf_call_p_i(const void* symbol_ptr, int a0);
 // void*(*)(int, void*)
 void* iree_elf_call_p_ip(const void* symbol_ptr, int a0, void* a1);
 
-// int(*)(void*, void*)
-int iree_elf_call_i_pp(const void* symbol_ptr, void* a0, void* a1);
+// int(*)(void*)
+int iree_elf_call_i_p(const void* symbol_ptr, void* a0);
+
+// int(*)(void*, void*, void*)
+int iree_elf_call_i_ppp(const void* symbol_ptr, void* a0, void* a1, void* a2);
 
 #endif  // IREE_HAL_LOCAL_ELF_ARCH_H_

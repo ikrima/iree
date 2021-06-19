@@ -11,26 +11,15 @@ package(
 )
 
 cc_library(
-    name = "CodeGenOptionUtils",
-    srcs = [
-        "CodeGenOptionUtils.cpp",
-    ],
-    hdrs = [
-        "CodeGenOptionUtils.h",
-    ],
-    deps = [
-        "@llvm-project//llvm:Support",
-    ],
-)
-
-cc_library(
     name = "LinalgToSPIRV",
     srcs = [
+        "CodeGenOptionUtils.cpp",
         "ConcretizeTileAmongWorkgroupsPass.cpp",
         "ConvertToGPUPass.cpp",
         "ConvertToSPIRVPass.cpp",
         "FoldGPUProcessorIDUses.cpp",
         "KernelDispatchUtils.cpp",
+        "LaunchConfig.cpp",
         "Passes.cpp",
         "TileAndVectorizeInOneWorkgroupPass.cpp",
         "Utils.cpp",
@@ -40,17 +29,17 @@ cc_library(
     ],
     hdrs = [
         "KernelDispatchUtils.h",
+        "LaunchConfig.h",
         "MemorySpace.h",
-        "Passes.h",
         "Utils.h",
     ],
     deps = [
-        ":CodeGenOptionUtils",
         "//iree/compiler/Conversion:PassHeaders",
-        "//iree/compiler/Conversion/CodegenUtils",
         "//iree/compiler/Conversion/Common",
         "//iree/compiler/Conversion/HLOToLinalg",
         "//iree/compiler/Conversion/LinalgToVector",
+        "//iree/compiler/Conversion/Transforms",
+        "//iree/compiler/Conversion/Utils",
         "//iree/compiler/Dialect/Flow/IR",
         "//iree/compiler/Dialect/HAL/IR",
         "//iree/compiler/Dialect/HAL/IR:HALDialect",

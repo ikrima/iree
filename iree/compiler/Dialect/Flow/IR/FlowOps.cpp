@@ -498,6 +498,11 @@ static LogicalResult verifyVariableLoadOp(VariableLoadOp &op) {
   return success();
 }
 
+VariableOp VariableLoadOp::getLoadedVariable() {
+  return SymbolTable::lookupNearestSymbolFrom<IREE::Flow::VariableOp>(
+      getOperation()->getParentOp(), variable());
+}
+
 //===----------------------------------------------------------------------===//
 // flow.variable.load.indirect
 //===----------------------------------------------------------------------===//
@@ -804,8 +809,8 @@ bool DispatchWorkgroupsOp::canClosureContainOp(Operation *op) {
 }
 
 bool DispatchWorkgroupsOp::isOutputReadWithinRegion(unsigned resultIndex) {
-  BlockArgument arg =
-      body().front().getArgument(operands().size() + resultIndex);
+  unsigned startIndex = getBody()->getNumArguments() - getNumResults();
+  BlockArgument arg = body().front().getArgument(startIndex + resultIndex);
   // If argument is of `writeonly` access, then it is not read by construction.
   if (arg.getType().cast<DispatchTensorType>().getAccess() ==
       TensorAccess::WriteOnly) {
@@ -1445,4 +1450,4 @@ void populateFlowDispatchCanonicalizationPatterns(
 //===----------------------------------------------------------------------===//
 
 #define GET_OP_CLASSES
-#include "iree/compiler/Dialect/Flow/IR/FlowOps.cpp.inc"
+#include "iree/compiler/Dialect/Flow/IR/FlowOps.cpp.inc"  // IWYU pragma: keep

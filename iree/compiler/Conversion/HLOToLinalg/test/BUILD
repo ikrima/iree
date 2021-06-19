@@ -20,10 +20,10 @@ iree_lit_test_suite(
     srcs = enforce_glob(
         [
             "broadcasting.mlir",
+            "convert_complex_to_real.mlir",
             "dynamic_shape.mlir",
             "missing_legalizations.mlir",
             "fft.mlir",
-            "pad_tensor_to_tensor.mlir",
         ],
         include = ["*.mlir"],
     ),

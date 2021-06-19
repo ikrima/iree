@@ -13,6 +13,7 @@
 #include "iree/compiler/Dialect/VM/IR/VMOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassRegistry.h"
 
 namespace mlir {
 namespace iree_compiler {
@@ -41,13 +42,6 @@ void registerVMTransformPassPipeline();
 //===----------------------------------------------------------------------===//
 // Conversion
 //===----------------------------------------------------------------------===//
-
-// Marks all symbols with public visibility as being exported with the
-// `iree.module.export` attribute. This is only required until we fully support
-// symbol visibility.
-// TODO(#614): remove this when iree.module.export is gone.
-std::unique_ptr<OperationPass<mlir::ModuleOp>>
-createMarkPublicSymbolsExportedPass();
 
 // Converts from various dialects (standard, HAL, etc) to the VM dialect.
 std::unique_ptr<OperationPass<mlir::ModuleOp>> createConversionPass(

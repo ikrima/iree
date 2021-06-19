@@ -23,13 +23,9 @@ namespace Flow {
 // Pipelines
 //===----------------------------------------------------------------------===//
 
-// Adds a set of passes to the given pass manager that perform input dialect
-// legalization required by the Flow dialect.
-//
-// NOTE: this will eventually be moved out to an associated import tool - it
-// currently relies on linking in all of the input dialects (mhlo, etc) and
-// instead those should be taken care of prior to coming into the compiler.
-void buildInputTransformPassPipeline(OpPassManager &passManager);
+// Performs input legalization for specific combination of input dialects.
+void buildMHLOInputTransformPassPipeline(OpPassManager &passManager);
+void buildTOSAInputTransformPassPipeline(OpPassManager &passManager);
 
 void registerInputTransformPassPipeline();
 
@@ -40,8 +36,10 @@ void registerInputTransformPassPipeline();
 // the passes themselves to ensure that expected pass ordering is observed.
 //
 // The expected usage is:
-//   <run conversion from TF/HLO/etc to flow>
-//   buildInputTransformPassPipeline
+//   Input legalization by one of:
+//     - Directly passing supported flow plus core ops
+//     - buildTOSAInputTransformPassPipeline()
+//     - buildMHLOInputTransformPassPipeline
 //   buildFlowTransformPassPipeline
 //   <run conversion from flow to sequencer/hal/vm/etc>
 void buildFlowTransformPassPipeline(OpPassManager &passManager);
@@ -52,10 +50,17 @@ void registerFlowTransformPassPipeline();
 // Input canonicalization and legalization
 //===----------------------------------------------------------------------===//
 
+// Verifies a module being input to the core compiler pipeline only contains
+// IR structures that are supported at that level.
+std::unique_ptr<OperationPass<ModuleOp>> createVerifyCompilerInputLegality();
+
 // Convert operations to equivalent flow.tensor.* ops. This is run after
 // dispatch region creation to catch operations that were left outside of
 // dispatch regions and could be represented as flow.tensor.* ops.
 std::unique_ptr<OperationPass<FuncOp>> createConvertToFlowTensorOpsPass();
+
+// Promote I1 tensor constants to I8 tensors to match later operations.
+std::unique_ptr<OperationPass<FuncOp>> createPromoteI1ToI8Pass();
 
 // Legalizes the input types to those supported by the flow dialect.
 // This will fail if types that cannot be supported at all are present, however
@@ -68,10 +73,12 @@ std::unique_ptr<OperationPass<ModuleOp>> createLegalizeInputTypesPass();
 /// backends.
 std::unique_ptr<OperationPass<FuncOp>> createHLOToHLOPreprocessingPass();
 
-// Runs pre-partitioning conversion passes to convert to the flow dialect.
-// This converts some input ops directly to flow ops when doing so has a
-// benefit. Other ops are left unmodified and will be outlined later on.
-std::unique_ptr<OperationPass<FuncOp>> createPrePartitioningConversionPass();
+// Converts standard ops which match to flow.tensor.load (typically causing a
+// read-back).
+// Note that there are typically very specific phase ordering issues with
+// performing such a conversion, so even though it is of fine granularity,
+// this is maintained separately.
+std::unique_ptr<OperationPass<FuncOp>> createPromoteTensorLoadsPass();
 
 // Expands dynamic !shapex.ranked_shape dimensions in variables.
 std::unique_ptr<OperationPass<ModuleOp>> createExpandVariableDynamicDimsPass();
@@ -92,6 +99,14 @@ std::unique_ptr<OperationPass<FuncOp>> createInjectDispatchTracingPass();
 
 // Exports all functions and dispatch executables as `() -> ()` benchmark funcs.
 std::unique_ptr<OperationPass<ModuleOp>> createExportBenchmarkFuncsPass();
+
+//===----------------------------------------------------------------------===//
+// Linalg transforms
+//===----------------------------------------------------------------------===//
+
+/// A pass to pad linalg ops to the next integer multiple of `paddingSize`.
+std::unique_ptr<FunctionPass> createPadLinalgOpsToIntegerMultiplePass(
+    int paddingSize = 4);
 
 //===----------------------------------------------------------------------===//
 // Optimizations

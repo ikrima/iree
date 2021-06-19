@@ -49,9 +49,6 @@ class VMVXTargetBackend final : public TargetBackend {
     IREE::VMVX::buildVMVXTransformPassPipeline(passManager);
 
     OpPassManager &nestedModulePM = passManager.nest<ModuleOp>();
-    // TODO(#614): remove this when the std->vm conversion isn't looking for
-    // iree.module.export.
-    nestedModulePM.addPass(IREE::VM::createMarkPublicSymbolsExportedPass());
 
     // TODO(benvanik): derive these from a vm target triple.
     auto vmOptions = IREE::VM::getTargetOptionsFromFlags();
@@ -96,6 +93,22 @@ class VMVXTargetBackend final : public TargetBackend {
 
   LogicalResult serializeExecutable(IREE::HAL::ExecutableTargetOp targetOp,
                                     OpBuilder &executableBuilder) override {
+    // Add reflection information used at runtime specific to the HAL interface.
+    SymbolTable symbolTable(targetOp.getInnerModule());
+    for (auto entryPointOp :
+         targetOp.getBlock().getOps<ExecutableEntryPointOp>()) {
+      auto funcOp =
+          symbolTable.lookup<IREE::VM::FuncOp>(entryPointOp.getName());
+
+      // Optionally entry points may specify that they require workgroup local
+      // memory. We fetch that value here and plumb it through so the runtime
+      // knows how much memory to reserve and pass in.
+      auto localMemorySizeAttr = entryPointOp.workgroup_local_memoryAttr();
+      if (localMemorySizeAttr) {
+        funcOp.setReflectionAttr("local_memory", localMemorySizeAttr);
+      }
+    }
+
     // Serialize the VM module to bytes and embed it directly.
     SmallVector<char> moduleData;
     {

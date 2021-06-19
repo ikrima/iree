@@ -9,14 +9,11 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/optional.h"
-#include "bindings/python/iree/runtime/function_abi.h"
 #include "bindings/python/iree/runtime/status_utils.h"
 #include "iree/base/api.h"
 #include "iree/base/status.h"
 #include "iree/hal/api.h"
 #include "iree/modules/hal/hal_module.h"
-#include "iree/modules/strings/strings_module.h"
-#include "iree/modules/tensorlist/native_module.h"
 #include "iree/vm/api.h"
 #include "pybind11/numpy.h"
 
@@ -30,21 +27,6 @@ VmModule CreateHalModule(HalDevice* device) {
   CheckApiStatus(iree_hal_module_create(device->raw_ptr(),
                                         iree_allocator_system(), &module),
                  "Error creating hal module");
-  return VmModule::CreateRetained(module);
-}
-
-VmModule CreateStringsModule() {
-  iree_vm_module_t* module;
-  CheckApiStatus(iree_strings_module_create(iree_allocator_system(), &module),
-                 "Error creating trings module");
-  return VmModule::CreateRetained(module);
-}
-
-VmModule CreateTensorListModule() {
-  iree_vm_module_t* module;
-  CheckApiStatus(
-      iree_tensorlist_module_create(iree_allocator_system(), &module),
-      "Error creating tensorlist module");
   return VmModule::CreateRetained(module);
 }
 
@@ -130,36 +112,6 @@ void VmContext::RegisterModules(std::vector<VmModule*> modules) {
   CheckApiStatus(status, "Error registering modules");
 }
 
-std::unique_ptr<FunctionAbi> VmContext::CreateFunctionAbi(
-    HalDevice& device, std::shared_ptr<HostTypeFactory> host_type_factory,
-    iree_vm_function_t f) {
-  // Resolve attrs.
-  absl::InlinedVector<std::pair<iree_string_view_t, iree_string_view_t>, 4>
-      attrs;
-  for (int i = 0;; ++i) {
-    attrs.push_back({});
-    auto status = iree_vm_get_function_reflection_attr(
-        f, i, &attrs.back().first, &attrs.back().second);
-    if (iree_status_is_not_found(status)) {
-      iree_status_ignore(status);
-      attrs.pop_back();
-      break;
-    }
-    CheckApiStatus(status, "Error getting reflection attr");
-  }
-  auto attr_lookup =
-      [&attrs](absl::string_view key) -> absl::optional<absl::string_view> {
-    for (const auto& attr : attrs) {
-      absl::string_view found_key(attr.first.data, attr.first.size);
-      absl::string_view found_value(attr.second.data, attr.second.size);
-      if (found_key == key) return found_value;
-    }
-    return absl::nullopt;
-  };
-
-  return FunctionAbi::Create(device, std::move(host_type_factory), attr_lookup);
-}
-
 void VmContext::Invoke(iree_vm_function_t f, VmVariantList& inputs,
                        VmVariantList& outputs) {
   CheckApiStatus(iree_vm_invoke(raw_ptr(), f, nullptr, inputs.raw_ptr(),
@@ -236,7 +188,7 @@ void VmVariantList::PushList(VmVariantList& other) {
 
 void VmVariantList::PushBufferView(HalDevice& device,
                                    py::object py_buffer_object,
-                                   iree_hal_element_type_e element_type) {
+                                   iree_hal_element_type_t element_type) {
   // Request a view of the buffer (use the raw python C API to avoid some
   // allocation and copying at the pybind level).
   Py_buffer py_view;
@@ -409,6 +361,12 @@ py::object VmVariantList::GetAsNdarray(int index) {
     case IREE_HAL_ELEMENT_TYPE_FLOAT_64:
       dtype_code = "d";
       break;
+    case IREE_HAL_ELEMENT_TYPE_VALUE(IREE_HAL_NUMERICAL_TYPE_INTEGER_SIGNED, 1):
+      // Due to layering issues it is not uncommon to get i1 buffer views
+      // and we just silently promote them to i8 since that is what they are.
+      // Really i1 should not exist at this boundary.
+      dtype_code = "b";
+      break;
     default:
       throw RaiseValueError("Unsupported VM Buffer -> numpy dtype mapping");
   }
@@ -502,13 +460,9 @@ std::string VmVariantList::DebugString() const {
 void SetupVmBindings(pybind11::module m) {
   IREE_CHECK_OK(iree_vm_register_builtin_types());
   IREE_CHECK_OK(iree_hal_module_register_types());
-  IREE_CHECK_OK(iree_tensorlist_module_register_types());
-  IREE_CHECK_OK(iree_strings_module_register_types());
 
   // Built-in module creation.
   m.def("create_hal_module", &CreateHalModule);
-  m.def("create_strings_module", &CreateStringsModule);
-  m.def("create_tensorlist_module", &CreateTensorListModule);
 
   py::enum_<enum iree_vm_function_linkage_e>(m, "Linkage")
       .value("INTERNAL", IREE_VM_FUNCTION_LINKAGE_INTERNAL)
@@ -559,8 +513,6 @@ void SetupVmBindings(pybind11::module m) {
            py::arg("modules") = absl::optional<std::vector<VmModule*>>())
       .def("register_modules", &VmContext::RegisterModules)
       .def_property_readonly("context_id", &VmContext::context_id)
-      .def("create_function_abi", &VmContext::CreateFunctionAbi,
-           py::arg("device"), py::arg("host_type_factory"), py::arg("f"))
       .def("invoke", &VmContext::Invoke);
 
   py::class_<VmModule>(m, "VmModule")

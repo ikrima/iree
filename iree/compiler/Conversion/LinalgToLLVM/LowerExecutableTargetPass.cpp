@@ -4,15 +4,16 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/compiler/Conversion/CodegenUtils/FunctionUtils.h"
-#include "iree/compiler/Conversion/Common/Passes.h"
 #include "iree/compiler/Conversion/LinalgToLLVM/KernelDispatch.h"
-#include "iree/compiler/Conversion/LinalgToLLVM/Passes.h"
+#include "iree/compiler/Conversion/PassDetail.h"
+#include "iree/compiler/Conversion/Passes.h"
+#include "iree/compiler/Conversion/Utils/Utils.h"
 #include "iree/compiler/Dialect/HAL/IR/HALDialect.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
 
 namespace mlir {
 namespace iree_compiler {
@@ -24,59 +25,133 @@ namespace {
 /// - then convert to LLVM dialect.
 /// In due course this could be used to generate code for all backends.
 class LowerExecutableTargetPass
-    : public PassWrapper<LowerExecutableTargetPass,
-                         OperationPass<IREE::HAL::ExecutableTargetOp>> {
+    : public LowerExecutableTargetBase<LowerExecutableTargetPass> {
  public:
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<IREE::HAL::HALDialect, linalg::LinalgDialect,
-                    LLVM::LLVMDialect>();
+                    LLVM::LLVMDialect, vector::VectorDialect>();
   }
 
-  LowerExecutableTargetPass(LLVMCodegenOptions options) : options(options) {}
-  LowerExecutableTargetPass(const LowerExecutableTargetPass &pass)
-      : options(pass.options) {}
+  LowerExecutableTargetPass(bool vectorize = true)
+      : lowerToVectors(vectorize) {}
+  LowerExecutableTargetPass(const LowerExecutableTargetPass &pass) {}
 
   void runOnOperation() override;
 
  private:
-  Option<bool> invokeLoweringPipelines{
-      *this, "invoke-lowering-pipelines",
+  Option<bool> testLoweringConfiguration{
+      *this, "test-lowering-configuration",
       llvm::cl::desc(
-          "Invokes the pass pipeline to lower an hal.executable.target "
-          "operation into scalar/native-vector code. Defaults to true, but "
-          "can be set to false for testing purposes."),
-      llvm::cl::init(true)};
+          "Flag used for lit-testing the default configuration set for root "
+          "ops in hal.executable.targets. Defaults to false and is set to true "
+          "for lit tests. Not for general usage"),
+      llvm::cl::init(false)};
 
-  LLVMCodegenOptions options;
+  Option<std::string> useLoweringPipeline{
+      *this, "use-lowering-pipeline",
+      llvm::cl::desc("List of passes to be applied for lowering the "
+                     "hal.executable.target. Note that this is used for all "
+                     "hal.executable.targets, so might be useful when there is "
+                     "only one such operation. The specified pass pipeline is "
+                     "expected to work on the std.module op within the "
+                     "hal.executable.target operation")};
+
+  ListOption<int> workloadPerWorkgroup{
+      *this, "workload-per-workgroup", llvm::cl::MiscFlags::CommaSeparated,
+      llvm::cl::desc(
+          "Specifies the workload per workgroup to use in x, y, z order. Is "
+          "expected for use only with use-lowering-pipeline option")};
+
+  /// TODO(ravishankarm): Option to not generate any `vector.` instructions. The
+  /// VMVX backend uses the same lowering as the CPU pass but there is no
+  /// lowering of these `vector.` operations to scalar code. So as a WAR do the
+  /// same tiling scheme but avoid generating vector instructions. When VMVX can
+  /// handle vector instructions, drop this options.
+  bool lowerToVectors;
 };
 }  // namespace
+
+/// The pipeline parser doesnt like strings that have `'` or `"` in them. But it
+/// is needed for demarcating the option value. So just drop them before sending
+/// it one.
+static StringRef sanitizePipelineString(StringRef input) {
+  if (input.empty()) return input;
+  // If first/last character is ' or ", drop them.
+  if (input.front() == '\'' || input.front() == '"') {
+    input = input.drop_front();
+  }
+  if (input.back() == '\'' || input.back() == '"') {
+    input = input.drop_back();
+  }
+  return input;
+}
 
 void LowerExecutableTargetPass::runOnOperation() {
   IREE::HAL::ExecutableTargetOp targetOp = getOperation();
   ModuleOp moduleOp = targetOp.getInnerModule();
 
-  FailureOr<IREE::HAL::DispatchLoweringPassPipeline> setPipeline =
-      initCPULaunchConfig(moduleOp);
-  if (failed(setPipeline)) {
-    return signalPassFailure();
-  }
-
   OpPassManager executableLoweringPipeline(
       IREE::HAL::ExecutableTargetOp::getOperationName());
-  executableLoweringPipeline.addPass(createSetNumWorkgroupsPass());
 
-  if (invokeLoweringPipelines) {
-    IREE::HAL::DispatchLoweringPassPipeline passPipeline =
-        setPipeline.getValue();
-    switch (passPipeline) {
-      case IREE::HAL::DispatchLoweringPassPipeline::CPUDefault:
-        addCPUDefaultPassPipeline(executableLoweringPipeline, options);
-        break;
-      case IREE::HAL::DispatchLoweringPassPipeline::CPUVectorization:
-        addCPUVectorizationPassPipeline(executableLoweringPipeline, options);
-        break;
+  if (!useLoweringPipeline.empty()) {
+    // Use the pass pipeline specified in the command line.
+    SmallVector<int64_t, 4> workloadPerWorkgroupVec;
+    workloadPerWorkgroupVec.assign(workloadPerWorkgroup.begin(),
+                                   workloadPerWorkgroup.end());
+    executableLoweringPipeline.addPass(
+        createSetNumWorkgroupsPass(workloadPerWorkgroupVec));
+    OpPassManager &nestedModulePM = executableLoweringPipeline.nest<ModuleOp>();
+    if (failed(parsePassPipeline(sanitizePipelineString(useLoweringPipeline),
+                                 nestedModulePM))) {
+      return signalPassFailure();
     }
-    addLowerToLLVMPasses(executableLoweringPipeline, options);
+  } else {
+    // Use default heuristics.
+    if (failed(initCPULaunchConfig(moduleOp))) {
+      return signalPassFailure();
+    }
+
+    // There might be multiple entry points in the module. Currently, all of
+    // them need to have the same pipeline.
+    // TODO(ravishankarm): This is strange that this is not enforced
+    // structurally, but something to address later on. For now this restriction
+    // is fine.
+    llvm::StringMap<IREE::HAL::ExecutableEntryPointOp> entryPoints =
+        getAllEntryPoints(moduleOp);
+    Optional<IREE::HAL::DispatchLoweringPassPipeline> passPipeline;
+    for (auto &it : entryPoints) {
+      auto entryPointOp = it.second;
+      if (IREE::HAL::TranslationInfo translationInfo =
+              getTranslationInfo(entryPointOp)) {
+        IREE::HAL::DispatchLoweringPassPipeline currPipeline =
+            translationInfo.passPipeline().getValue();
+        if (passPipeline) {
+          if (currPipeline != passPipeline.getValue()) {
+            moduleOp.emitError(
+                "unhandled compilation of entry point function with different "
+                "pass pipelines within a module");
+            return signalPassFailure();
+          }
+          continue;
+        }
+        passPipeline = currPipeline;
+      }
+    }
+
+    executableLoweringPipeline.addPass(createSetNumWorkgroupsPass());
+    OpPassManager &nestedModulePM = executableLoweringPipeline.nest<ModuleOp>();
+    if (!testLoweringConfiguration) {
+      switch (passPipeline.getValue()) {
+        case IREE::HAL::DispatchLoweringPassPipeline::CPUDefault:
+          addCPUDefaultPassPipeline(nestedModulePM);
+          break;
+        case IREE::HAL::DispatchLoweringPassPipeline::CPUVectorization:
+          addCPUVectorizationPassPipeline(nestedModulePM, lowerToVectors);
+          break;
+        default:
+          llvm_unreachable("Unsupported pipeline on CPU target.");
+      }
+    }
   }
 
   if (failed(runPipeline(executableLoweringPipeline, targetOp))) {
@@ -85,18 +160,9 @@ void LowerExecutableTargetPass::runOnOperation() {
 }
 
 std::unique_ptr<OperationPass<IREE::HAL::ExecutableTargetOp>>
-createLowerExecutableTargetPass(LLVMCodegenOptions options) {
-  return std::make_unique<LowerExecutableTargetPass>(options);
+createLowerExecutableTargetPass(bool lowerToVectors) {
+  return std::make_unique<LowerExecutableTargetPass>(lowerToVectors);
 }
-
-static PassRegistration<LowerExecutableTargetPass> pass(
-    "iree-lower-executable-target-pass",
-    "Perform lowering of executable target to export dialects. Currently "
-    "lowers to LLVM dialect",
-    [] {
-      return std::make_unique<LowerExecutableTargetPass>(
-          getLLVMCodegenOptionsFromClOptions());
-    });
 
 }  // namespace iree_compiler
 }  // namespace mlir

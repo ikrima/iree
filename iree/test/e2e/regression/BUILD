@@ -28,7 +28,6 @@ iree_lit_test_suite(
         [
             "dynamic_abs.mlir",
             "dynamic_add.mlir",
-            "dynamic_compare_and_select.mlir",
             "dynamic_dot.mlir",
             "dynamic_torch_index_select_high_rank.mlir",
             "dynamic_torch_index_select_negative.mlir",
@@ -43,6 +42,7 @@ iree_lit_test_suite(
             ["*.mlir"],
         # TODO(#5897): enable these for codegen linalg on tensors/etc.
         exclude = [
+            "dynamic_compare_and_select.mlir",
             "dynamic_dot_general.mlir",
             "dynamic_linalg_matmul_on_tensors.mlir",
             "dynamic_linalg_matmul_on_tensors_fuse_0.mlir",
@@ -62,6 +62,7 @@ iree_lit_test_suite(
 iree_check_single_backend_test_suite(
     name = "check_regression_linalg_ops_dylib-llvm-aot",
     srcs = BACKEND_TESTS,
+    compiler_flags = ["-iree-input-type=mhlo"],
     driver = "dylib",
     target_backend = "dylib-llvm-aot",
 )
@@ -69,6 +70,7 @@ iree_check_single_backend_test_suite(
 iree_check_single_backend_test_suite(
     name = "check_regression_linalg_ops_vmvx",
     srcs = BACKEND_TESTS,
+    compiler_flags = ["-iree-input-type=mhlo"],
     driver = "vmvx",
     target_backend = "vmvx",
 )
@@ -76,6 +78,7 @@ iree_check_single_backend_test_suite(
 iree_check_single_backend_test_suite(
     name = "check_regression_linalg_ops_vulkan-spirv",
     srcs = BACKEND_TESTS,
+    compiler_flags = ["-iree-input-type=mhlo"],
     driver = "vulkan",
     target_backend = "vulkan-spirv",
 )

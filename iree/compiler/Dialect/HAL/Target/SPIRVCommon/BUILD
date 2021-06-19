@@ -30,9 +30,10 @@ cc_library(
         "SPIRVTarget.h",
     ],
     deps = [
-        "//iree/compiler/Conversion/CodegenUtils",
+        "//iree/compiler/Conversion:PassHeaders",
         "//iree/compiler/Conversion/Common",
         "//iree/compiler/Conversion/LinalgToSPIRV",
+        "//iree/compiler/Conversion/Utils",
         "//iree/compiler/Dialect/Flow/IR",
         "//iree/compiler/Dialect/HAL/Target",
         "//iree/compiler/Dialect/IREE/IR",

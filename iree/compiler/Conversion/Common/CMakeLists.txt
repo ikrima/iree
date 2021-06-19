@@ -22,22 +22,15 @@ iree_tablegen_library(
 iree_cc_library(
   NAME
     Common
-  HDRS
-    "LaunchConfig.h"
-    "Passes.h"
-    "Transforms.h"
   SRCS
-    "BufferAllocViewCleanUpPass.cpp"
+    "CleanupBufferAllocViewPass.cpp"
     "DemoteF32ToF16.cpp"
     "FlattenMemRefSubspanPass.cpp"
     "FoldTensorExtractOpPass.cpp"
     "ForOpCanonicalizationPass.cpp"
-    "LaunchConfig.cpp"
     "LinalgBufferizePass.cpp"
-    "Passes.cpp"
+    "OptimizeVectorTransferPass.cpp"
     "SetNumWorkgroupsPass.cpp"
-    "Transforms.cpp"
-    "VectorTransferOptimization.cpp"
   DEPS
     LLVMSupport
     MLIRAffine
@@ -56,9 +49,10 @@ iree_cc_library(
     MLIRTensor
     MLIRTransforms
     MLIRVector
-    iree::compiler::Conversion::CodegenUtils
     iree::compiler::Conversion::Common::FoldTensorExtractOpIncGen
     iree::compiler::Conversion::PassHeaders
+    iree::compiler::Conversion::Transforms
+    iree::compiler::Conversion::Utils
     iree::compiler::Dialect::Flow::IR
     iree::compiler::Dialect::HAL::IR
     iree::compiler::Dialect::IREE::IR

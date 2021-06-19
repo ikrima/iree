@@ -4,7 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/compiler/Conversion/LinalgToVector/Passes.h"
+#include "iree/compiler/Conversion/PassDetail.h"
+#include "iree/compiler/Conversion/Passes.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
@@ -65,11 +66,11 @@ struct VectorizeLinalgConv
     }
 
     auto inputViewOp =
-        convOp.getInputBuffer(0).getDefiningOp<memref::SubViewOp>();
+        convOp.getInputOperand(0)->get().getDefiningOp<memref::SubViewOp>();
     auto filterViewOp =
-        convOp.getInputBuffer(1).getDefiningOp<memref::SubViewOp>();
+        convOp.getInputOperand(1)->get().getDefiningOp<memref::SubViewOp>();
     auto outputViewOp =
-        convOp.getOutputBuffer(0).getDefiningOp<memref::SubViewOp>();
+        convOp.getOutputOperand(0)->get().getDefiningOp<memref::SubViewOp>();
     if (!filterViewOp || !inputViewOp || !outputViewOp) return failure();
 
     // The filter/input/output view should have static sizes to vectorize.
@@ -234,9 +235,12 @@ struct VectorizeLinalgDepthwiseConv
       PatternRewriter &rewriter) const override {
     LLVM_DEBUG(llvm::dbgs() << "inspecting " << convOp << "\n");
 
-    auto inputViewOp = convOp.getInput(0).getDefiningOp<memref::SubViewOp>();
-    auto filterViewOp = convOp.getInput(1).getDefiningOp<memref::SubViewOp>();
-    auto outputViewOp = convOp.getOutput(0).getDefiningOp<memref::SubViewOp>();
+    auto inputViewOp =
+        convOp.getInputOperand(0)->get().getDefiningOp<memref::SubViewOp>();
+    auto filterViewOp =
+        convOp.getInputOperand(1)->get().getDefiningOp<memref::SubViewOp>();
+    auto outputViewOp =
+        convOp.getOutputOperand(0)->get().getDefiningOp<memref::SubViewOp>();
     if (!filterViewOp || !inputViewOp || !outputViewOp) return failure();
 
     // The filter/input/output view should have static sizes to vectorize.
@@ -331,8 +335,8 @@ struct VectorizeLinalgDepthwiseConv
   }
 };
 
-struct VectorizeLinalgConvPass
-    : public PassWrapper<VectorizeLinalgConvPass, OperationPass<FuncOp>> {
+struct LinalgToVectorVectorizeConvPass
+    : public LinalgToVectorVectorizeConvBase<LinalgToVectorVectorizeConvPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<linalg::LinalgDialect, vector::VectorDialect>();
   }
@@ -347,18 +351,14 @@ struct VectorizeLinalgConvPass
 
 }  // namespace
 
-void populateVectorizeLinalgConvPatterns(MLIRContext *context,
-                                         OwningRewritePatternList &patterns) {
+void populateLinalgToVectorVectorizeConvPatterns(
+    MLIRContext *context, OwningRewritePatternList &patterns) {
   patterns.insert<VectorizeLinalgConv, VectorizeLinalgDepthwiseConv>(context);
 }
 
-std::unique_ptr<Pass> createVectorizeLinalgConvPass() {
-  return std::make_unique<VectorizeLinalgConvPass>();
+std::unique_ptr<OperationPass<FuncOp>> createLinalgToVectorVectorizeConvPass() {
+  return std::make_unique<LinalgToVectorVectorizeConvPass>();
 }
-
-static PassRegistration<VectorizeLinalgConvPass> pass(
-    "iree-codegen-vectorize-linalg-conv",
-    "Vectorize a very specific form of linalg.conv");
 
 }  // namespace iree_compiler
 }  // namespace mlir

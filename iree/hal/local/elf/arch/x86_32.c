@@ -4,8 +4,14 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "iree/base/api.h"
 #include "iree/base/target_platform.h"
 #include "iree/hal/local/elf/arch.h"
+#include "iree/hal/local/elf/elf_types.h"
 
 #if defined(IREE_ARCH_X86_32)
 
@@ -149,9 +155,14 @@ void* iree_elf_call_p_ip(const void* symbol_ptr, int a0, void* a1) {
   return ((ptr_t)symbol_ptr)(a0, a1);
 }
 
-int iree_elf_call_i_pp(const void* symbol_ptr, void* a0, void* a1) {
-  typedef int (*ptr_t)(void*, void*);
-  return ((ptr_t)symbol_ptr)(a0, a1);
+int iree_elf_call_i_p(const void* symbol_ptr, void* a0) {
+  typedef int (*ptr_t)(void*);
+  return ((ptr_t)symbol_ptr)(a0);
+}
+
+int iree_elf_call_i_ppp(const void* symbol_ptr, void* a0, void* a1, void* a2) {
+  typedef int (*ptr_t)(void*, void*, void*);
+  return ((ptr_t)symbol_ptr)(a0, a1, a2);
 }
 
 #endif  // IREE_PLATFORM_WINDOWS

@@ -15,18 +15,16 @@ iree_cc_library(
     LinalgToLLVM
   HDRS
     "KernelDispatch.h"
-    "LLVMCodeGenOptions.h"
-    "Passes.h"
   SRCS
     "ConvertToLLVM.cpp"
     "KernelDispatch.cpp"
-    "LLVMCodeGenOptions.cpp"
-    "LinalgTileAndVectorizePass.cpp"
+    "LinalgToLLVMWorkgroupsVectorizationPass.cpp"
     "LinalgVectorizePass.cpp"
     "LowerExecutableTargetPass.cpp"
     "PadLinalgWorkgroupTiles.cpp"
     "Passes.cpp"
     "PlanConvLoopOrder.cpp"
+    "TilePadAndVectorizeWorkgroups.cpp"
     "UnfuseFMAOps.cpp"
   DEPS
     LLVMSupport
@@ -46,7 +44,6 @@ iree_cc_library(
     MLIRStandard
     MLIRStandardOpsTransforms
     MLIRStandardToLLVM
-    MLIRStandardToSPIRV
     MLIRTensor
     MLIRTosa
     MLIRTosaToStandard
@@ -54,8 +51,10 @@ iree_cc_library(
     MLIRVector
     MLIRVectorToLLVM
     MLIRVectorToSCF
-    iree::compiler::Conversion::CodegenUtils
     iree::compiler::Conversion::Common
+    iree::compiler::Conversion::PassHeaders
+    iree::compiler::Conversion::Transforms
+    iree::compiler::Conversion::Utils
     iree::compiler::Conversion::VectorToLLVM
     iree::compiler::Dialect::Flow::IR
     iree::compiler::Dialect::HAL::IR
