@@ -21,16 +21,12 @@ iree_pyext_module(
     "unix_version.lds"
   DEPS
     iree::base
-    iree::base::status
+    iree::base::cc
     iree::hal
     iree::hal::drivers
     iree::modules::hal
     iree::vm
     iree::vm::bytecode_module
-    absl::inlined_vector
-    absl::strings
-    absl::optional
-    absl::span
 )
 
 iree_py_library(
@@ -40,6 +36,7 @@ iree_py_library(
     "__init__.py"
     "function.py"
     "system_api.py"
+    "tracing.py"
   PYEXT_DEPS
     ::PyExtRt
 )
@@ -71,6 +68,8 @@ iree_py_install_package(
   MODULE_PATH iree/runtime
   DEPS
     bindings_python_iree_runtime_PyExtRt
+  ADDL_PACKAGE_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/README.md
 )
 
 install(

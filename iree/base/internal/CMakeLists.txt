@@ -20,6 +20,7 @@ iree_cc_library(
     "math.h"
   SRCS
     "atomics_clang.h"
+    "atomics_disabled.h"
     "atomics_gcc.h"
     "atomics_msvc.h"
   DEPS
@@ -100,6 +101,7 @@ iree_cc_library(
     "dynamic_library_posix.c"
     "dynamic_library_win32.c"
   DEPS
+    ${CMAKE_DL_LIBS}
     ::file_path
     ::internal
     ::synchronization
@@ -129,8 +131,8 @@ iree_cc_test(
     "file_io_test.cc"
   DEPS
     ::file_io
+    iree::base::cc
     iree::base::logging
-    iree::base::status
     iree::testing::gtest
     iree::testing::gtest_main
 )
@@ -296,6 +298,14 @@ iree_cc_test(
 
 iree_cc_library(
   NAME
+    span
+  HDRS
+    "span.h"
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
     synchronization
   HDRS
     "call_once.h"
@@ -342,28 +352,9 @@ iree_cc_test(
     iree::testing::gtest_main
 )
 
-# TODO(#3848): absl has a thread dependency, move this condition after statusor
-# is fixed.
 if(NOT ${IREE_ENABLE_THREADING})
   return()
 endif()
-
-iree_cc_library(
-  NAME
-    status_internal
-  HDRS
-    "status.h"
-    "statusor.h"
-  SRCS
-    "status.cc"
-    "statusor.cc"
-  DEPS
-    absl::utility
-    iree::base
-    iree::base::core_headers
-    iree::base::logging
-  PUBLIC
-)
 
 iree_cc_library(
   NAME
@@ -377,6 +368,7 @@ iree_cc_library(
     "threading_pthreads.c"
     "threading_win32.c"
   DEPS
+    ${CMAKE_DL_LIBS}
     ::internal
     ::synchronization
     iree::base
@@ -395,7 +387,7 @@ iree_cc_test(
     ::internal
     ::synchronization
     ::threading
-    iree::base::status
+    iree::base::cc
     iree::testing::gtest
     iree::testing::gtest_main
 )

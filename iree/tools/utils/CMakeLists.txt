@@ -18,12 +18,11 @@ iree_cc_library(
   SRCS
     "vm_util.cc"
   DEPS
-    absl::span
-    absl::strings
     iree::base
+    iree::base::cc
     iree::base::internal::file_io
+    iree::base::internal::span
     iree::base::logging
-    iree::base::status
     iree::base::tracing
     iree::hal
     iree::modules::hal
@@ -40,7 +39,6 @@ iree_cc_test(
     "vm_util_test.cc"
   DEPS
     ::vm_util
-    absl::strings
     iree::base
     iree::hal
     iree::hal::vmvx::registration
@@ -49,6 +47,19 @@ iree_cc_test(
     iree::testing::gtest_main
     iree::vm
     iree::vm::cc
+)
+
+iree_cc_library(
+  NAME
+    yaml_util
+  HDRS
+    "yaml_util.h"
+  SRCS
+    "yaml_util.c"
+  DEPS
+    iree::base
+    yaml
+  PUBLIC
 )
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

@@ -6,7 +6,7 @@
 
 # Doesn't use bazel_to_cmake because of various special logic throughout.
 
-# Tools has thread dependency from iree::hal::drivers and absl
+# Tools has thread dependency from iree::hal::drivers
 if(NOT ${IREE_ENABLE_THREADING})
   return()
 endif()
@@ -64,9 +64,9 @@ iree_cc_binary(
   DEPS
     benchmark
     iree::base
+    iree::base::cc
     iree::base::internal::file_io
     iree::base::internal::flags
-    iree::base::status
     iree::base::tracing
     iree::hal
     iree::hal::drivers
@@ -84,17 +84,16 @@ iree_cc_binary(
   SRCS
     "iree-check-module-main.cc"
   DEPS
-    iree::modules::check::native_module
-    absl::strings
     iree::base
+    iree::base::cc
     iree::base::core_headers
     iree::base::internal::file_io
     iree::base::internal::flags
     iree::base::logging
-    iree::base::status
     iree::base::tracing
     iree::hal
     iree::hal::drivers
+    iree::modules::check
     iree::modules::hal
     iree::testing::gtest
     iree::tools::utils::vm_util
@@ -122,15 +121,36 @@ iree_cc_binary(
   SRCS
     "iree-run-module-main.cc"
   DEPS
+    iree::base
+    iree::base::cc
     iree::base::internal::file_io
     iree::base::internal::flags
-    iree::base::status
     iree::base::tracing
     iree::hal::drivers
     iree::modules::hal
     iree::tools::utils::vm_util
     iree::vm
     iree::vm::bytecode_module
+    iree::vm::cc
+)
+
+iree_cc_binary(
+  NAME
+    iree-run-trace
+  SRCS
+    "iree-run-trace-main.c"
+  DEPS
+    iree::base
+    iree::base::internal::file_io
+    iree::base::internal::file_path
+    iree::base::internal::flags
+    iree::base::tracing
+    iree::hal::drivers
+    iree::modules::hal
+    iree::tools::utils::yaml_util
+    iree::vm
+    iree::vm::bytecode_module
+    yaml
 )
 
 if(${IREE_BUILD_COMPILER})
@@ -174,6 +194,8 @@ if(${IREE_BUILD_COMPILER})
       iree::compiler::Dialect::VM::IR
       iree::compiler::Dialect::VM::Transforms
       iree::compiler::Dialect::Vulkan::IR
+      iree::compiler::InputConversion::MHLO
+      iree::compiler::InputConversion::TOSA
       iree::compiler::Translation::IREEVM
     PUBLIC
   )
@@ -223,7 +245,7 @@ if(${IREE_BUILD_COMPILER})
       ::init_iree_passes_and_dialects
       ::init_mlir_passes_and_dialects
       ::init_xla_dialects
-      iree::compiler::Conversion::Conversion
+      iree::compiler::Codegen::Codegen
       iree::compiler::Dialect::HAL::Conversion::Passes
     INCLUDES
       "${IREE_EMITC_INCLUDES}"
@@ -309,7 +331,7 @@ if(${IREE_BUILD_COMPILER})
       MLIRSupport
       MLIRTargetLLVMIRExport
       MLIRTranslation
-      iree::compiler::Conversion::Conversion
+      iree::compiler::Codegen::Codegen
       iree::compiler::Dialect::VM::Target::Bytecode
       iree::compiler::Dialect::VM::Target::init_targets
       iree::compiler::Translation::IREEVM
@@ -367,11 +389,10 @@ if(${IREE_BUILD_COMPILER})
       MLIRPass
       MLIRSupport
       MLIRTargetLLVMIRExport
-      absl::span
       iree::base
+      iree::base::cc
       iree::base::internal::flags
       iree::base::logging
-      iree::base::status
       iree::base::tracing
       iree::compiler::Dialect::HAL::Target
       iree::compiler::Dialect::VM::Target::Bytecode
