@@ -7,7 +7,7 @@
 #include "iree/compiler/InputConversion/MHLO/Passes.h"
 
 #include "iree/compiler/Dialect/Flow/Transforms/Passes.h"
-#include "mlir/Conversion/SCFToStandard/SCFToStandard.h"
+#include "iree/compiler/InputConversion/Common/Passes.h"
 #include "mlir/Conversion/ShapeToStandard/ShapeToStandard.h"
 #include "mlir/Dialect/Shape/Transforms/Passes.h"
 #include "mlir/Pass/PassOptions.h"
@@ -31,8 +31,7 @@ void buildMHLOInputConversionPassPipeline(OpPassManager &passManager) {
   // Currently we don't handle SCF ops well and have to convert them all to CFG.
   // In the future it would be nice if we could have all of flow be both scf
   // and cfg compatible.
-  // TODO: Currently recurses into SCF in Linalg generic - with hilarity.
-  passManager.addNestedPass<FuncOp>(mlir::createLowerToCFGPass());
+  passManager.addNestedPass<FuncOp>(createTopLevelSCFToCFGPass());
 
   // Various shape functions may have been materialized in the `shape.shape_of`
   // style of treating shapes as tensors. We prefer to legalize these to
@@ -53,10 +52,6 @@ void buildMHLOInputConversionPassPipeline(OpPassManager &passManager) {
 
   passManager.addNestedPass<FuncOp>(createMHLOToMHLOPreprocessingPass());
 
-  // Perform initial cleanup.
-  passManager.addNestedPass<FuncOp>(mlir::createCanonicalizerPass());
-  passManager.addNestedPass<FuncOp>(mlir::createCSEPass());
-
   // Legalize input types. We do this after flattening tuples so that we don't
   // have to deal with them.
   // TODO(nicolasvasilache): createLegalizeInputTypesPass is old and does not
@@ -64,7 +59,14 @@ void buildMHLOInputConversionPassPipeline(OpPassManager &passManager) {
   // when using ops with regions such as scf.for and linalg.generic.
   passManager.addPass(mlir::iree_compiler::createLegalizeInputTypesPass());
 
+  // Perform initial cleanup. createLegalizeInputTypes could rewrite types. In
+  // this context, some operations could be folded away.
+  passManager.addNestedPass<FuncOp>(mlir::createCanonicalizerPass());
+  passManager.addNestedPass<FuncOp>(mlir::createCSEPass());
+
   // Convert to Linalg. After this point, MHLO will be eliminated.
+  passManager.addNestedPass<FuncOp>(
+      mlir::iree_compiler::createConvertAndDistributeMHLOToLinalgExtPass());
   passManager.addNestedPass<FuncOp>(
       mlir::iree_compiler::createMHLOToLinalgOnTensorsPass());
 

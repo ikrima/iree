@@ -44,7 +44,7 @@ if("${IREE_TARGET_BACKEND_ROCM}")
 endif()
 
 if(IREE_ENABLE_EMITC)
-  set(IREE_OPT_CONDITIONAL_DEPS
+  set(IREE_EMITC_CONDITIONAL_DEP
     MLIREmitC
   )
   set(IREE_TRANSLATE_CONDITIONAL_DEPS
@@ -75,6 +75,28 @@ iree_cc_binary(
     iree::vm
     iree::vm::bytecode_module
     iree::vm::cc
+  TESTONLY
+)
+
+iree_cc_binary(
+  NAME
+    iree-benchmark-trace
+  SRCS
+    "iree-benchmark-trace-main.c"
+  DEPS
+    iree::base
+    iree::base::internal::atomic_slist
+    iree::base::internal::file_path
+    iree::base::internal::flags
+    iree::base::tracing
+    iree::hal
+    iree::hal::drivers
+    iree::modules::hal
+    iree::testing::benchmark
+    iree::tools::utils::trace_replay
+    iree::tools::utils::yaml_util
+    iree::vm
+    yaml
   TESTONLY
 )
 
@@ -141,15 +163,15 @@ iree_cc_binary(
     "iree-run-trace-main.c"
   DEPS
     iree::base
-    iree::base::internal::file_io
     iree::base::internal::file_path
     iree::base::internal::flags
     iree::base::tracing
+    iree::hal
     iree::hal::drivers
     iree::modules::hal
+    iree::tools::utils::trace_replay
     iree::tools::utils::yaml_util
     iree::vm
-    iree::vm::bytecode_module
     yaml
 )
 
@@ -186,6 +208,8 @@ if(${IREE_BUILD_COMPILER})
       iree::compiler::Dialect::HAL::Transforms
       iree::compiler::Dialect::IREE::IR
       iree::compiler::Dialect::IREE::Transforms
+      iree::compiler::Dialect::LinalgExt::IR
+      iree::compiler::Dialect::LinalgExt::Transforms
       iree::compiler::Dialect::Modules::VMVX::IR::VMVXDialect
       iree::compiler::Dialect::Modules::VMVX::Transforms
       iree::compiler::Dialect::Shape::IR
@@ -194,6 +218,7 @@ if(${IREE_BUILD_COMPILER})
       iree::compiler::Dialect::VM::IR
       iree::compiler::Dialect::VM::Transforms
       iree::compiler::Dialect::Vulkan::IR
+      iree::compiler::InputConversion::Common
       iree::compiler::InputConversion::MHLO
       iree::compiler::InputConversion::TOSA
       iree::compiler::Translation::IREEVM
@@ -221,7 +246,6 @@ if(${IREE_BUILD_COMPILER})
       MLIRSCF
       MLIRSCFToGPU
       MLIRSCFTransforms
-      MLIRSDBM
       MLIRSPIRV
       MLIRSPIRVTransforms
       MLIRShape
@@ -307,7 +331,7 @@ if(${IREE_BUILD_COMPILER})
       MLIRIR
       MLIROptLib
       MLIRSupport
-      ${IREE_OPT_CONDITIONAL_DEPS}
+      ${IREE_EMITC_CONDITIONAL_DEP}
     PUBLIC
   )
 
@@ -371,7 +395,7 @@ if(${IREE_BUILD_COMPILER})
       MLIRIR
       MLIRLspServerLib
       MLIRSupport
-      ${IREE_OPT_CONDITIONAL_DEPS}
+      ${IREE_EMITC_CONDITIONAL_DEP}
     PUBLIC
   )
 

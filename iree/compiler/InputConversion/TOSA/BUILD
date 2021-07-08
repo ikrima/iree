@@ -54,6 +54,7 @@ cc_library(
         ":PassHeaders",
         ":PassesIncGen",
         "//iree/compiler/Dialect/Flow/Transforms",
+        "//iree/compiler/InputConversion/Common",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFToStandard",
         "@llvm-project//mlir:TosaDialect",

@@ -27,6 +27,7 @@ iree_cc_library(
     "Passes.h"
     "Passes.h.inc"
   DEPS
+    ::PassesIncGen
     MLIRPass
     MLIRTransforms
   PUBLIC
@@ -42,6 +43,7 @@ iree_cc_library(
     "VerifyCompilerTOSAInputLegality.cpp"
   DEPS
     ::PassHeaders
+    ::PassesIncGen
     MLIRPass
     MLIRSCFToStandard
     MLIRTosa
@@ -50,6 +52,7 @@ iree_cc_library(
     MLIRTosaToStandard
     MLIRTransforms
     iree::compiler::Dialect::Flow::Transforms
+    iree::compiler::InputConversion::Common
   PUBLIC
 )
 

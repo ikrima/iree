@@ -28,6 +28,7 @@ iree_cc_library(
     "Passes.h.inc"
     "Rewriters.h"
   DEPS
+    ::PassesIncGen
     MLIRPass
     MLIRTransforms
   PUBLIC
@@ -40,6 +41,7 @@ iree_cc_library(
     "Passes.h"
   SRCS
     "BroadcastingToLinalgPatterns.cpp"
+    "ConvertAndDistributeMHLOToLinalgExt.cpp"
     "ConvertComplexToReal.cpp"
     "ConvertMHLOToFlow.cpp"
     "ConvertMHLOToFlow.h"
@@ -50,6 +52,7 @@ iree_cc_library(
     "VerifyCompilerMHLOInputLegality.cpp"
   DEPS
     ::PassHeaders
+    ::PassesIncGen
     LLVMSupport
     MLIRAffine
     MLIRComplex
@@ -69,7 +72,9 @@ iree_cc_library(
     MLIRTransforms
     iree::compiler::Dialect::Flow::IR
     iree::compiler::Dialect::Flow::Transforms
+    iree::compiler::Dialect::LinalgExt::IR
     iree::compiler::Dialect::Shape::IR
+    iree::compiler::InputConversion::Common
     tensorflow::mlir_hlo
   PUBLIC
 )
