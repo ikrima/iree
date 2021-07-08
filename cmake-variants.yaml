@@ -19,9 +19,9 @@ buildType:
       long: RelWithDebInfo
       buildType: RelWithDebInfo
       settings:
-        IREE_BUILD_DEBUGGER: true
-        IREE_BUILD_EXPERIMENTAL: true
-        IREE_ENABLE_EMITC: true
+        # IREE_BUILD_DEBUGGER: true
+        # IREE_BUILD_EXPERIMENTAL: true
+        # IREE_ENABLE_EMITC: true
         # FLATBUFFERS_BUILD_CPP17: true
         # FLATBUFFERS_LIBCXX_WITH_CLANG: false
         # IREE_ENABLE_RUNTIME_TRACING: true
