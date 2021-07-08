@@ -20,6 +20,7 @@
 build/
 build-*/
 dbg/
+reldeb/
 
 # Bazel artifacts
 **/bazel-*
