@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "configurePresets": [
+    {
+      "name": "compiler-base",
+      "hidden": true,
+      "cacheVariables": {
+        "LLVM_LIT_TOOLS_DIR":    "C:/Program Files/Git/usr/bin",
+        "MSVC_DIA_SDK_DIR":      "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK"
+      }
+    },
+
+    {
+      "name": "compiler-msvc",
+      "hidden": true,
+      "inherits": ["compiler-base"],
+      "generator": "Visual Studio 16 2019",
+      "toolset": "host=x64",
+      "architecture": "x64"
+    },
+
+    {
+      "name": "compiler-ninja",
+      "hidden": true,
+      "inherits": ["compiler-base"],
+      "generator": "Ninja",
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": [ "Windows" ]
+        }
+      },
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+       },
+      "toolset": {
+        "value": "x64",
+        "strategy": "external"
+       }
+    },
+
+    {
+      "name": "bld-dbg",
+      "hidden": true,
+      "binaryDir": "${workspaceFolder}/dbg",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+       }
+    },
+    {
+      "name": "bld-reldeb",
+      "hidden": true,
+      "binaryDir": "${workspaceFolder}/reldeb",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "bld-rel",
+      "hidden": true,
+      "binaryDir": "${workspaceFolder}/rel",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+
+
+    { "name": "msvc-dbg",    "inherits": [ "compiler-msvc",  "bld-dbg" ] },
+    { "name": "ninja-dbg",   "inherits": [ "compiler-ninja", "bld-dbg" ] }
+
+  ],
+
+  "buildPresets": [
+    { "name": "msvc-dbg", "configurePreset": "msvc-dbg",  "inheritConfigureEnvironment": true },
+    { "name": "ninja-dbg", "configurePreset": "ninja-dbg", "inheritConfigureEnvironment": true }
+  ]
+}
