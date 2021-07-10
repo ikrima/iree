@@ -9,6 +9,9 @@
 			"dbg": true,
 			"reldeb": true,
 			"instl": true,
+			"third_party": true,
+			"third_party/llvm-project": true,
+			"third_party/tensorflow": true,
 		},
 		"cmake.sourceDirectory": "${workspaceFolder}",
 		// "cmake.cacheInit": [
@@ -17,7 +20,8 @@
 		"cmake.preferredGenerators": [
 			"Ninja"
 		],
-		"cmake.generator": "Ninja",
+		// "cmake.generator": "Visual Studio 16 2019", // "Ninja",
+		"cmake.useCMakePresets": "always",
 		"cmake.configureSettings": {
 			// "LLVM_OPTIMIZED_TABLEGEN": true,
 			// "LLVM_TARGETS_TO_BUILD": ["AArch64","X86"],
