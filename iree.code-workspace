@@ -22,6 +22,7 @@
 		],
 		// "cmake.generator": "Visual Studio 16 2019", // "Ninja",
 		"cmake.useCMakePresets": "always",
+		// "cmake.loggingLevel": "info",
 		"cmake.configureSettings": {
 			// "LLVM_OPTIMIZED_TABLEGEN": true,
 			// "LLVM_TARGETS_TO_BUILD": ["AArch64","X86"],
