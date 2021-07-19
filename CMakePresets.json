@@ -1,12 +1,19 @@
 {
   "version": 2,
   "configurePresets": [
+
     {
       "name": "compiler-base",
       "hidden": true,
+      "architecture": "x64",
+      "toolset": "host=x64",
       "cacheVariables": {
-        "LLVM_LIT_TOOLS_DIR":    "C:/Program Files/Git/usr/bin",
-        "MSVC_DIA_SDK_DIR":      "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK"
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "LLVM_LIT_TOOLS_DIR": "C:/Program Files/Git/usr/bin",
+        "MSVC_DIA_SDK_DIR": "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK",
+        "IREE_HAL_DRIVERS_TO_BUILD": "DyLib;VMVX",
+        "IREE_TARGET_BACKENDS_TO_BUILD": "DYLIB-LLVM-AOT;VMVX"
       }
     },
 
@@ -15,10 +22,9 @@
       "hidden": true,
       "inherits": ["compiler-base"],
       "generator": "Visual Studio 16 2019",
-      "toolset": "host=x64",
-      "architecture": "x64"
+      "architecture": { "value": "x64"     , "strategy": "set" },
+      "toolset"     : { "value": "host=x64", "strategy": "set" }
     },
-
     {
       "name": "compiler-ninja",
       "hidden": true,
@@ -26,52 +32,31 @@
       "generator": "Ninja",
       "vendor": {
         "microsoft.com/VisualStudioSettings/CMake/1.0": {
-          "hostOS": [ "Windows" ]
+          "intelliSenseMode": "windows-clang-x64",
+          "hostOS": ["Windows"]
         }
       },
-      "architecture": {
-        "value": "x64",
-        "strategy": "external"
-       },
-      "toolset": {
-        "value": "x64",
-        "strategy": "external"
-       }
-    },
-
-    {
-      "name": "bld-dbg",
-      "hidden": true,
-      "binaryDir": "${workspaceFolder}/dbg",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-       }
-    },
-    {
-      "name": "bld-reldeb",
-      "hidden": true,
-      "binaryDir": "${workspaceFolder}/reldeb",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
-      }
-    },
-    {
-      "name": "bld-rel",
-      "hidden": true,
-      "binaryDir": "${workspaceFolder}/rel",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
+      "architecture": { "value": "x64"     , "strategy": "external" },
+      "toolset"     : { "value": "host=x64", "strategy": "external" }
     },
 
 
-    { "name": "msvc-dbg",    "inherits": [ "compiler-msvc",  "bld-dbg" ] },
-    { "name": "ninja-dbg",   "inherits": [ "compiler-ninja", "bld-dbg" ] }
+    { "name": "bld-dbg"   , "hidden": true, "binaryDir": "${workspaceFolder}/dbg"   , "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug"          } },
+    { "name": "bld-reldeb", "hidden": true, "binaryDir": "${workspaceFolder}/reldeb", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
+    { "name": "bld-rel"   , "hidden": true, "binaryDir": "${workspaceFolder}/rel"   , "cacheVariables": { "CMAKE_BUILD_TYPE": "Release"        } },
+
+
+    { "name": "ninja-dbg",   "inherits": [ "compiler-ninja", "bld-dbg" ] },
+    { "name": "msvc-dbg",    "inherits": [ "compiler-msvc",  "bld-dbg" ] }
+
 
   ],
 
   "buildPresets": [
-    { "name": "msvc-dbg", "configurePreset": "msvc-dbg",  "inheritConfigureEnvironment": true },
-    { "name": "ninja-dbg", "configurePreset": "ninja-dbg", "inheritConfigureEnvironment": true }
+    { "name": "ninja-dbg-core", "hidden": true, "configurePreset": "ninja-dbg", "inheritConfigureEnvironment": true },
+    { "name": "msvc-dbg-core",  "hidden": true, "configurePreset": "msvc-dbg",  "inheritConfigureEnvironment": true },
+
+    { "name": "dbg-helloworld"         , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"]                                },
+    { "name": "dbg-helloworld-verbose" , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"], "nativeToolOptions": [ "-v" ] }
   ]
 }
