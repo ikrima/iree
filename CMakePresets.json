@@ -32,7 +32,7 @@
       "generator": "Ninja",
       "vendor": {
         "microsoft.com/VisualStudioSettings/CMake/1.0": {
-          "intelliSenseMode": "windows-clang-x64",
+          "intelliSenseMode": "windows-msvc-x64",
           "hostOS": ["Windows"]
         }
       },
@@ -46,8 +46,10 @@
     { "name": "bld-rel"   , "hidden": true, "binaryDir": "${workspaceFolder}/rel"   , "cacheVariables": { "CMAKE_BUILD_TYPE": "Release"        } },
 
 
-    { "name": "ninja-dbg",   "inherits": [ "compiler-ninja", "bld-dbg" ] },
-    { "name": "msvc-dbg",    "inherits": [ "compiler-msvc",  "bld-dbg" ] }
+    { "name": "ninja-dbg" , "inherits": [ "compiler-ninja" , "bld-dbg" ] },
+    { "name": "msvc-dbg"  , "inherits": [ "compiler-msvc"  , "bld-dbg" ] },
+
+    { "name": "proj-python",  "inherits": [ "ninja-dbg"], "cacheVariables": { "IREE_BUILD_PYTHON_BINDINGS": true, "Python3_EXECUTABLE": "$env{EDEV_SRCDIR}/pub/python/main/python.exe" } }
 
 
   ],
@@ -57,6 +59,8 @@
     { "name": "msvc-dbg-core",  "hidden": true, "configurePreset": "msvc-dbg",  "inheritConfigureEnvironment": true },
 
     { "name": "dbg-helloworld"         , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"]                                },
-    { "name": "dbg-helloworld-verbose" , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"], "nativeToolOptions": [ "-v" ] }
+    { "name": "dbg-helloworld-verbose" , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"], "nativeToolOptions": [ "-v" ] },
+
+    { "name": "dbg-python"             , "inherits": "ninja-dbg-core", "configurePreset": "proj-python" }
   ]
 }
