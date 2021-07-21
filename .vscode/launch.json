@@ -21,7 +21,7 @@
           "value": "$PATH:${command:cmake.launchTargetDirectory}"
         },
       ],
-      "externalConsole": false
+      "console": "integratedTerminal"
     },
     {
       "name": "kaleidoscope",
@@ -31,7 +31,7 @@
       "args": [],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
-      "externalConsole": true,
+      "console": "integratedTerminal",
       "logging": {
         "engineLogging": true
       }
