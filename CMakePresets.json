@@ -49,7 +49,7 @@
     { "name": "ninja-dbg" , "inherits": [ "compiler-ninja" , "bld-dbg" ] },
     { "name": "msvc-dbg"  , "inherits": [ "compiler-msvc"  , "bld-dbg" ] },
 
-    { "name": "proj-python",  "inherits": [ "ninja-dbg"], "cacheVariables": { "IREE_BUILD_PYTHON_BINDINGS": true, "Python3_EXECUTABLE": "$env{EDEV_SRCDIR}/pub/python/main/python.exe" } }
+    { "name": "proj-python",  "inherits": [ "ninja-dbg"], "cacheVariables": { "IREE_BUILD_PYTHON_BINDINGS": true, "Python_ROOT_DIR": "${env:EDEV_SRCDIR}/pub/conda/envs/main" } }
 
 
   ],
