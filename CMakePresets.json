@@ -61,6 +61,6 @@
     { "name": "dbg-helloworld"         , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"]                                },
     { "name": "dbg-helloworld-verbose" , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"], "nativeToolOptions": [ "-v" ] },
 
-    { "name": "dbg-python"             , "inherits": "ninja-dbg-core", "configurePreset": "proj-python" }
+    { "name": "dbg-python"             , "inherits": "ninja-dbg-core", "configurePreset": "proj-python", "targets": ["iree_runtime_demo_hello_world_embedded"] }
   ]
 }
