@@ -34,26 +34,25 @@
 		},
 		"C_Cpp.intelliSenseEngine": "Disabled",
 		"C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
-		"python.defaultInterpreterPath": "${env:EDEV_SRCDIR}/pub/python/main/python.exe",
+    "clangd.arguments": [
+      "--compile-commands-dir=${workspaceFolder}/dbg",
+      // "-log=verbose",
+    ],
+
+		"python.pythonPath": "${env:EDEV_CONDADIR}/envs/mlir/python.exe",
+    "python.defaultInterpreterPath": "${env:EDEV_CONDADIR}/envs/mlir/python.exe",
+
 		"cmake.sourceDirectory": "${workspaceFolder}",
-		// "cmake.cacheInit": [
-		//   "../.vscode/cacheinit.cmake"
-		// ],
-		"cmake.preferredGenerators": [
-			"Ninja"
-		],
-		// "cmake.generator": "Visual Studio 16 2019", // "Ninja",
+		"cmake.preferredGenerators": ["Ninja"],
 		"cmake.useCMakePresets": "always",
-		// "cmake.loggingLevel": "info",
 		"cmake.configureSettings": {
-			// "LLVM_OPTIMIZED_TABLEGEN": true,
-			// "LLVM_TARGETS_TO_BUILD": ["AArch64","X86"],
 			"LLVM_LIT_TOOLS_DIR": "C:/Program Files/Git/usr/bin",
 			"MSVC_DIA_SDK_DIR": "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK",
 		},
 		"cmake.buildBeforeRun": false,
 		"cmake.buildDirectory": "${workspaceFolder}/${variant:buildType}",
 		"cmake.installPrefix": "${workspaceFolder}/instl-${variant:buildType}",
+
 		"peacock.color": "#f9e64f",
 		"workbench.colorCustomizations": {
 			"activityBar.activeBackground": "#fbed80",

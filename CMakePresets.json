@@ -1,66 +1,77 @@
 {
   "version": 2,
   "configurePresets": [
-
     {
-      "name": "compiler-base",
-      "hidden": true,
-      "architecture": "x64",
-      "toolset": "host=x64",
+      "name":           "compiler-base",
+      "hidden":         true,
+      "environment":    { "PATH": "$penv{PATH};$penv{EDEV_LLVM_INSTLDIR}/bin" },
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "cl",
-        "CMAKE_CXX_COMPILER": "cl",
-        "LLVM_LIT_TOOLS_DIR": "C:/Program Files/Git/usr/bin",
-        "MSVC_DIA_SDK_DIR": "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK",
-        "IREE_HAL_DRIVERS_TO_BUILD": "DyLib;VMVX",
+        "ZLIB_INCLUDE_DIR":              "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/include",
+        "ZLIB_LIBRARY_RELEASE":          "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/lib/zlib.lib",
+        "ZLIB_LIBRARY_DEBUG":            "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/debug/lib/zlibd.lib",
+        "PYTHON_HOME":                   "$penv{EDEV_CONDADIR}/envs/mlir",
+        "PYTHON_EXECUTABLE":             "$penv{EDEV_CONDADIR}/envs/mlir/python.exe",
+        "MSVC_DIA_SDK_DIR":              "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK",
+        "LLVM_TARGETS_TO_BUILD":         "host;X86",
+        "LLVM_LIT_TOOLS_DIR":            "C:/Program Files/Git/usr/bin",
+        "IREE_HAL_DRIVERS_TO_BUILD":     "DyLib;VMVX",
         "IREE_TARGET_BACKENDS_TO_BUILD": "DYLIB-LLVM-AOT;VMVX"
       }
     },
 
     {
-      "name": "compiler-msvc",
-      "hidden": true,
-      "inherits": ["compiler-base"],
-      "generator": "Visual Studio 16 2019",
-      "architecture": { "value": "x64"     , "strategy": "set" },
-      "toolset"     : { "value": "host=x64", "strategy": "set" }
+      "name":           "clangcl",
+      "hidden":         true,
+      "inherits":       ["compiler-base"],
+      "generator":      "Ninja",
+      "vendor":         { "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-clang-x64", "hostOS": [ "Windows" ] } },
+      "architecture":   { "value": "x64"     , "strategy": "external" },
+      "toolset":        { "value": "host=x64", "strategy": "external" },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER":   "$penv{EDEV_LLVM_INSTLDIR}/bin/clang-cl.exe",
+        "CMAKE_CXX_COMPILER": "$penv{EDEV_LLVM_INSTLDIR}/bin/clang-cl.exe",
+        "CMAKE_LINKER":       "$penv{EDEV_LLVM_INSTLDIR}/bin/lld-link.exe",
+        "IREE_ENABLE_LLD":    false,
+        "IREE_USE_LINKER":    "lld-link.exe"
+       }
     },
     {
-      "name": "compiler-ninja",
-      "hidden": true,
-      "inherits": ["compiler-base"],
-      "generator": "Ninja",
-      "vendor": {
-        "microsoft.com/VisualStudioSettings/CMake/1.0": {
-          "intelliSenseMode": "windows-msvc-x64",
-          "hostOS": ["Windows"]
-        }
-      },
-      "architecture": { "value": "x64"     , "strategy": "external" },
-      "toolset"     : { "value": "host=x64", "strategy": "external" }
+      "name":           "msvc",
+      "hidden":         true,
+      "inherits":       ["compiler-base"],
+      "generator":      "Ninja",
+      "vendor":         { "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-msvc-x64", "hostOS": [ "Windows" ] } },
+      "architecture":   { "value": "x64"     , "strategy": "external" },
+      "toolset":        { "value": "host=x64", "strategy": "external" },
+      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
+    },
+    {
+      "name":           "msbuild",
+      "hidden":         true,
+      "inherits":       ["compiler-base"],
+      "generator":      "Visual Studio 16 2019",
+      "vendor":         { "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-msvc-x64", "hostOS": [ "Windows" ] } },
+      "architecture":   { "value": "x64"     , "strategy": "set" },
+      "toolset":        { "value": "host=x64", "strategy": "set" },
+      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
     },
 
-
-    { "name": "bld-dbg"   , "hidden": true, "binaryDir": "${workspaceFolder}/dbg"   , "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug"          } },
-    { "name": "bld-reldeb", "hidden": true, "binaryDir": "${workspaceFolder}/reldeb", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
-    { "name": "bld-rel"   , "hidden": true, "binaryDir": "${workspaceFolder}/rel"   , "cacheVariables": { "CMAKE_BUILD_TYPE": "Release"        } },
-
-
-    { "name": "ninja-dbg" , "inherits": [ "compiler-ninja" , "bld-dbg" ] },
-    { "name": "msvc-dbg"  , "inherits": [ "compiler-msvc"  , "bld-dbg" ] },
-
-    { "name": "proj-python",  "inherits": [ "ninja-dbg"], "cacheVariables": { "IREE_BUILD_PYTHON_BINDINGS": true, "Python_ROOT_DIR": "${env:EDEV_SRCDIR}/pub/conda/envs/main" } }
+    { "name": "bld-dbg"   , "hidden": true, "binaryDir": "${workspaceFolder}/dbg"   , "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug"         , "IREE_ENABLE_ASSERTIONS": true  } },
+    { "name": "bld-reldeb", "hidden": true, "binaryDir": "${workspaceFolder}/reldeb", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "IREE_ENABLE_ASSERTIONS": true  } },
+    { "name": "bld-rel"   , "hidden": true, "binaryDir": "${workspaceFolder}/rel"   , "cacheVariables": { "CMAKE_BUILD_TYPE": "Release"       , "IREE_ENABLE_ASSERTIONS": false } },
 
 
+    { "name": "ccl-dbg"          , "inherits": [ "clangcl"  , "bld-dbg" ] },
+    { "name": "msvc-dbg"         , "inherits": [ "msvc"     , "bld-dbg" ] },
+    { "name": "msvc-dbg-python"  , "inherits": [ "msvc"     , "bld-dbg" ], "cacheVariables": { "IREE_BUILD_PYTHON_BINDINGS": true, "Python_ROOT_DIR": "$penv{EDEV_CONDADIR}/envs/mlir" } },
+    { "name": "msbuild-dbg"      , "inherits": [ "msbuild"  , "bld-dbg" ] }
   ],
 
   "buildPresets": [
-    { "name": "ninja-dbg-core", "hidden": true, "configurePreset": "ninja-dbg", "inheritConfigureEnvironment": true },
-    { "name": "msvc-dbg-core",  "hidden": true, "configurePreset": "msvc-dbg",  "inheritConfigureEnvironment": true },
-
-    { "name": "dbg-helloworld"         , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"]                                },
-    { "name": "dbg-helloworld-verbose" , "inherits": "ninja-dbg-core", "targets": ["iree_runtime_demo_hello_world_embedded"], "nativeToolOptions": [ "-v" ] },
-
-    { "name": "dbg-python"             , "inherits": "ninja-dbg-core", "configurePreset": "proj-python", "targets": ["iree_runtime_demo_hello_world_embedded"] }
+    { "name": "ccl-dbg-helloworld"          , "configurePreset": "ccl-dbg",         "inheritConfigureEnvironment": true, "targets": ["iree_runtime_demo_hello_world_embedded"]                                },
+    { "name": "ccl-dbg-helloworld-verbose"  , "configurePreset": "ccl-dbg",         "inheritConfigureEnvironment": true, "targets": ["iree_runtime_demo_hello_world_embedded"], "nativeToolOptions": [ "-v" ] },
+    { "name": "msvc-dbg-helloworld"         , "configurePreset": "msvc-dbg",        "inheritConfigureEnvironment": true, "targets": ["iree_runtime_demo_hello_world_embedded"]                                },
+    { "name": "msvc-dbg-helloworld-verbose" , "configurePreset": "msvc-dbg",        "inheritConfigureEnvironment": true, "targets": ["iree_runtime_demo_hello_world_embedded"], "nativeToolOptions": [ "-v" ] },
+    { "name": "msvc-dbg-python"             , "configurePreset": "msvc-dbg-python", "inheritConfigureEnvironment": true, "targets": ["iree_runtime_demo_hello_world_embedded"] }
   ]
 }
