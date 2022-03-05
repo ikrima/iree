@@ -1,17 +1,14 @@
 {
-  "version": 2,
+  "version": 3,
   "configurePresets": [
     {
       "name":           "compiler-base",
       "hidden":         true,
       "environment":    { "PATH": "$penv{PATH};$penv{EDEV_LLVM_INSTLDIR}/bin" },
       "cacheVariables": {
-        "ZLIB_INCLUDE_DIR":              "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/include",
-        "ZLIB_LIBRARY_RELEASE":          "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/lib/zlib.lib",
-        "ZLIB_LIBRARY_DEBUG":            "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/debug/lib/zlibd.lib",
         "PYTHON_HOME":                   "$penv{EDEV_CONDADIR}/envs/mlir",
         "PYTHON_EXECUTABLE":             "$penv{EDEV_CONDADIR}/envs/mlir/python.exe",
-        "MSVC_DIA_SDK_DIR":              "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK",
+        "MSVC_DIA_SDK_DIR":              "$penv{EDEV_VSDIR}/DIA SDK",
         "LLVM_TARGETS_TO_BUILD":         "host;X86",
         "LLVM_LIT_TOOLS_DIR":            "C:/Program Files/Git/usr/bin",
         "IREE_HAL_DRIVERS_TO_BUILD":     "DyLib;VMVX",
@@ -25,12 +22,15 @@
       "inherits":       ["compiler-base"],
       "generator":      "Ninja",
       "vendor":         { "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-clang-x64", "hostOS": [ "Windows" ] } },
-      "architecture":   { "value": "x64"     , "strategy": "external" },
-      "toolset":        { "value": "host=x64", "strategy": "external" },
+      "architecture":   { "value": "x64",     "strategy": "external" },
+      "toolset":        { "value": "ClangCl", "strategy": "external" },
       "cacheVariables": {
         "CMAKE_C_COMPILER":   "$penv{EDEV_LLVM_INSTLDIR}/bin/clang-cl.exe",
         "CMAKE_CXX_COMPILER": "$penv{EDEV_LLVM_INSTLDIR}/bin/clang-cl.exe",
         "CMAKE_LINKER":       "$penv{EDEV_LLVM_INSTLDIR}/bin/lld-link.exe",
+        "ZLIB_INCLUDE_DIR":     "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/include",
+        "ZLIB_LIBRARY_RELEASE": "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/lib/zlib.lib",
+        "ZLIB_LIBRARY_DEBUG":   "$penv{EDEV_VCPKGDIR}/installed/x64-windows-llvm/debug/lib/zlibd.lib",
         "IREE_ENABLE_LLD":    false,
         "IREE_USE_LINKER":    "lld-link.exe"
        }
@@ -41,9 +41,15 @@
       "inherits":       ["compiler-base"],
       "generator":      "Ninja",
       "vendor":         { "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-msvc-x64", "hostOS": [ "Windows" ] } },
-      "architecture":   { "value": "x64"     , "strategy": "external" },
+      "architecture":   { "value": "x64",      "strategy": "external" },
       "toolset":        { "value": "host=x64", "strategy": "external" },
-      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
+      "cacheVariables": {
+        "CMAKE_C_COMPILER":     "cl",
+        "CMAKE_CXX_COMPILER":   "cl",
+        "ZLIB_INCLUDE_DIR":     "$penv{EDEV_VCPKGDIR}/installed/x64-windows/include",
+        "ZLIB_LIBRARY_RELEASE": "$penv{EDEV_VCPKGDIR}/installed/x64-windows/lib/zlib.lib",
+        "ZLIB_LIBRARY_DEBUG":   "$penv{EDEV_VCPKGDIR}/installed/x64-windows/debug/lib/zlibd.lib"
+      }
     },
     {
       "name":           "msbuild",
@@ -51,9 +57,15 @@
       "inherits":       ["compiler-base"],
       "generator":      "Visual Studio 16 2019",
       "vendor":         { "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-msvc-x64", "hostOS": [ "Windows" ] } },
-      "architecture":   { "value": "x64"     , "strategy": "set" },
+      "architecture":   { "value": "x64",      "strategy": "set" },
       "toolset":        { "value": "host=x64", "strategy": "set" },
-      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
+      "cacheVariables": {
+        "CMAKE_C_COMPILER":     "cl",
+        "CMAKE_CXX_COMPILER":   "cl",
+        "ZLIB_INCLUDE_DIR":     "$penv{EDEV_VCPKGDIR}/installed/x64-windows/include",
+        "ZLIB_LIBRARY_RELEASE": "$penv{EDEV_VCPKGDIR}/installed/x64-windows/lib/zlib.lib",
+        "ZLIB_LIBRARY_DEBUG":   "$penv{EDEV_VCPKGDIR}/installed/x64-windows/debug/lib/zlibd.lib"
+      }
     },
 
     { "name": "bld-dbg"   , "hidden": true, "binaryDir": "${workspaceFolder}/dbg"   , "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug"         , "IREE_ENABLE_ASSERTIONS": true  } },

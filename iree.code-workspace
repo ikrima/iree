@@ -45,14 +45,12 @@
 		"cmake.sourceDirectory": "${workspaceFolder}",
 		"cmake.preferredGenerators": ["Ninja"],
 		"cmake.useCMakePresets": "always",
-		"cmake.configureSettings": {
-			"LLVM_LIT_TOOLS_DIR": "C:/Program Files/Git/usr/bin",
-			"MSVC_DIA_SDK_DIR": "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK",
-		},
 		"cmake.buildBeforeRun": false,
+		"cmake.configureOnOpen": false,
 		"cmake.buildDirectory": "${workspaceFolder}/${variant:buildType}",
 		"cmake.installPrefix": "${workspaceFolder}/instl-${variant:buildType}",
 
+		// Peacock colors
 		"peacock.color": "#f9e64f",
 		"workbench.colorCustomizations": {
 			"activityBar.activeBackground": "#fbed80",
