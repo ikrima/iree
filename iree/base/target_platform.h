@@ -173,7 +173,7 @@ static_assert(sizeof(void*) == sizeof(uintptr_t),
 // IREE_COMPILER_*
 //==============================================================================
 
-#if defined(__clang__)
+#if defined(__clang__) && !defined(_MSC_VER)
 #define IREE_COMPILER_CLANG 1
 #define IREE_COMPILER_GCC_COMPAT 1
 #elif defined(__GNUC__)
